@@ -83,9 +83,19 @@ where
         ram_K: usize,
         twist_sumcheck_switch_index: usize,
     ) -> Self {
-        let mut accumulator = VerifierOpeningAccumulator::new();
-        // Seed the accumulator with the opening claims from the proof
-        *accumulator.openings_mut() = proof.opening_claims.0;
+        #[cfg(feature = "zk")]
+        let zk_mode = proof.blindfold_proof.is_some();
+        #[cfg(not(feature = "zk"))]
+        let zk_mode = false;
+
+        let mut accumulator = if zk_mode {
+            VerifierOpeningAccumulator::new_zk()
+        } else {
+            VerifierOpeningAccumulator::new()
+        };
+        // Seed any serialized openings that are present. In the full BlindFold path this can
+        // legitimately be empty, but mixed clear/ZK staging still relies on these values.
+        *accumulator.openings_mut() = proof.opening_claims.0.clone();
 
         Self {
             transcript: Rc::new(RefCell::new(ProofTranscript::new(b"Jolt"))),

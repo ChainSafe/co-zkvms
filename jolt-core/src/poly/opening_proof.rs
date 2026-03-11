@@ -291,6 +291,9 @@ where
     F: JoltField,
 {
     pub openings: Openings<F>,
+    pending_claims: Vec<F>,
+    pending_claim_ids: Vec<OpeningId>,
+    zk_mode: bool,
     #[cfg(test)]
     pub appended_virtual_openings: std::rc::Rc<std::cell::RefCell<Vec<OpeningId>>>,
 }
@@ -311,6 +314,20 @@ where
     pub fn new() -> Self {
         Self {
             openings: BTreeMap::new(),
+            pending_claims: vec![],
+            pending_claim_ids: vec![],
+            zk_mode: false,
+            #[cfg(test)]
+            appended_virtual_openings: std::rc::Rc::new(std::cell::RefCell::new(vec![])),
+        }
+    }
+
+    pub fn new_zk() -> Self {
+        Self {
+            openings: BTreeMap::new(),
+            pending_claims: vec![],
+            pending_claim_ids: vec![],
+            zk_mode: true,
             #[cfg(test)]
             appended_virtual_openings: std::rc::Rc::new(std::cell::RefCell::new(vec![])),
         }
@@ -380,12 +397,18 @@ where
         opening_point: Vec<F::Challenge>,
         claims: &[F],
     ) {
-        transcript.append_scalars(claims);
         assert_eq!(polynomials.len(), claims.len());
         for (label, claim) in polynomials.iter().zip(claims.iter()) {
             let opening_point_struct = OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone());
             let key = OpeningId::Committed(*label, sumcheck);
             self.openings.insert(key, (opening_point_struct, *claim));
+            if self.zk_mode {
+                self.pending_claims.push(*claim);
+                self.pending_claim_ids.push(key);
+            }
+        }
+        if !self.zk_mode {
+            transcript.append_scalars(claims);
         }
     }
 
@@ -398,14 +421,20 @@ where
         r_cycle: Vec<F::Challenge>,
         claims: Vec<F>,
     ) {
-        claims.iter().for_each(|claim| {
-            transcript.append_scalar(claim);
-        });
         let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
         for (label, claim) in polynomials.iter().zip(claims.iter()) {
             let opening_point_struct = OpeningPoint::<BIG_ENDIAN, F>::new(r_concat.clone());
             let key = OpeningId::Committed(*label, sumcheck);
             self.openings.insert(key, (opening_point_struct, *claim));
+            if self.zk_mode {
+                self.pending_claims.push(*claim);
+                self.pending_claim_ids.push(key);
+            }
+        }
+        if !self.zk_mode {
+            claims.iter().for_each(|claim| {
+                transcript.append_scalar(claim);
+            });
         }
     }
 
@@ -417,15 +446,18 @@ where
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claim: F,
     ) {
-        transcript.append_scalar(&claim);
-        self.openings.insert(
-            OpeningId::Virtual(polynomial, sumcheck),
-            (opening_point, claim),
-        );
+        let key = OpeningId::Virtual(polynomial, sumcheck);
+        self.openings.insert(key, (opening_point, claim));
+        if self.zk_mode {
+            self.pending_claims.push(claim);
+            self.pending_claim_ids.push(key);
+        } else {
+            transcript.append_scalar(&claim);
+        }
         #[cfg(test)]
         self.appended_virtual_openings
             .borrow_mut()
-            .push(OpeningId::Virtual(polynomial, sumcheck));
+            .push(key);
     }
 
     pub fn append_untrusted_advice<T: Transcript>(
@@ -434,9 +466,14 @@ where
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claim: F,
     ) {
-        transcript.append_scalar(&claim);
         self.openings
             .insert(OpeningId::UntrustedAdvice, (opening_point, claim));
+        if self.zk_mode {
+            self.pending_claims.push(claim);
+            self.pending_claim_ids.push(OpeningId::UntrustedAdvice);
+        } else {
+            transcript.append_scalar(&claim);
+        }
     }
 
     pub fn append_trusted_advice<T: Transcript>(
@@ -445,9 +482,29 @@ where
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claim: F,
     ) {
-        transcript.append_scalar(&claim);
         self.openings
             .insert(OpeningId::TrustedAdvice, (opening_point, claim));
+        if self.zk_mode {
+            self.pending_claims.push(claim);
+            self.pending_claim_ids.push(OpeningId::TrustedAdvice);
+        } else {
+            transcript.append_scalar(&claim);
+        }
+    }
+
+    pub fn flush_to_transcript<T: Transcript>(&mut self, transcript: &mut T) {
+        for claim in self.pending_claims.drain(..) {
+            transcript.append_scalar(&claim);
+        }
+        self.pending_claim_ids.clear();
+    }
+
+    pub fn take_pending_claims(&mut self) -> Vec<F> {
+        std::mem::take(&mut self.pending_claims)
+    }
+
+    pub fn take_pending_claim_ids(&mut self) -> Vec<OpeningId> {
+        std::mem::take(&mut self.pending_claim_ids)
     }
 }
 
@@ -477,6 +534,9 @@ where
 {
     sumchecks: Vec<OpeningProofReductionSumcheck<F>>,
     pub openings: Openings<F>,
+    zk_mode: bool,
+    pending_claims: Vec<F>,
+    pending_claim_ids: Vec<OpeningId>,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Clone, Debug)]
@@ -512,7 +572,24 @@ where
         Self {
             sumchecks: vec![],
             openings: BTreeMap::new(),
+            zk_mode: false,
+            pending_claims: vec![],
+            pending_claim_ids: vec![],
         }
+    }
+
+    pub fn new_zk() -> Self {
+        Self {
+            sumchecks: vec![],
+            openings: BTreeMap::new(),
+            zk_mode: true,
+            pending_claims: vec![],
+            pending_claim_ids: vec![],
+        }
+    }
+
+    pub fn set_zk_mode(&mut self, zk_mode: bool) {
+        self.zk_mode = zk_mode;
     }
 
     pub fn len(&self) -> usize {
@@ -571,13 +648,25 @@ where
         let claims: Vec<F> = polynomials
             .iter()
             .map(|poly| {
-                self.openings
-                    .get(&OpeningId::Committed(*poly, sumcheck))
-                    .unwrap()
-                    .1
+                let key = OpeningId::Committed(*poly, sumcheck);
+                let claim = self.openings.get(&key).map(|opening| opening.1).unwrap_or_else(|| {
+                    self.pending_claim_ids.push(key);
+                    self.pending_claims.push(F::zero());
+                    F::zero()
+                });
+                self.openings.insert(
+                    key,
+                    (
+                        OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone()),
+                        claim,
+                    ),
+                );
+                claim
             })
             .collect();
-        transcript.append_scalars(&claims);
+        if !self.zk_mode {
+            transcript.append_scalars(&claims);
+        }
 
         self.sumchecks
             .push(OpeningProofReductionSumcheck::new_verifier_instance(
@@ -596,12 +685,22 @@ where
         opening_point: Vec<F::Challenge>,
     ) {
         for label in polynomials.into_iter() {
-            let claim = self
-                .openings
-                .get(&OpeningId::Committed(label, sumcheck))
-                .unwrap()
-                .1;
-            transcript.append_scalar(&claim);
+            let key = OpeningId::Committed(label, sumcheck);
+            let claim = self.openings.get(&key).map(|opening| opening.1).unwrap_or_else(|| {
+                self.pending_claim_ids.push(key);
+                self.pending_claims.push(F::zero());
+                F::zero()
+            });
+            self.openings.insert(
+                key,
+                (
+                    OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone()),
+                    claim,
+                ),
+            );
+            if !self.zk_mode {
+                transcript.append_scalar(&claim);
+            }
 
             self.sumchecks
                 .push(OpeningProofReductionSumcheck::new_verifier_instance(
@@ -622,11 +721,18 @@ where
     ) {
         let key = OpeningId::Virtual(polynomial, sumcheck);
         if let Some((_, claim)) = self.openings.get(&key) {
-            transcript.append_scalar(claim);
             let claim = *claim;
             self.openings.insert(key, (opening_point.clone(), claim));
+            if self.zk_mode {
+                self.pending_claims.push(claim);
+                self.pending_claim_ids.push(key);
+            } else {
+                transcript.append_scalar(&claim);
+            }
         } else {
-            panic!("Tried to populate opening point for non-existent key: {key:?}");
+            self.openings.insert(key, (opening_point.clone(), F::zero()));
+            self.pending_claims.push(F::zero());
+            self.pending_claim_ids.push(key);
         }
     }
 
@@ -636,15 +742,20 @@ where
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         if let Some((_, claim)) = self.openings.get(&OpeningId::UntrustedAdvice) {
-            transcript.append_scalar(claim);
             let claim = *claim;
             self.openings
                 .insert(OpeningId::UntrustedAdvice, (opening_point.clone(), claim));
+            if self.zk_mode {
+                self.pending_claims.push(claim);
+                self.pending_claim_ids.push(OpeningId::UntrustedAdvice);
+            } else {
+                transcript.append_scalar(&claim);
+            }
         } else {
-            panic!(
-                "Tried to populate opening point for non-existent key: {:?}",
-                OpeningId::UntrustedAdvice
-            );
+            self.openings
+                .insert(OpeningId::UntrustedAdvice, (opening_point.clone(), F::zero()));
+            self.pending_claims.push(F::zero());
+            self.pending_claim_ids.push(OpeningId::UntrustedAdvice);
         }
     }
 
@@ -654,16 +765,36 @@ where
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         if let Some((_, claim)) = self.openings.get(&OpeningId::TrustedAdvice) {
-            transcript.append_scalar(claim);
             let claim = *claim;
             self.openings
                 .insert(OpeningId::TrustedAdvice, (opening_point.clone(), claim));
+            if self.zk_mode {
+                self.pending_claims.push(claim);
+                self.pending_claim_ids.push(OpeningId::TrustedAdvice);
+            } else {
+                transcript.append_scalar(&claim);
+            }
         } else {
-            panic!(
-                "Tried to populate opening point for non-existent key: {:?}",
-                OpeningId::TrustedAdvice
-            );
+            self.openings
+                .insert(OpeningId::TrustedAdvice, (opening_point.clone(), F::zero()));
+            self.pending_claims.push(F::zero());
+            self.pending_claim_ids.push(OpeningId::TrustedAdvice);
         }
+    }
+
+    pub fn flush_to_transcript<T: Transcript>(&mut self, transcript: &mut T) {
+        for claim in self.pending_claims.drain(..) {
+            transcript.append_scalar(&claim);
+        }
+        self.pending_claim_ids.clear();
+    }
+
+    pub fn take_pending_claims(&mut self) -> Vec<F> {
+        std::mem::take(&mut self.pending_claims)
+    }
+
+    pub fn take_pending_claim_ids(&mut self) -> Vec<OpeningId> {
+        std::mem::take(&mut self.pending_claim_ids)
     }
 
     /// Verifies that the given `reduced_opening_proof` (consisting of a sumcheck proof
@@ -808,7 +939,7 @@ where
                 instance
             })
             .collect();
-        BatchedSumcheck::verify(sumcheck_proof, instances, None, transcript)
+        BatchedSumcheck::verify(sumcheck_proof, instances, None, transcript).map(|(_, r)| r)
     }
 }
 

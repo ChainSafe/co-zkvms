@@ -110,7 +110,7 @@ impl BatchedSumcheck {
         sumcheck_instances: Vec<&dyn SumcheckInstance<F, ProofTranscript>>,
         opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         transcript: &mut ProofTranscript,
-    ) -> Result<Vec<F::Challenge>, ProofVerifyError> {
+    ) -> Result<(Vec<F>, Vec<F::Challenge>), ProofVerifyError> {
         let max_degree = sumcheck_instances
             .iter()
             .map(|sumcheck| sumcheck.degree())
@@ -122,6 +122,7 @@ impl BatchedSumcheck {
             .max()
             .unwrap();
 
+        let is_zk = proof.is_zk();
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
 
         let claim: F = sumcheck_instances
@@ -130,7 +131,9 @@ impl BatchedSumcheck {
             .map(|(sumcheck, coeff)| {
                 let num_rounds = sumcheck.num_rounds();
                 let input_claim = sumcheck.input_claim();
-                transcript.append_scalar(&input_claim);
+                if !is_zk {
+                    transcript.append_scalar(&input_claim);
+                }
                 input_claim.mul_pow_2(max_num_rounds - num_rounds) * coeff
             })
             .sum();
@@ -157,11 +160,27 @@ impl BatchedSumcheck {
             })
             .sum();
 
-        if !proof.is_zk() && output_claim != expected_output_claim {
+        if !is_zk && output_claim != expected_output_claim {
             return Err(ProofVerifyError::SumcheckVerificationError);
         }
 
-        Ok(r_sumcheck)
+        if let Some(opening_accumulator) = &opening_accumulator {
+            if is_zk {
+                if let SumcheckInstanceProof::Zk(zk_proof) = proof {
+                    let mut accumulator = opening_accumulator.borrow_mut();
+                    transcript.append_message(b"output_claims_coms");
+                    for commitment in &zk_proof.output_claims_commitments {
+                        transcript.append_serializable(commitment);
+                    }
+                    let _ = accumulator.take_pending_claims();
+                    let _ = accumulator.take_pending_claim_ids();
+                }
+            } else {
+                opening_accumulator.borrow_mut().flush_to_transcript(transcript);
+            }
+        }
+
+        Ok((batching_coeffs, r_sumcheck))
     }
 }
 
@@ -474,4 +493,148 @@ pub fn process_eq_sumcheck_round<F: JoltField, ProofTranscript: Transcript>(
     eq_poly.bind(r_i);
 
     r_i
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BatchedSumcheck, SumcheckInstance, SumcheckInstanceProof, ZkSumcheckProof};
+    use crate::curve::Bn254Curve;
+    use crate::field::JoltField;
+    use crate::poly::commitment::pedersen::PedersenGenerators;
+    use crate::poly::opening_proof::{
+        OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
+    };
+    use crate::transcripts::{KeccakTranscript, Transcript};
+    use crate::zkvm::witness::VirtualPolynomial;
+    use ark_bn254::Fr;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    struct MockZkInstance {
+        input_claim: Fr,
+        output_claim: Fr,
+        sumcheck_id: SumcheckId,
+        poly: VirtualPolynomial,
+    }
+
+    impl SumcheckInstance<Fr, KeccakTranscript> for MockZkInstance {
+        fn degree(&self) -> usize {
+            1
+        }
+
+        fn num_rounds(&self) -> usize {
+            1
+        }
+
+        fn input_claim(&self) -> Fr {
+            self.input_claim
+        }
+
+        fn expected_output_claim(
+            &self,
+            opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<Fr>>>>,
+            _r: &[<Fr as JoltField>::Challenge],
+        ) -> Fr {
+            let accumulator = opening_accumulator.unwrap();
+            let claim = accumulator
+                .borrow()
+                .get_virtual_polynomial_opening(self.poly, self.sumcheck_id)
+                .1;
+            claim
+        }
+
+        fn normalize_opening_point(
+            &self,
+            opening_point: &[<Fr as JoltField>::Challenge],
+        ) -> OpeningPoint<BIG_ENDIAN, Fr> {
+            OpeningPoint::new(opening_point.to_vec())
+        }
+
+        fn cache_openings_verifier(
+            &self,
+            accumulator: Rc<RefCell<VerifierOpeningAccumulator<Fr>>>,
+            transcript: &mut KeccakTranscript,
+            opening_point: OpeningPoint<BIG_ENDIAN, Fr>,
+        ) {
+            let mut accumulator = accumulator.borrow_mut();
+            accumulator.openings.insert(
+                crate::poly::opening_proof::OpeningId::Virtual(self.poly, self.sumcheck_id),
+                (opening_point.clone(), self.output_claim),
+            );
+            accumulator.append_virtual(transcript, self.poly, self.sumcheck_id, opening_point);
+        }
+    }
+
+    #[test]
+    fn zk_sumcheck_proof_replays_round_commitments() {
+        let gens = PedersenGenerators::<Bn254Curve>::deterministic(4);
+        let commitment_0 = gens.commit(&[Fr::from(3_u64), Fr::from(5_u64)], &Fr::from(7_u64));
+        let commitment_1 = gens.commit(&[Fr::from(11_u64)], &Fr::from(13_u64));
+
+        let proof =
+            ZkSumcheckProof::<Fr, Bn254Curve, KeccakTranscript>::new(
+                vec![commitment_0, commitment_1],
+                vec![1, 0],
+                vec![],
+            );
+
+        let mut expected = KeccakTranscript::new(b"zk_sumcheck_rounds");
+        expected.append_message(b"sumcheck_commitment");
+        expected.append_serializable(&commitment_0);
+        let _: <Fr as JoltField>::Challenge = expected.challenge_scalar_optimized::<Fr>();
+        expected.append_message(b"sumcheck_commitment");
+        expected.append_serializable(&commitment_1);
+        let _: <Fr as JoltField>::Challenge = expected.challenge_scalar_optimized::<Fr>();
+
+        let mut verifier = KeccakTranscript::new(b"zk_sumcheck_rounds");
+        verifier.compare_to(expected);
+        let challenges = proof
+            .verify_transcript_only(2, 1, &mut verifier)
+            .expect("transcript replay should succeed");
+        assert_eq!(challenges.len(), 2);
+    }
+
+    #[test]
+    fn zk_batched_sumcheck_uses_output_claim_commitments() {
+        let gens = PedersenGenerators::<Bn254Curve>::deterministic(4);
+        let round_commitment = gens.commit(&[Fr::from(17_u64), Fr::from(19_u64)], &Fr::from(23_u64));
+        let output_commitment = gens.commit(&[Fr::from(29_u64)], &Fr::from(31_u64));
+        let proof = SumcheckInstanceProof::<Fr, Bn254Curve, KeccakTranscript>::new_zk(
+            vec![round_commitment],
+            vec![1],
+            vec![output_commitment],
+        );
+
+        let instance = MockZkInstance {
+            input_claim: Fr::from(37_u64),
+            output_claim: Fr::from(41_u64),
+            sumcheck_id: SumcheckId::ProductVirtualization,
+            poly: VirtualPolynomial::Product,
+        };
+
+        let mut expected = KeccakTranscript::new(b"zk_output_claim_commitments");
+        let _: Vec<Fr> = expected.challenge_vector(1);
+        expected.append_message(b"sumcheck_commitment");
+        expected.append_serializable(&round_commitment);
+        let _: <Fr as JoltField>::Challenge = expected.challenge_scalar_optimized::<Fr>();
+        expected.append_message(b"output_claims_coms");
+        expected.append_serializable(&output_commitment);
+
+        let mut verifier = KeccakTranscript::new(b"zk_output_claim_commitments");
+        verifier.compare_to(expected);
+
+        let accumulator = Rc::new(RefCell::new(VerifierOpeningAccumulator::<Fr>::new_zk()));
+        let (batching_coeffs, r_sumcheck) = BatchedSumcheck::verify(
+            &proof,
+            vec![&instance as &dyn SumcheckInstance<Fr, KeccakTranscript>],
+            Some(accumulator.clone()),
+            &mut verifier,
+        )
+        .expect("zk verification should replay transcript");
+
+        assert_eq!(batching_coeffs.len(), 1);
+        assert_eq!(r_sumcheck.len(), 1);
+        assert!(accumulator.borrow_mut().take_pending_claims().is_empty());
+        assert!(accumulator.borrow_mut().take_pending_claim_ids().is_empty());
+    }
 }

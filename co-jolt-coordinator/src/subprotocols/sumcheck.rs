@@ -2,12 +2,20 @@
 
 use eyre::Context;
 use jolt_core::curve::Bn254Curve;
+#[cfg(feature = "zk")]
+use jolt_core::curve::Bn254G1;
+#[cfg(feature = "zk")]
+use jolt_core::poly::commitment::pedersen::PedersenGenerators;
+#[cfg(feature = "zk")]
+use jolt_core::poly::opening_proof::OpeningId;
 use jolt_core::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
 use jolt_core::poly::unipoly::{CompressedUniPoly, UniPoly};
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_core::transcripts::{AppendToTranscript, Transcript};
 use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
+#[cfg(feature = "zk")]
+use rand::{CryptoRng, RngCore};
 
 use jolt_core::field::JoltField;
 
@@ -221,6 +229,19 @@ pub struct HybridBatchedSumcheck;
 type HybridRoundMsg<F> = (Vec<AdditiveShare<F>>, Option<Vec<F>>);
 type HybridOpeningsMsg<F> = Vec<(Vec<AdditiveShare<F>>, Option<Vec<F>>)>;
 
+#[cfg(feature = "zk")]
+pub struct HybridZkProofMaterial<F: JoltField> {
+    pub initial_claim: F,
+    pub batching_coefficients: Vec<F>,
+    pub challenges: Vec<F::Challenge>,
+    pub round_commitments: Vec<Bn254G1>,
+    pub poly_coeffs: Vec<Vec<F>>,
+    pub blinding_factors: Vec<F>,
+    pub output_claims: Vec<(OpeningId, F)>,
+    pub output_claims_blindings: Vec<F>,
+    pub output_claims_commitments: Vec<Bn254G1>,
+}
+
 impl HybridBatchedSumcheck {
     #[tracing::instrument(skip_all, name = "HybridSumcheck::prove")]
     pub fn prove<F, ProofTranscript, N>(
@@ -313,6 +334,155 @@ impl HybridBatchedSumcheck {
         Ok((
             SumcheckInstanceProof::<F, Bn254Curve, ProofTranscript>::new(compressed_polys),
             r_sumcheck,
+        ))
+    }
+
+    #[cfg(feature = "zk")]
+    #[tracing::instrument(skip_all, name = "HybridSumcheck::prove_zk")]
+    pub fn prove_zk<F, ProofTranscript, N, R>(
+        instances: &[BatchedSumcheckInstance<F, ProofTranscript>],
+        accumulator: &mut Rep3OpeningAccumulator<F>,
+        transcript: &mut ProofTranscript,
+        network: &mut N,
+        pedersen_gens: &PedersenGenerators<Bn254Curve>,
+        rng: &mut R,
+    ) -> eyre::Result<(
+        SumcheckInstanceProof<F, Bn254Curve, ProofTranscript>,
+        Vec<F::Challenge>,
+        HybridZkProofMaterial<F>,
+    )>
+    where
+        F: JoltField,
+        ProofTranscript: Transcript,
+        N: Rep3NetworkCoordinator,
+        R: CryptoRng + RngCore,
+    {
+        eyre::ensure!(
+            !instances.is_empty(),
+            "Batched sumcheck requires >= 1 instance"
+        );
+
+        let max_num_rounds = instances.iter().map(|s| s.num_rounds()).max().unwrap();
+        let max_degree = instances.iter().map(|s| s.degree()).max().unwrap();
+
+        let batching_coeffs: Vec<F> = transcript.challenge_vector(instances.len());
+        network.broadcast_request(batching_coeffs.clone())?;
+
+        let mut individual_claims: Vec<F> = instances
+            .iter()
+            .map(|instance| {
+                instance
+                    .input_claim_public()
+                    .mul_pow_2(max_num_rounds - instance.num_rounds())
+            })
+            .collect();
+        let initial_batched_claim: F = individual_claims
+            .iter()
+            .zip(batching_coeffs.iter())
+            .map(|(claim, coeff)| *claim * coeff)
+            .sum();
+
+        let mut batched_claim = initial_batched_claim;
+        let mut r_sumcheck = Vec::with_capacity(max_num_rounds);
+        let mut round_commitments = Vec::with_capacity(max_num_rounds);
+        let mut poly_coeffs = Vec::with_capacity(max_num_rounds);
+        let mut blinding_factors = Vec::with_capacity(max_num_rounds);
+        let mut poly_degrees = Vec::with_capacity(max_num_rounds);
+
+        for _round in 0..max_num_rounds {
+            let round_evals = receive_hybrid_round_evals::<F, N>(network)?;
+            eyre::ensure!(
+                round_evals.len() == max_degree,
+                "round evals len mismatch: expected {max_degree}, got {}",
+                round_evals.len()
+            );
+
+            let mut full_evals = Vec::with_capacity(max_degree + 1);
+            full_evals.push(round_evals[0]);
+            full_evals.push(batched_claim - round_evals[0]);
+            full_evals.extend(round_evals.into_iter().skip(1));
+
+            let mut round_poly = UniPoly::<F>::from_evals(&full_evals);
+            while round_poly.coeffs.len() > 1 && round_poly.coeffs.last() == Some(&F::zero()) {
+                round_poly.coeffs.pop();
+            }
+
+            let blinding = F::random(rng);
+            let commitment = pedersen_gens.commit(&round_poly.coeffs, &blinding);
+            transcript.append_message(b"sumcheck_commitment");
+            transcript.append_serializable(&commitment);
+
+            let r_j = transcript.challenge_scalar_optimized::<F>();
+            r_sumcheck.push(r_j);
+            batched_claim = round_poly.evaluate(&r_j);
+            network.broadcast_request(r_j)?;
+
+            poly_degrees.push(round_poly.coeffs.len() - 1);
+            round_commitments.push(commitment);
+            poly_coeffs.push(round_poly.coeffs);
+            blinding_factors.push(blinding);
+        }
+
+        let opening_claims = receive_hybrid_opening_claims::<F, N>(network)?;
+        eyre::ensure!(
+            opening_claims.len() == instances.len(),
+            "opening claims instance count mismatch: expected {}, got {}",
+            instances.len(),
+            opening_claims.len()
+        );
+
+        accumulator.set_zk_mode(true);
+        for (i, instance) in instances.iter().enumerate() {
+            let num_rounds = instance.num_rounds();
+            let r_slice = &r_sumcheck[max_num_rounds - num_rounds..];
+            let opening_point = instance.normalize_opening_point(r_slice);
+            instance.cache_openings(
+                accumulator,
+                transcript,
+                opening_point,
+                opening_claims[i].clone(),
+            );
+        }
+        let output_claim_values = accumulator.take_pending_claims();
+        let output_claim_ids = accumulator.take_pending_claim_ids();
+        accumulator.set_zk_mode(false);
+
+        let output_claims: Vec<(OpeningId, F)> = output_claim_ids
+            .into_iter()
+            .zip(output_claim_values)
+            .collect();
+        let committed_output_claims = pedersen_gens.commit_chunked(
+            &output_claims
+                .iter()
+                .map(|(_, value)| *value)
+                .collect::<Vec<_>>(),
+            rng,
+        );
+        let (output_claims_commitments, output_claims_blindings): (Vec<_>, Vec<_>) =
+            committed_output_claims.into_iter().unzip();
+        transcript.append_message(b"output_claims_coms");
+        output_claims_commitments
+            .iter()
+            .for_each(|commitment| transcript.append_serializable(commitment));
+
+        Ok((
+            SumcheckInstanceProof::<F, Bn254Curve, ProofTranscript>::new_zk(
+                round_commitments.clone(),
+                poly_degrees,
+                output_claims_commitments.clone(),
+            ),
+            r_sumcheck.clone(),
+            HybridZkProofMaterial {
+                initial_claim: initial_batched_claim,
+                batching_coefficients: batching_coeffs,
+                challenges: r_sumcheck,
+                round_commitments,
+                poly_coeffs,
+                blinding_factors,
+                output_claims,
+                output_claims_blindings,
+                output_claims_commitments,
+            },
         ))
     }
 }

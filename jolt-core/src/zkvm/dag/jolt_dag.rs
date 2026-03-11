@@ -85,7 +85,7 @@ impl JoltDAG {
 
         let transcript = state_manager.get_transcript();
         let opening_accumulator = state_manager.get_verifier_accumulator();
-        let _r_stage2 = BatchedSumcheck::verify(
+        let (_stage2_batching_coeffs, _r_stage2) = BatchedSumcheck::verify(
             stage2_proof,
             stage2_instances_ref,
             Some(opening_accumulator.clone()),
@@ -116,7 +116,7 @@ impl JoltDAG {
             _ => panic!("Invalid proof type for stage 3"),
         };
 
-        let _r_stage3 = BatchedSumcheck::verify(
+        let (_stage3_batching_coeffs, _r_stage3) = BatchedSumcheck::verify(
             stage3_proof,
             stage3_instances_ref,
             Some(opening_accumulator.clone()),
@@ -146,7 +146,7 @@ impl JoltDAG {
             _ => panic!("Invalid proof type for stage 4"),
         };
 
-        let _r_stage4 = BatchedSumcheck::verify(
+        let (_stage4_batching_coeffs, _r_stage4) = BatchedSumcheck::verify(
             stage4_proof,
             stage4_instances_ref,
             Some(opening_accumulator.clone()),

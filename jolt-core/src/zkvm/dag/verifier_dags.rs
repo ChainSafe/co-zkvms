@@ -61,6 +61,7 @@ impl<F: JoltField> SpartanDag<F> {
             ProofData::SumcheckProof(p) => p,
             _ => return Err(anyhow::anyhow!("Invalid proof type for stage 1")),
         };
+        let is_zk = proof.is_zk();
 
         // Verify the outer sumcheck
         let (final_eval, r) = proof.verify(
@@ -92,21 +93,34 @@ impl<F: JoltField> SpartanDag<F> {
 
         // Verify: final_eval == eq(tau, r) * (Az * Bz - Cz)
         let expected = eq_eval * (claim_az * claim_bz - claim_cz);
-        if final_eval != expected {
+        if !is_zk && final_eval != expected {
             return Err(anyhow::anyhow!(
                 "Spartan outer sumcheck final eval mismatch"
             ));
         }
 
-        // Append Az/Bz/Cz to transcript
-        sm.transcript
-            .borrow_mut()
-            .append_scalars(&[claim_az, claim_bz, claim_cz]);
+        if is_zk {
+            if let crate::subprotocols::sumcheck::SumcheckInstanceProof::Zk(zk_proof) = proof {
+                let mut transcript = sm.transcript.borrow_mut();
+                transcript.append_message(b"output_claims_coms");
+                zk_proof
+                    .output_claims_commitments
+                    .iter()
+                    .for_each(|commitment| transcript.append_serializable(commitment));
+            }
+        } else {
+            sm.transcript
+                .borrow_mut()
+                .append_scalars(&[claim_az, claim_bz, claim_cz]);
+        }
 
         // Store virtual openings with opening points
         let opening_point = OpeningPoint::new(outer_sumcheck_r.clone());
         {
             let mut acc = accumulator.borrow_mut();
+            if is_zk {
+                acc.set_zk_mode(true);
+            }
             let transcript = &mut *sm.transcript.borrow_mut();
 
             acc.append_virtual(
@@ -127,6 +141,9 @@ impl<F: JoltField> SpartanDag<F> {
                 SumcheckId::SpartanOuter,
                 opening_point,
             );
+            if is_zk {
+                acc.set_zk_mode(false);
+            }
         }
 
         // Compute r_cycle and append committed/virtual openings
@@ -140,12 +157,18 @@ impl<F: JoltField> SpartanDag<F> {
             .collect();
         {
             let mut acc = accumulator.borrow_mut();
+            if is_zk {
+                acc.set_zk_mode(true);
+            }
             acc.append_dense(
                 &mut *sm.transcript.borrow_mut(),
                 committed_polys,
                 SumcheckId::SpartanOuter,
                 r_cycle.to_vec(),
             );
+            if is_zk {
+                acc.set_zk_mode(false);
+            }
         }
 
         // Append virtual openings for remaining R1CS inputs
@@ -155,12 +178,18 @@ impl<F: JoltField> SpartanDag<F> {
             }
             let poly = VirtualPolynomial::try_from(input).ok().unwrap();
             let mut acc = accumulator.borrow_mut();
+            if is_zk {
+                acc.set_zk_mode(true);
+            }
             acc.append_virtual(
                 &mut *sm.transcript.borrow_mut(),
                 poly,
                 SumcheckId::SpartanOuter,
                 OpeningPoint::new(r_cycle.to_vec()),
             );
+            if is_zk {
+                acc.set_zk_mode(false);
+            }
         }
 
         drop(proofs);

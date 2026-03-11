@@ -1,4 +1,5 @@
 use jolt_core::poly::multilinear_polynomial::BindingOrder;
+use jolt_core::poly::unipoly::CompressedUniPoly;
 use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
 use jolt_core::subprotocols::sumcheck::{process_eq_sumcheck_round, SumcheckInstanceProof};
 use jolt_core::transcripts::Transcript;
@@ -38,10 +39,10 @@ impl Rep3SpartanDag {
             .challenge_vector_optimized::<F>(num_rounds_x);
         network.broadcast_request(tau.clone())?;
 
-        let mut eq_poly = GruenSplitEqPolynomial::new(&tau, BindingOrder::LowToHigh);
+        let mut eq_poly = GruenSplitEqPolynomial::<F>::new(&tau, BindingOrder::LowToHigh);
 
         let mut r: Vec<F::Challenge> = Vec::with_capacity(num_rounds_x);
-        let mut polys = Vec::with_capacity(num_rounds_x);
+        let mut polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds_x);
         let mut claim = F::zero();
 
         for _round in 0..num_rounds_x {
@@ -51,7 +52,6 @@ impl Rep3SpartanDag {
 
             let t0: F = round_shares.iter().map(|x| x.0.into_fe()).sum();
             let t_inf: F = round_shares.iter().map(|x| x.1.into_fe()).sum();
-
             let r_i = process_eq_sumcheck_round(
                 (t0, t_inf),
                 &mut eq_poly,
@@ -68,21 +68,37 @@ impl Rep3SpartanDag {
         let final_evals = additive::combine_additive_vec(final_shares);
         let [claim_az, claim_bz, claim_cz]: [F; 3] = final_evals.try_into().unwrap();
 
-        // Insert Stage1 sumcheck proof.
+        // Outer sumcheck is bound from the "top"; reverse challenges to match vanilla.
+        let outer_sumcheck_r: Vec<F::Challenge> = r.into_iter().rev().collect();
+
+        // Compute r_cycle (step variables) and receive claimed witness evaluations in ALL_R1CS_INPUTS order.
+        let num_steps_bits = key.num_steps.log_2();
+        let (r_cycle, _) = outer_sumcheck_r.split_at(num_steps_bits);
+
+        let claimed_shares: Vec<Vec<AdditiveShare<F>>> = network.receive_responses()?;
+        let claimed_witness_evals: Vec<F> = additive::combine_additive_vec(claimed_shares);
+        eyre::ensure!(
+            claimed_witness_evals.len() == ALL_R1CS_INPUTS.len(),
+            "claimed witness eval len mismatch"
+        );
+
+        // Append committed openings (PCS).
+        let committed_polys: Vec<CommittedPolynomial> = COMMITTED_R1CS_INPUTS
+            .iter()
+            .map(|input| CommittedPolynomial::try_from(input).ok().unwrap())
+            .collect();
+        let committed_claims: Vec<F> = COMMITTED_R1CS_INPUTS
+            .iter()
+            .map(|input| claimed_witness_evals[input.to_index()])
+            .collect();
         let proof = SumcheckInstanceProof::new(polys);
         state
             .proofs
             .insert(ProofKeys::Stage1Sumcheck, ProofData::SumcheckProof(proof));
-
-        // Outer sumcheck is bound from the "top"; reverse challenges to match vanilla.
-        let outer_sumcheck_r: Vec<F::Challenge> = r.into_iter().rev().collect();
-
-        // Append Az/Bz/Cz claims to transcript (matching vanilla ordering).
         state
             .transcript
             .append_scalars(&[claim_az, claim_bz, claim_cz]);
 
-        // Store Az/Bz/Cz virtual openings (append again via accumulator, matching vanilla).
         let opening_point =
             jolt_core::poly::opening_proof::OpeningPoint::new(outer_sumcheck_r.clone());
         state.accumulator.append_virtual(
@@ -107,26 +123,6 @@ impl Rep3SpartanDag {
             claim_cz,
         );
 
-        // Compute r_cycle (step variables) and receive claimed witness evaluations in ALL_R1CS_INPUTS order.
-        let num_steps_bits = key.num_steps.log_2();
-        let (r_cycle, _) = outer_sumcheck_r.split_at(num_steps_bits);
-
-        let claimed_shares: Vec<Vec<AdditiveShare<F>>> = network.receive_responses()?;
-        let claimed_witness_evals: Vec<F> = additive::combine_additive_vec(claimed_shares);
-        eyre::ensure!(
-            claimed_witness_evals.len() == ALL_R1CS_INPUTS.len(),
-            "claimed witness eval len mismatch"
-        );
-
-        // Append committed openings (PCS).
-        let committed_polys: Vec<CommittedPolynomial> = COMMITTED_R1CS_INPUTS
-            .iter()
-            .map(|input| CommittedPolynomial::try_from(input).ok().unwrap())
-            .collect();
-        let committed_claims: Vec<F> = COMMITTED_R1CS_INPUTS
-            .iter()
-            .map(|input| claimed_witness_evals[input.to_index()])
-            .collect();
         state.accumulator.append_dense(
             &mut state.transcript,
             committed_polys,
@@ -135,7 +131,6 @@ impl Rep3SpartanDag {
             committed_claims,
         );
 
-        // Append virtual openings for the remaining R1CS inputs.
         for input in ALL_R1CS_INPUTS.iter() {
             if COMMITTED_R1CS_INPUTS.contains(input) {
                 continue;

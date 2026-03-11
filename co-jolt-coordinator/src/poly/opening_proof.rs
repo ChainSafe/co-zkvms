@@ -43,6 +43,10 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
         }
     }
 
+    pub fn set_zk_mode(&mut self, zk_mode: bool) {
+        self.zk_mode = zk_mode;
+    }
+
     pub fn append_sparse<T: Transcript>(
         &mut self,
         transcript: &mut T,
