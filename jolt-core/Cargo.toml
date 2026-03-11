@@ -29,6 +29,7 @@ rv64 = [
     "tracer/rv64",
 ]
 challenge-254-bit = []
+fewer-phases = []
 test-utils = []
 
 [dependencies]
