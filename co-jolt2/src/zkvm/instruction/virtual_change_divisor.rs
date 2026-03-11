@@ -10,7 +10,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualChangeDi
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         // if divisor == -1 (0xFFFFFFFF) && dividend == INT_MIN: return 1, else: return divisor
         let (dividends, divisors): (Vec<_>, Vec<_>) = steps
@@ -35,9 +35,12 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualChangeDi
             .map(|_| rep3_ring::arithmetic::promote_to_trivial_share(io_ctx.id, RingElement(1u64)))
             .collect();
         // if both: output 1, else: output divisor
-        rep3_ring::binary::cmux_many(&both_u64, &ones, &divisors, io_ctx)?.into_iter().zip(out).for_each(|(z, out)| {
-            *out = FutureRep3Ring::cast_to_field_b2a(z);
-        });
+        rep3_ring::binary::cmux_many(&both_u64, &ones, &divisors, io_ctx)?
+            .into_iter()
+            .zip(out)
+            .for_each(|(z, out)| {
+                *out = FutureRep3Ring::cast_to_field_b2a(downcast(z));
+            });
         Ok(())
     }
 }
@@ -53,7 +56,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualChangeDi
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         // if divisor == -1 (0xFFFFFFFF) && dividend == INT_MIN: return 1, else: return divisor
         let (dividends, divisors): (Vec<_>, Vec<_>) = steps
@@ -78,9 +81,12 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualChangeDi
             .map(|_| rep3_ring::arithmetic::promote_to_trivial_share(io_ctx.id, RingElement(1u64)))
             .collect();
         // if both: output 1, else: output divisor
-        rep3_ring::binary::cmux_many(&both_u64, &ones, &divisors, io_ctx)?.into_iter().zip(out).for_each(|(z, out)| {
-            *out = FutureRep3Ring::cast_to_field_b2a(z);
-        });
+        rep3_ring::binary::cmux_many(&both_u64, &ones, &divisors, io_ctx)?
+            .into_iter()
+            .zip(out)
+            .for_each(|(z, out)| {
+                *out = FutureRep3Ring::cast_to_field_b2a(downcast(z));
+            });
         Ok(())
     }
 }

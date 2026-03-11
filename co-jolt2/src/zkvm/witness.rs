@@ -251,13 +251,14 @@ unsafe impl Sync for SharedRep3WitnessData {}
 pub fn compute_lookup_outputs<F, N>(
     trace: &[Rep3Cycle],
     io_ctx: &mut IoContextPool<N>,
+    preproc: &mut PreprocessingPool<F>,
 ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>>
 where
     F: JoltField,
     N: Rep3NetworkWorker,
-    Standard: Distribution<u64>,
+    Standard: Distribution<XlenInt>,
 {
-    let mut output_futures: Vec<FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>> =
+    let mut output_futures: Vec<FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>> =
         vec![FutureRep3Ring::Ready(Rep3PrimeFieldShare::zero_share()); trace.len()];
 
     let _span = tracing::trace_span!("group_by_table").entered();
@@ -281,8 +282,10 @@ where
         group_ids[i] = Some(gid);
     }
 
-    let mut ops_by_instruction: Vec<(Vec<&Rep3Cycle>, Vec<&mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>)> =
-        (0..num_groups).map(|_| (Vec::new(), Vec::new())).collect();
+    let mut ops_by_instruction: Vec<(
+        Vec<&Rep3Cycle>,
+        Vec<&mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
+    )> = (0..num_groups).map(|_| (Vec::new(), Vec::new())).collect();
 
     // TODO: parallelize
     for (i, (cycle, out)) in trace.iter().zip(output_futures.iter_mut()).enumerate() {
@@ -302,9 +305,9 @@ where
     })?;
     drop(_span);
 
-    // Fulfill all pending futures (batched casts via io_ctx)
-    let _span = tracing::info_span!("fulfill_batched").entered();
-    output_futures.fulfill_batched(io_ctx, |res, ()| res)
+    // Fulfill all pending futures (pool-based B2A via edaBits)
+    let _span = tracing::info_span!("fulfill_batched_with_pool").entered();
+    crate::utils::future_ring::fulfill_batched_with_pool(output_futures, io_ctx, preproc, |res, ()| res)
 }
 
 // ── populate_cycle_witness_rep3 ─────────────────────────────────────────────
@@ -330,11 +333,11 @@ where
     let trace = state.trace_mut();
     eyre::ensure!(trace.len().is_power_of_two(), "trace length must be power-of-two");
 
-    // Ensure all shared operands have arithmetic representations (batched).
-    populate_operands_casts(trace, io_ctx.main())?;
+    // Ensure all shared operands have arithmetic representations (batched, edaBits-aided).
+    populate_operands_casts(trace, io_ctx.main(), preproc)?;
 
     // Compute lookup outputs (batched, MPC).
-    let lookup_output = compute_lookup_outputs::<F, N>(trace, io_ctx)?;
+    let lookup_output = compute_lookup_outputs::<F, N>(trace, io_ctx, preproc)?;
 
     let n = trace.len();
 
@@ -360,114 +363,146 @@ where
         ram_write: UnsafeCell::new(vec![Rep3PrimeFieldShare::zero_share(); n]),
         advice: UnsafeCell::new(vec![Rep3PrimeFieldShare::zero_share(); n]),
     });
-    let mut cast_jobs: Vec<SparseCastJob> = Vec::new();
-    cast_jobs.reserve(n * 5);
 
-    let mut maybe_push = |col: SparseCastCol, row: usize, op: &Rep3Operand| match op {
-        Rep3Operand::Public(v) => {
-            let share = promote_to_trivial_share(party_id, F::from_u64(*v as u64));
-            unsafe {
-                match col {
-                    SparseCastCol::Rs1 => (&mut *shared_cols.rs1.get())[row] = share,
-                    SparseCastCol::Rs2 => (&mut *shared_cols.rs2.get())[row] = share,
-                    SparseCastCol::RdWrite => (&mut *shared_cols.rd_write.get())[row] = share,
-                    SparseCastCol::RamRead => (&mut *shared_cols.ram_read.get())[row] = share,
-                    SparseCastCol::RamWrite => (&mut *shared_cols.ram_write.get())[row] = share,
-                    SparseCastCol::Advice => (&mut *shared_cols.advice.get())[row] = share,
-                }
+    // Per-cycle result struct for parallel metadata extraction.
+    struct CycleResult<F: JoltField> {
+        meta: crate::zkvm::dag::witness::CycleMeta,
+        pc: u64,
+        imm: i128,
+        flags: u32,
+        lookup_table: Option<LookupTables<XLEN>>,
+        is_interleaved: bool,
+        right_mask: Option<u64>,
+        // Per-operand: (col, Either public field share or binary ring share for B2A)
+        field_ops: Vec<(SparseCastCol, FieldOp<F>)>,
+    }
+    enum FieldOp<F: JoltField> {
+        WriteTrivial(Rep3PrimeFieldShare<F>),
+        NeedsCast(Rep3RingShare<XlenInt>),
+    }
+
+    // Helper to classify an operand for parallel processing.
+    let classify_op = |col: SparseCastCol, op: &Rep3Operand, ops: &mut Vec<(SparseCastCol, FieldOp<F>)>| {
+        match op {
+            Rep3Operand::Public(v) => {
+                ops.push((col, FieldOp::WriteTrivial(promote_to_trivial_share(party_id, F::from_u64(*v as u64)))));
             }
-        }
-        Rep3Operand::Shared { public: Some(v), .. } => {
-            let share = promote_to_trivial_share(party_id, F::from_u64(*v));
-            unsafe {
-                match col {
-                    SparseCastCol::Rs1 => (&mut *shared_cols.rs1.get())[row] = share,
-                    SparseCastCol::Rs2 => (&mut *shared_cols.rs2.get())[row] = share,
-                    SparseCastCol::RdWrite => (&mut *shared_cols.rd_write.get())[row] = share,
-                    SparseCastCol::RamRead => (&mut *shared_cols.ram_read.get())[row] = share,
-                    SparseCastCol::RamWrite => (&mut *shared_cols.ram_write.get())[row] = share,
-                    SparseCastCol::Advice => (&mut *shared_cols.advice.get())[row] = share,
-                }
+            Rep3Operand::Shared { public: Some(v), .. } => {
+                ops.push((col, FieldOp::WriteTrivial(promote_to_trivial_share(party_id, F::from_u64(*v)))));
             }
-        }
-        Rep3Operand::Shared { .. } => {
-            cast_jobs.push(SparseCastJob { col, row, share: op.as_binary() });
+            Rep3Operand::Shared { .. } => {
+                ops.push((col, FieldOp::NeedsCast(op.as_binary())));
+            }
         }
     };
 
-    for (t, cycle) in trace.iter().enumerate() {
-        let norm = cycle.instruction().normalize();
-        let circuit_flags = cycle.instruction().circuit_flags();
+    // Phase 1 (parallel): compute all per-cycle metadata + classify operands.
+    let cycle_results: Vec<CycleResult<F>> = trace
+        .par_iter()
+        .enumerate()
+        .map(|(t, cycle)| {
+            let norm = cycle.instruction().normalize();
+            let circuit_flags = cycle.instruction().circuit_flags();
+            let pc_index = cycle.get_pc(&preprocessing.shared.bytecode) as u64;
 
-        let pc_index = cycle.get_pc(&preprocessing.shared.bytecode) as u64;
-        unexpanded_pc.push(norm.address as u64);
-        #[cfg(not(feature = "rv64"))]
-        imm.push(if circuit_flags[CircuitFlags::Branch as usize] {
-            norm.operands.imm as i32 as i128
-        } else {
-            norm.operands.imm as XlenInt as i128
-        });
-        #[cfg(feature = "rv64")]
-        imm.push(norm.operands.imm);
+            #[cfg(not(feature = "rv64"))]
+            let imm_val = if circuit_flags[CircuitFlags::Branch as usize] {
+                norm.operands.imm as i32 as i128
+            } else {
+                norm.operands.imm as XlenInt as i128
+            };
+            #[cfg(feature = "rv64")]
+            let imm_val = norm.operands.imm;
 
-        let (rs1_i, rs1_v) = cycle.rs1_read();
-        let (rs2_i, rs2_v) = cycle.rs2_read();
-        let (rd_i, _rd_pre, rd_post) = cycle.rd_write();
+            let (rs1_i, rs1_v) = cycle.rs1_read();
+            let (rs2_i, rs2_v) = cycle.rs2_read();
+            let (rd_i, _rd_pre, rd_post) = cycle.rd_write();
+            let ram_addr = cycle.ram_access().address();
 
-        let ram_addr = cycle.ram_access().address();
-
-        meta.push(crate::zkvm::dag::witness::CycleMeta {
-            pc_index,
-            ram_addr,
-            rd_addr: rd_i,
-            rs1_addr: rs1_i,
-            rs2_addr: rs2_i,
-        });
-
-        // Pack circuit flags into a u32 bitmask
-        let mut mask = 0u32;
-        for (i, flag) in circuit_flags.iter().enumerate() {
-            if *flag {
-                mask |= 1u32 << i;
+            let mut mask = 0u32;
+            for (i, flag) in circuit_flags.iter().enumerate() {
+                if *flag {
+                    mask |= 1u32 << i;
+                }
             }
-        }
-        flags_bits.push(mask);
 
-        // Lookup table and interleaved operand flag (public, derived from opcode).
-        lookup_tables.push(InstructionLookup::<XLEN>::lookup_table(cycle));
-        is_interleaved_operands.push(circuit_flags.is_interleaved_operands());
-        right_operand_public_mask.push(compute_right_operand_public(cycle));
+            let mut field_ops = Vec::with_capacity(8);
 
-        // Advice value (only meaningful for VirtualAdvice).
-        if circuit_flags[CircuitFlags::Advice as usize] {
-            if let Rep3Cycle::VirtualAdvice(c) = cycle {
-                maybe_push(
-                    SparseCastCol::Advice,
-                    t,
-                    c.advice.as_ref().expect("VirtualAdvice shared advice payload missing"),
-                );
+            // Advice
+            if circuit_flags[CircuitFlags::Advice as usize] {
+                if let Rep3Cycle::VirtualAdvice(c) = cycle {
+                    classify_op(
+                        SparseCastCol::Advice,
+                        c.advice.as_ref().expect("VirtualAdvice shared advice payload missing"),
+                        &mut field_ops,
+                    );
+                }
             }
-        }
 
-        maybe_push(SparseCastCol::Rs1, t, &rs1_v);
-        maybe_push(SparseCastCol::Rs2, t, &rs2_v);
-        maybe_push(SparseCastCol::RdWrite, t, &rd_post);
+            classify_op(SparseCastCol::Rs1, &rs1_v, &mut field_ops);
+            classify_op(SparseCastCol::Rs2, &rs2_v, &mut field_ops);
+            classify_op(SparseCastCol::RdWrite, &rd_post, &mut field_ops);
 
-        match cycle.ram_access() {
-            Rep3RAMAccess::Read(r) => {
-                // Match vanilla: for reads, RamReadValue == RamWriteValue == r.value
-                maybe_push(SparseCastCol::RamRead, t, &r.value);
-                maybe_push(SparseCastCol::RamWrite, t, &r.value);
+            match cycle.ram_access() {
+                Rep3RAMAccess::Read(r) => {
+                    classify_op(SparseCastCol::RamRead, &r.value, &mut field_ops);
+                    classify_op(SparseCastCol::RamWrite, &r.value, &mut field_ops);
+                }
+                Rep3RAMAccess::Write(w) => {
+                    classify_op(SparseCastCol::RamRead, &w.pre_value, &mut field_ops);
+                    classify_op(SparseCastCol::RamWrite, &w.post_value, &mut field_ops);
+                }
+                Rep3RAMAccess::NoOp => {
+                    let z = promote_to_trivial_share(party_id, F::zero());
+                    field_ops.push((SparseCastCol::RamRead, FieldOp::WriteTrivial(z)));
+                    field_ops.push((SparseCastCol::RamWrite, FieldOp::WriteTrivial(z)));
+                }
             }
-            Rep3RAMAccess::Write(w) => {
-                maybe_push(SparseCastCol::RamRead, t, &w.pre_value);
-                maybe_push(SparseCastCol::RamWrite, t, &w.post_value);
+
+            CycleResult {
+                meta: crate::zkvm::dag::witness::CycleMeta {
+                    pc_index,
+                    ram_addr,
+                    rd_addr: rd_i,
+                    rs1_addr: rs1_i,
+                    rs2_addr: rs2_i,
+                },
+                pc: norm.address as u64,
+                imm: imm_val,
+                flags: mask,
+                lookup_table: InstructionLookup::<XLEN>::lookup_table(cycle),
+                is_interleaved: circuit_flags.is_interleaved_operands(),
+                right_mask: compute_right_operand_public(cycle),
+                field_ops,
             }
-            Rep3RAMAccess::NoOp => {
-                let z = promote_to_trivial_share(party_id, F::zero());
-                unsafe {
-                    (&mut *shared_cols.ram_read.get())[t] = z;
-                    (&mut *shared_cols.ram_write.get())[t] = z;
+        })
+        .collect();
+
+    // Phase 2 (sequential): unzip results into column vectors and scatter field ops.
+    let mut cast_jobs: Vec<SparseCastJob> = Vec::with_capacity(n * 5);
+    for (t, cr) in cycle_results.into_iter().enumerate() {
+        meta.push(cr.meta);
+        unexpanded_pc.push(cr.pc);
+        imm.push(cr.imm);
+        flags_bits.push(cr.flags);
+        lookup_tables.push(cr.lookup_table);
+        is_interleaved_operands.push(cr.is_interleaved);
+        right_operand_public_mask.push(cr.right_mask);
+
+        for (col, op) in cr.field_ops {
+            match op {
+                FieldOp::WriteTrivial(share) => unsafe {
+                    match col {
+                        SparseCastCol::Rs1 => (&mut *shared_cols.rs1.get())[t] = share,
+                        SparseCastCol::Rs2 => (&mut *shared_cols.rs2.get())[t] = share,
+                        SparseCastCol::RdWrite => (&mut *shared_cols.rd_write.get())[t] = share,
+                        SparseCastCol::RamRead => (&mut *shared_cols.ram_read.get())[t] = share,
+                        SparseCastCol::RamWrite => (&mut *shared_cols.ram_write.get())[t] = share,
+                        SparseCastCol::Advice => (&mut *shared_cols.advice.get())[t] = share,
+                    }
+                },
+                FieldOp::NeedsCast(binary) => {
+                    cast_jobs.push(SparseCastJob { col, row: t, share: binary });
                 }
             }
         }

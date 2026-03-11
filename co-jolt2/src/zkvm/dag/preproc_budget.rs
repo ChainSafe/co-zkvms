@@ -25,6 +25,10 @@ pub struct PreprocessingBudget {
     /// Wrap masks for DaBit-based wrap-m extraction (1 per committed coefficient).
     #[cfg(feature = "ring-msm")]
     pub wrap_masks: usize,
+    /// Ring edaBits (u64) for ring-domain upcast B2A (populate_operands_casts).
+    pub ring_edabits_u64: usize,
+    /// Ring edaBits (u128) for ring-domain upcast B2A (rv64 only).
+    pub ring_edabits_u128: usize,
     /// Ring edaBits (U66) for ring-domain B2A in Dory wrap correction (1 per committed coefficient).
     #[cfg(feature = "ring-msm")]
     pub ring_edabits_u66: usize,
@@ -37,6 +41,13 @@ impl std::fmt::Debug for PreprocessingBudget {
             "EdaBits: u8={}, u16={}, u32={}, u64={}, u128={}; daBits: {}",
             self.u8, self.u16, self.u32, self.u64, self.u128, self.dabits
         )?;
+        if self.ring_edabits_u64 > 0 || self.ring_edabits_u128 > 0 {
+            write!(
+                f,
+                "; ringEdaBits: u64={}, u128={}",
+                self.ring_edabits_u64, self.ring_edabits_u128
+            )?;
+        }
         #[cfg(feature = "ring-msm")]
         write!(
             f,
@@ -165,6 +176,21 @@ pub fn compute_edabit_budget(trace_len: usize) -> PreprocessingBudget {
     // - Sparse operand cast (5 columns × n, worst case): 5n EdaBits
     // - rd_inc/ram_inc (2 pre + 2 post × n): 4n EdaBits
     add_to_budget(&mut budget, XLEN, 9 * n);
+
+    // Lookup output fulfill: CastToField + CastToFieldB2A futures use XlenInt ring.
+    // Worst case: all n cycles emit CastToField or CastToFieldB2A.
+    add_to_budget(&mut budget, XLEN, n);
+
+    // Ring edaBits for populate_operands_casts upcast (binary XlenInt → arithmetic ArithmeticWideInt).
+    // Worst case: 5 operand columns per cycle (rs1, rs2, rd_write, ram_read, ram_write).
+    #[cfg(not(feature = "rv64"))]
+    {
+        budget.ring_edabits_u64 = 5 * n;
+    }
+    #[cfg(feature = "rv64")]
+    {
+        budget.ring_edabits_u128 = 5 * n;
+    }
 
     budget
 }

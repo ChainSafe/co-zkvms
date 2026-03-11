@@ -36,27 +36,14 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAdvice> 
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         // RangeCheckTable is the identity function: output = input = advice value.
         itertools::izip!(steps, out).for_each(|(step, out)| {
             let advice = step.to_lookup_index(io_ctx.id);
             *out = match advice {
                 FutureRep3Ring::Ready(advice) => {
-                    let advice_u64 = match XLEN {
-                        #[cfg(test)]
-                        8 => Rep3RingShare::new_ring(
-                            RingElement(advice.a.0 as u8 as u64),
-                            RingElement(advice.b.0 as u8 as u64),
-                        ),
-                        32 => Rep3RingShare::new_ring(
-                            RingElement(advice.a.0 as u32 as u64),
-                            RingElement(advice.b.0 as u32 as u64),
-                        ),
-                        64 => Rep3RingShare::new_ring(RingElement(advice.a.0 as u64), RingElement(advice.b.0 as u64)),
-                        _ => panic!("{XLEN}-bit word size is unsupported"),
-                    };
-                    FutureRep3Ring::cast_to_field_b2a(advice_u64)
+                    FutureRep3Ring::cast_to_field_b2a(downcast(advice))
                 }
                 FutureRep3Ring::Pending(_, _) => {
                     panic!("VirtualAdvice lookup index must be immediately available")

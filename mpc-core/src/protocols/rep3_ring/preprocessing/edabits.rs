@@ -14,6 +14,7 @@ use crate::protocols::rep3::{
 use crate::protocols::rep3_ring::arithmetic as rep3_ring_arith;
 use eyre::Ok;
 use mpc_types::field::PrimeField;
+use num_traits::AsPrimitive;
 use mpc_types::protocols::rep3_ring::ring::u66::U66;
 use mpc_types::protocols::rep3_ring::{
     Rep3RingShare,
@@ -840,7 +841,7 @@ pub struct LazyEdaBitsRing<T: IntRing2k> {
     _phantom: PhantomData<T>,
 }
 
-impl<T: IntRing2k> LazyEdaBitsRing<T>
+impl<T: IntRing2k + Copy> LazyEdaBitsRing<T>
 where
     Standard: Distribution<T>,
 {
@@ -888,6 +889,12 @@ where
         self.total - self.cursor
     }
 
+    /// Reset cursor to 0 for reuse-preproc mode (benchmarks only).
+    #[cfg(feature = "reuse-preproc")]
+    pub(crate) fn reset_cursor_for_reuse(&mut self) {
+        self.cursor = 0;
+    }
+
     /// Drain `n` ring edaBits. P0/P1 regenerate from seeds; P2 slices from store.
     pub fn take_batch(&mut self, n: usize) -> eyre::Result<EdaBitsRingBatch<T>> {
         eyre::ensure!(
@@ -915,7 +922,10 @@ where
         if party_id == PartyID::ID2 {
             let flat_start = cursor_base * k;
             let flat_end = flat_start + n * k;
-            let alphas_flat = self.alpha2_flat.as_slice()[flat_start..flat_end].to_vec();
+            #[cfg(feature = "reuse-preproc")]
+            let alphas_flat = self.alpha2_flat.read_reuse(flat_start, flat_end)?;
+            #[cfg(not(feature = "reuse-preproc"))]
+            let alphas_flat = self.alpha2_flat.read_consume(flat_start, flat_end)?;
             let gammas = vec![RingElement(T::zero()); n];
             self.cursor += n;
             self.persist_cursor();
@@ -1255,6 +1265,31 @@ where
         .zip(s_prevs)
         .map(|(s_self, s_prev)| Rep3RingShare::new_ring(s_self, s_prev))
         .collect())
+}
+
+/// EdaBits-aided upcast: convert binary XOR-shares from ring T to arithmetic
+/// shares in larger ring U, using ring-domain edaBits for the B2A step.
+///
+/// Online communication: 2 rounds (same as `ring_b2a_many`), replacing the
+/// O(log K) Kogge-Stone rounds of the full `conversion::b2a_many`.
+pub fn upcast_many_from_binary<T, U, N>(
+    binary: &[Rep3RingShare<T>],
+    batch: &EdaBitsRingBatch<U>,
+    io: &mut IoContext<N>,
+) -> eyre::Result<Vec<Rep3RingShare<U>>>
+where
+    T: IntRing2k + AsPrimitive<U>,
+    U: IntRing2k,
+    N: Rep3Network,
+    Standard: Distribution<T> + Distribution<U>,
+{
+    assert!(T::K < U::K);
+    // Zero-extend binary shares T→U (preserves XOR secret sharing).
+    let upcasted: Vec<Rep3RingShare<U>> = binary
+        .par_iter()
+        .map(|s| Rep3RingShare::new_ring(RingElement(s.a.0.as_()), RingElement(s.b.0.as_())))
+        .collect();
+    ring_b2a_many(&upcasted, batch, io)
 }
 
 // ---------------------------------------------------------------------------

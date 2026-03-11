@@ -402,7 +402,14 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                             deficit_counts, deficit_dabits
                         );
                         #[cfg(not(feature = "ring-msm"))]
-                        edabits::extend_pool_batched(&mut pool, deficit_counts, deficit_dabits, &mut io_ctx)?;
+                        edabits::extend_pool_batched(
+                            &mut pool,
+                            deficit_counts,
+                            deficit_dabits,
+                            0,
+                            0,
+                            &mut io_ctx,
+                        )?;
                         #[cfg(feature = "ring-msm")]
                         edabits::extend_pool_batched(
                             &mut pool,
@@ -410,6 +417,8 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                             deficit_dabits,
                             deficit_wm,
                             deficit_re,
+                            0,
+                            0,
                             &mut io_ctx,
                         )?;
                         match pool.save(&pool_dir) {
@@ -425,7 +434,14 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                     info!("preprocess-only: no cached preprocessing ({e}); creating pool into {:?}", pool_dir);
                     #[cfg(not(feature = "ring-msm"))]
                     {
-                        edabits::preprocess_pool::<F, _>(&pool_dir, counts, num_dabits, &mut io_ctx)?
+                        edabits::preprocess_pool::<F, _>(
+                            &pool_dir,
+                            counts,
+                            num_dabits,
+                            0,
+                            0,
+                            &mut io_ctx,
+                        )?
                     }
                     #[cfg(feature = "ring-msm")]
                     {
@@ -435,6 +451,8 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                             num_dabits,
                             budget.wrap_masks,
                             budget.ring_edabits_u66,
+                            0,
+                            0,
                             &mut io_ctx,
                         )?
                     }
@@ -523,20 +541,34 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                 let (rem_eda, rem_da) = pool.remaining_counts();
                 let deficit_counts: [usize; 5] = std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
                 let deficit_dabits = num_dabits.saturating_sub(rem_da);
+                let deficit_re64 = budget
+                    .ring_edabits_u64
+                    .saturating_sub(pool.remaining_ring_edabits_u64());
+                let deficit_re128 = budget
+                    .ring_edabits_u128
+                    .saturating_sub(pool.remaining_ring_edabits_u128());
                 #[cfg(feature = "ring-msm")]
                 let (deficit_wm, deficit_re) = (
                     budget.wrap_masks.saturating_sub(pool.remaining_wrap_masks()),
                     budget.ring_edabits_u66.saturating_sub(pool.remaining_ring_edabits_u66()),
                 );
 
-                let need_extend = deficit_counts.iter().any(|&d| d > 0) || deficit_dabits > 0;
+                let need_extend = deficit_counts.iter().any(|&d| d > 0) || deficit_dabits > 0
+                    || deficit_re64 > 0 || deficit_re128 > 0;
                 #[cfg(feature = "ring-msm")]
                 let need_extend = need_extend || deficit_wm > 0 || deficit_re > 0;
 
                 if need_extend {
                     info!("extending pool: deficit edabits={:?}, dabits={}", deficit_counts, deficit_dabits);
                     #[cfg(not(feature = "ring-msm"))]
-                    edabits::extend_pool_batched(&mut pool, deficit_counts, deficit_dabits, &mut io_ctx)?;
+                    edabits::extend_pool_batched(
+                        &mut pool,
+                        deficit_counts,
+                        deficit_dabits,
+                        deficit_re64,
+                        deficit_re128,
+                        &mut io_ctx,
+                    )?;
                     #[cfg(feature = "ring-msm")]
                     edabits::extend_pool_batched(
                         &mut pool,
@@ -544,6 +576,8 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                         deficit_dabits,
                         deficit_wm,
                         deficit_re,
+                        deficit_re64,
+                        deficit_re128,
                         &mut io_ctx,
                     )?;
                     match pool.save(&pool_dir) {
@@ -561,7 +595,14 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                 info!("no cached preprocessing ({e}); running preprocessing...");
                 #[cfg(not(feature = "ring-msm"))]
                 {
-                    edabits::preprocess_pool::<F, _>(&pool_dir, counts, num_dabits, &mut io_ctx)?
+                    edabits::preprocess_pool::<F, _>(
+                        &pool_dir,
+                        counts,
+                        num_dabits,
+                        budget.ring_edabits_u64,
+                        budget.ring_edabits_u128,
+                        &mut io_ctx,
+                    )?
                 }
                 #[cfg(feature = "ring-msm")]
                 {
@@ -571,6 +612,8 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                         num_dabits,
                         budget.wrap_masks,
                         budget.ring_edabits_u66,
+                        budget.ring_edabits_u64,
+                        budget.ring_edabits_u128,
                         &mut io_ctx,
                     )?
                 }

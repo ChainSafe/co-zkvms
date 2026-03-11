@@ -18,7 +18,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualShiftRig
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         // Shift amount is public, compute bitmask directly.
         // Vanilla formula (XLEN=64): ones = (1u128 << (64-shift)) - 1; mask = (ones << shift) as u64
@@ -54,7 +54,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualShiftRig
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
         io_ctx: &mut IoContext<N>,
-        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<u64, Rep3PrimeFieldShare<F>>>,
+        out: impl IntoIterator<Item = &'a mut FutureRep3Ring<XlenInt, Rep3PrimeFieldShare<F>>>,
     ) -> eyre::Result<()> {
         // Same bitmask formula as VirtualShiftRightBitmask.
         itertools::izip!(steps, out).for_each(|(step, out)| {
