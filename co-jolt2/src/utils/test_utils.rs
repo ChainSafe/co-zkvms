@@ -35,6 +35,7 @@ fn build_test_configs(base_port: u16) -> [NetworkConfig; 3] {
             worker: 0,
             dns_name: Address::new("localhost".into(), base_port + i as u16),
             cert: certs_keys[i].0.clone(),
+            protocol: Default::default(),
         })
         .collect();
 
@@ -47,6 +48,7 @@ fn build_test_configs(base_port: u16) -> [NetworkConfig; 3] {
         bind_addr: SocketAddr::new(IpAddr::from_str("127.0.0.1").unwrap(), base_port + i as u16),
         key: certs_keys[i].1.clone_key(),
         timeout: Some(std::time::Duration::from_secs(30)),
+        user_listen_addr: None,
     })
 }
 
@@ -122,6 +124,7 @@ fn build_test_configs_with_coordinator(base_port: u16) -> ([NetworkConfig; 3], N
             worker: 0,
             dns_name: Address::new("localhost".into(), base_port + i as u16),
             cert: certs_keys[i].0.clone(),
+            protocol: Default::default(),
         })
         .collect();
 
@@ -131,6 +134,7 @@ fn build_test_configs_with_coordinator(base_port: u16) -> ([NetworkConfig; 3], N
         worker: 0,
         dns_name: Address::new("localhost".into(), base_port + 3),
         cert: certs_keys[3].0.clone(),
+        protocol: Default::default(),
     };
 
     let worker_configs: [NetworkConfig; 3] = std::array::from_fn(|i| NetworkConfig {
@@ -142,6 +146,7 @@ fn build_test_configs_with_coordinator(base_port: u16) -> ([NetworkConfig; 3], N
         bind_addr: SocketAddr::new(IpAddr::from_str("127.0.0.1").unwrap(), base_port + i as u16),
         key: certs_keys[i].1.clone_key(),
         timeout: Some(std::time::Duration::from_secs(30)),
+        user_listen_addr: None,
     });
 
     let coordinator_config = NetworkConfig {
@@ -153,6 +158,7 @@ fn build_test_configs_with_coordinator(base_port: u16) -> ([NetworkConfig; 3], N
         bind_addr: SocketAddr::new(IpAddr::from_str("127.0.0.1").unwrap(), base_port + 3),
         key: certs_keys[3].1.clone_key(),
         timeout: Some(std::time::Duration::from_secs(30)),
+        user_listen_addr: None,
     };
 
     (worker_configs, coordinator_config)

@@ -12,7 +12,6 @@ pub mod spartan_interleaved_poly;
 
 pub use commitment::*;
 pub use compact_polynomial::*;
-pub use compact_polynomial::*;
 pub use dense_mlpoly::*;
 pub use multilinear_polynomial::*;
 pub use rlc_polynomial::*;

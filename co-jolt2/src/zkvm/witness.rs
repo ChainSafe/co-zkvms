@@ -5,6 +5,7 @@ use std::mem;
 use std::sync::Arc;
 
 use jolt_common::constants::{LookupIndexInt, XlenInt, XLEN};
+use jolt_core::field::JoltField;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
 use jolt_core::poly::one_hot_polynomial::OneHotPolynomial;
@@ -36,7 +37,6 @@ use crate::utils::memory::maybe_purge_jemalloc;
 use crate::utils::types::Either;
 use crate::zkvm::dag::state_manager::StateManagerWorker;
 use crate::zkvm::instruction::{populate_operands_casts, Rep3LookupQuery, Rep3Operand};
-use jolt_core::field::JoltField;
 
 use super::instruction::{Rep3Cycle, Rep3RAMAccess};
 

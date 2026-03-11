@@ -64,7 +64,7 @@ impl Rep3Program for Program {
 /// 1. Extract operand values from the vanilla Cycle
 /// 2. Generate binary shares for each value
 /// 3. Build 3 Rep3Cycles via `from_cycle_shared`
-fn share_trace<R: RngCore>(
+pub fn share_trace<R: RngCore>(
     trace: Vec<tracer::instruction::Cycle>,
     rng: &mut R,
 ) -> [Vec<Rep3Cycle>; 3] {

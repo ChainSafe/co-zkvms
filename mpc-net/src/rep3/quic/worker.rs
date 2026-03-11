@@ -172,7 +172,7 @@ impl Rep3QuicMpcNetWorker {
         let seq = Arc::new(AtomicU64::new(0));
         let id = PartyWorkerID::new(config.my_id, config.worker);
 
-        let (net_handler, chan_next, chan_prev, chan_next_bulk, chan_prev_bulk, chan_coordinator, transport_lanes) =
+        let (net_handler, chan_next, chan_prev, chan_next_bulk, chan_prev_bulk, mut chan_coordinator, transport_lanes) =
             RUNTIME.block_on(async {
             let net_handler = MpcNetworkHandlerWorker::establish(config.clone()).await?;
             let chan_coordinator = net_handler
@@ -216,6 +216,23 @@ impl Rep3QuicMpcNetWorker {
                 transport_lanes,
             ))
         })?;
+
+        // If coordinator uses TLS protocol, connect via TlsCoordinatorClient
+        #[cfg(feature = "tls")]
+        if chan_coordinator.is_none() {
+            if let Some(ref coord) = config.coordinator {
+                if coord.protocol == crate::config::CoordinatorProtocol::Tls {
+                    tracing::info!("connecting to coordinator via TLS");
+                    let tls_client = crate::rep3::tls::coordinator::TlsCoordinatorClient::connect(
+                        &coord.dns_name,
+                        config.my_id,
+                        config.worker,
+                    )?;
+                    chan_coordinator = Some(ChannelHandle::manage_tls_coordinator(tls_client));
+                }
+            }
+        }
+
         Ok(Self {
             id,
             net_handler: Arc::new(MpcNetworkHandlerWrapper::new(
@@ -679,50 +696,59 @@ impl MpcNetworkHandlerWorker {
         };
 
         let coordinator_connection = if let Some(coordinator) = config.coordinator {
-            tracing::trace!("my id: {:?}, connecting to coordinator", config.my_id);
+            match coordinator.protocol {
+                crate::config::CoordinatorProtocol::Quic => {
+                    tracing::trace!("my id: {:?}, connecting to coordinator via QUIC", config.my_id);
 
-            let addresses: Vec<SocketAddr> = coordinator
-                .dns_name
-                .to_socket_addrs()
-                .with_context(|| format!("while resolving DNS name for {}", coordinator.dns_name))?
-                .collect();
-            if addresses.is_empty() {
-                return Err(eyre::eyre!(
-                    "could not resolve DNS name {}",
-                    coordinator.dns_name
-                ));
+                    let addresses: Vec<SocketAddr> = coordinator
+                        .dns_name
+                        .to_socket_addrs()
+                        .with_context(|| format!("while resolving DNS name for {}", coordinator.dns_name))?
+                        .collect();
+                    if addresses.is_empty() {
+                        return Err(eyre::eyre!(
+                            "could not resolve DNS name {}",
+                            coordinator.dns_name
+                        ));
+                    }
+                    let party_addr = addresses[0];
+                    let local_client_socket: SocketAddr = match party_addr {
+                        SocketAddr::V4(_) => "0.0.0.0:0".parse().expect("hardcoded IP address is valid"),
+                        SocketAddr::V6(_) => "[::]:0".parse().expect("hardcoded IP address is valid"),
+                    };
+                    let endpoint = quinn::Endpoint::client(local_client_socket)
+                        .with_context(|| format!("creating client endpoint to coordinator"))?;
+                    let conn = endpoint
+                        .connect_with(
+                            client_config.clone(),
+                            party_addr,
+                            &coordinator.dns_name.hostname,
+                        )
+                        .with_context(|| format!("setting up client connection with coordinator"))?
+                        .await
+                        .with_context(|| format!("connecting as a client to coordinator"))?;
+                    let mut uni = conn.open_uni().await?;
+                    uni.write_u32(u32::try_from(config.my_id).expect("party id fits into u32"))
+                        .await?;
+                    uni.write_u32(config.worker as u32).await?;
+                    uni.flush().await?;
+                    uni.finish()?;
+
+                    tracing::trace!(
+                        "coordinator conn with id {} from {} to {}",
+                        conn.stable_id(),
+                        endpoint.local_addr().unwrap(),
+                        conn.remote_address(),
+                    );
+                    endpoints.push(endpoint);
+                    Some(conn)
+                }
+                crate::config::CoordinatorProtocol::Tls => {
+                    // TLS coordinator connection is handled in Rep3QuicMpcNetWorker::new()
+                    // via ChannelHandle::manage_tls_coordinator.
+                    None
+                }
             }
-            let party_addr = addresses[0];
-            let local_client_socket: SocketAddr = match party_addr {
-                SocketAddr::V4(_) => "0.0.0.0:0".parse().expect("hardcoded IP address is valid"),
-                SocketAddr::V6(_) => "[::]:0".parse().expect("hardcoded IP address is valid"),
-            };
-            let endpoint = quinn::Endpoint::client(local_client_socket)
-                .with_context(|| format!("creating client endpoint to coordinator"))?;
-            let conn = endpoint
-                .connect_with(
-                    client_config.clone(),
-                    party_addr,
-                    &coordinator.dns_name.hostname,
-                )
-                .with_context(|| format!("setting up client connection with coordinator"))?
-                .await
-                .with_context(|| format!("connecting as a client to coordinator"))?;
-            let mut uni = conn.open_uni().await?;
-            uni.write_u32(u32::try_from(config.my_id).expect("party id fits into u32"))
-                .await?;
-            uni.write_u32(config.worker as u32).await?;
-            uni.flush().await?;
-            uni.finish()?;
-
-            tracing::trace!(
-                "coordinator conn with id {} from {} to {}",
-                conn.stable_id(),
-                endpoint.local_addr().unwrap(),
-                conn.remote_address(),
-            );
-            endpoints.push(endpoint);
-            Some(conn)
         } else {
             None
         };
