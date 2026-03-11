@@ -2,14 +2,14 @@
 use crate::poly::compact_polynomial::Rep3CompactPolynomial;
 use crate::poly::{Rep3DensePolynomial, Rep3MultilinearPolynomial, Rep3SharedPoly};
 use crate::utils::types::MaybeShared;
-use ark_ec::bn::BnConfig as ArkBnConfig;
+use ark_ec::bn::{BnConfig as ArkBnConfig, G1Prepared as BnG1Prepared, G2Prepared as BnG2Prepared};
 use ark_ec::pairing::{MillerLoopOutput, Pairing as ArkPairing, PairingOutput};
 use ark_ec::scalar_mul::variable_base::VariableBaseMSM as ArkVariableBaseMSM;
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{AdditiveGroup, CyclotomicMultSubgroup, Field, One};
 use ark_std::Zero;
 use dory::Polynomial;
-use jolt_core::ark_bn254::{Bn254, Fq12, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
+use jolt_core::ark_bn254::{Bn254, Config as Bn254Config, Fq12, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
 use jolt_core::jolt_optimizations;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
@@ -302,7 +302,6 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
             let _span = tracing::info_span!("vmv_message").entered();
             rayon::join(
                 || {
-                    let _span = tracing::trace_span!("vmv_share_terms").entered();
                     let t_vec_v = msm_g1_affine(&row_commitments_affine, &v_vec_share);
                     let g_fin_affine = setup.core.g_fin.0.into_affine();
                     let c_share = Bn254::pairing(t_vec_v, g_fin_affine).0;
@@ -313,10 +312,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
                     let d2_share = Bn254::pairing(gamma1_v, g_fin_affine).0;
                     (c_share, d2_share)
                 },
-                || {
-                    let _span = tracing::trace_span!("vmv_public_e1").entered();
-                    compute_public_vmv_e1(party_id, &row_commitments_affine, &l_vec)
-                },
+                || compute_public_vmv_e1(party_id, &row_commitments_affine, &l_vec),
             )
         };
 
@@ -341,23 +337,18 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
 
             // First message: d2_left/d2_right pairings (parallel)
             let (d2_share_round, public_first_round) = {
-                let _span = tracing::trace_span!("d2_pairing", curr_nu, n2).entered();
-                let v2_affine_pre = {
-                    let _span = tracing::trace_span!("first_pre_beta_normalize_v2", curr_nu, n2).entered();
-                    G2Projective::normalize_batch(&v2_share)
-                };
+                let _span = tracing::trace_span!("d2_pairing", n2).entered();
+                let v2_affine_pre = G2Projective::normalize_batch(&v2_share);
                 rayon::join(
                     || {
-                        let _span = tracing::trace_span!("first_share_d2_pairing", curr_nu, n2).entered();
                         let g1_prime_aff = &g1_affine_all[..n2];
                         let (v2_l_aff, v2_r_aff) = v2_affine_pre.split_at(n2);
                         rayon::join(
-                            || multi_pairing_both_affine(g1_prime_aff, v2_l_aff),
-                            || multi_pairing_both_affine(g1_prime_aff, v2_r_aff),
+                            || multi_pairing_both_affine_threshold(g1_prime_aff, v2_l_aff),
+                            || multi_pairing_both_affine_threshold(g1_prime_aff, v2_r_aff),
                         )
                     },
                     || {
-                        let _span = tracing::trace_span!("first_public_terms", curr_nu, n2).entered();
                         compute_public_first_reduce_terms(
                             party_id,
                             setup,
@@ -379,14 +370,10 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
 
             // Update v1/v2 with generators
             {
-                let _span = tracing::trace_span!("v1v2_update", curr_nu, n2).entered();
-                {
-                    let _span = tracing::trace_span!("v1_public_update", curr_nu, n2).entered();
-                    jolt_optimizations::vector_add_scalar_mul_g1_online(&mut v1_pub, &g1_all[..(1 << curr_nu)], beta);
-                }
+                let _span = tracing::trace_span!("v1v2_update", n2).entered();
+                jolt_optimizations::vector_add_scalar_mul_g1_online(&mut v1_pub, &g1_all[..(1 << curr_nu)], beta);
 
                 if party_id == PartyID::ID0 {
-                    let _span = tracing::trace_span!("v2_share_update", curr_nu, n2).entered();
                     jolt_optimizations::vector_add_scalar_mul_g2_online(
                         &mut v2_share,
                         &g2_all[..(1 << curr_nu)],
@@ -397,28 +384,20 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
 
             // Second message: c_plus/c_minus pairings + e2 MSMs (all 4 in parallel)
             let (share_second_round, public_second_round) = {
-                let _span = tracing::trace_span!("second_msg", curr_nu, n2).entered();
-                let v1_affine_post = {
-                    let _span = tracing::trace_span!("second_post_beta_normalize_v1", curr_nu, n2).entered();
-                    G1Projective::normalize_batch(&v1_pub)
-                };
-                let v2_affine_post = {
-                    let _span = tracing::trace_span!("second_post_beta_normalize_v2", curr_nu, n2).entered();
-                    G2Projective::normalize_batch(&v2_share)
-                };
+                let _span = tracing::trace_span!("second_msg", n2).entered();
+                let v1_affine_post = G1Projective::normalize_batch(&v1_pub);
+                let v2_affine_post = G2Projective::normalize_batch(&v2_share);
                 let (s1_l, s1_r) = s1.split_at(n2);
                 let ((c_plus_share_round, c_minus_share_round), (e2_plus_share, e2_minus_share)) = rayon::join(
                     || {
-                        let _span = tracing::trace_span!("second_share_pairings", curr_nu, n2).entered();
                         let (v1_l_aff, v1_r_aff) = v1_affine_post.split_at(n2);
                         let (v2_l_aff, v2_r_aff) = v2_affine_post.split_at(n2);
                         rayon::join(
-                            || multi_pairing_both_affine(v1_l_aff, v2_r_aff),
-                            || multi_pairing_both_affine(v1_r_aff, v2_l_aff),
+                            || multi_pairing_both_affine_threshold(v1_l_aff, v2_r_aff),
+                            || multi_pairing_both_affine_threshold(v1_r_aff, v2_l_aff),
                         )
                     },
                     || {
-                        let _span = tracing::trace_span!("second_share_e2_msms", curr_nu, n2).entered();
                         let (v2_l_aff, v2_r_aff) = v2_affine_post.split_at(n2);
                         rayon::join(
                             || msm_g2_affine(v2_r_aff, s1_l).into_affine(),
@@ -428,7 +407,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
                 );
                 rayon::join(
                     || ((c_plus_share_round, c_minus_share_round), (e2_plus_share, e2_minus_share)),
-                    || compute_public_second_reduce_terms(party_id, &v1_affine_post, &s2, curr_nu, n2),
+                    || compute_public_second_reduce_terms(party_id, &v1_affine_post, &s2, n2),
                 )
             };
 
@@ -439,36 +418,25 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
 
             // Fold v1, v2, s1, s2 — in-place GLV-accelerated for group elements
             {
-                let _span = tracing::trace_span!("fold", curr_nu, n2).entered();
+                let _span = tracing::trace_span!("fold", n2).entered();
 
                 // v1[i] = alpha * v1_l[i] + v1_r[i] (in-place, GLV 2D Shamir)
-                {
-                    let _span = tracing::trace_span!("fold_v1", curr_nu, n2).entered();
-                    let (v1_l_mut, v1_r_ref) = v1_pub.split_at_mut(n2);
-                    jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(v1_l_mut, alpha, v1_r_ref);
-                    v1_pub.truncate(n2);
-                }
+                let (v1_l_mut, v1_r_ref) = v1_pub.split_at_mut(n2);
+                jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(v1_l_mut, alpha, v1_r_ref);
+                v1_pub.truncate(n2);
 
                 // v2[i] = alpha_inv * v2_l[i] + v2_r[i] (in-place, GLV 4D Shamir)
-                {
-                    let _span = tracing::trace_span!("fold_v2", curr_nu, n2).entered();
-                    let (v2_l_mut, v2_r_ref) = v2_share.split_at_mut(n2);
-                    jolt_optimizations::vector_scalar_mul_add_gamma_g2_online(v2_l_mut, alpha_inv, v2_r_ref);
-                    v2_share.truncate(n2);
-                }
+                let (v2_l_mut, v2_r_ref) = v2_share.split_at_mut(n2);
+                jolt_optimizations::vector_scalar_mul_add_gamma_g2_online(v2_l_mut, alpha_inv, v2_r_ref);
+                v2_share.truncate(n2);
 
                 // s1, s2 scalar folds (no GLV needed for field elements)
-                {
-                    let _span = tracing::trace_span!("fold_scalars", curr_nu, n2).entered();
-                    let (s1_l, s1_r) = s1.split_at(n2);
-                    let (s2_l, s2_r) = s2.split_at(n2);
-                    let (s1_next, s2_next): (Vec<Fr>, Vec<Fr>) = (0..n2)
-                        .into_par_iter()
-                        .map(|i| (s1_l[i] * alpha + s1_r[i], s2_l[i] * alpha_inv + s2_r[i]))
-                        .unzip();
-                    s1 = s1_next;
-                    s2 = s2_next;
-                }
+                let (s1_l, s1_r) = s1.split_at(n2);
+                let (s2_l, s2_r) = s2.split_at(n2);
+                let (s1_next, s2_next): (Vec<Fr>, Vec<Fr>) =
+                    (0..n2).into_par_iter().map(|i| (s1_l[i] * alpha + s1_r[i], s2_l[i] * alpha_inv + s2_r[i])).unzip();
+                s1 = s1_next;
+                s2 = s2_next;
             }
 
             curr_nu -= 1;
@@ -561,7 +529,6 @@ fn compute_public_first_reduce_terms(
     let n2 = 1usize << (curr_nu - 1);
     match party_id {
         party_id if owns_first_reduce_d1_left(party_id) => {
-            let _span = tracing::trace_span!("first_public_d1_left", curr_nu, n2).entered();
             let d1_left = multi_pairing_setup_g2_cached_affine(
                 &G1Projective::normalize_batch(&v1_pub[..n2]),
                 setup,
@@ -570,7 +537,6 @@ fn compute_public_first_reduce_terms(
             (Some(d1_left), None, None, None)
         }
         party_id if owns_first_reduce_d1_right(party_id) => {
-            let _span = tracing::trace_span!("first_public_d1_right", curr_nu, n2).entered();
             let d1_right = multi_pairing_setup_g2_cached_affine(
                 &G1Projective::normalize_batch(&v1_pub[n2..(1 << curr_nu)]),
                 setup,
@@ -579,7 +545,6 @@ fn compute_public_first_reduce_terms(
             (None, Some(d1_right), None, None)
         }
         party_id if owns_first_reduce_e_betas(party_id) => {
-            let _span = tracing::trace_span!("first_public_e_betas", curr_nu, n2).entered();
             let (e1_beta, e2_beta) = rayon::join(
                 || msm_g1_affine(&g1_affine_all[..(1 << curr_nu)], s2).into_affine(),
                 || msm_g2_affine(&g2_affine_all[..(1 << curr_nu)], s1).into_affine(),
@@ -594,20 +559,13 @@ fn compute_public_second_reduce_terms(
     party_id: PartyID,
     v1_affine_post: &[G1Affine],
     s2: &[Fr],
-    curr_nu: usize,
     n2: usize,
 ) -> DorySecondReducePublicMsg {
     let (v1_l_aff, v1_r_aff) = v1_affine_post.split_at(n2);
     let (s2_l, s2_r) = s2.split_at(n2);
     match party_id {
-        party_id if owns_second_reduce_e1_plus(party_id) => {
-            let _span = tracing::trace_span!("second_public_e1_plus", curr_nu, n2).entered();
-            (Some(msm_g1_affine(v1_l_aff, s2_r).into_affine()), None)
-        }
-        party_id if owns_second_reduce_e1_minus(party_id) => {
-            let _span = tracing::trace_span!("second_public_e1_minus", curr_nu, n2).entered();
-            (None, Some(msm_g1_affine(v1_r_aff, s2_l).into_affine()))
-        }
+        party_id if owns_second_reduce_e1_plus(party_id) => (Some(msm_g1_affine(v1_l_aff, s2_r).into_affine()), None),
+        party_id if owns_second_reduce_e1_minus(party_id) => (None, Some(msm_g1_affine(v1_r_aff, s2_l).into_affine())),
         _ => (None, None),
     }
 }
@@ -1185,6 +1143,29 @@ fn multi_pairing(ps: &[G1Projective], qs: &[G2Projective]) -> Fq12 {
 fn multi_pairing_both_affine(ps_aff: &[G1Affine], qs_aff: &[G2Affine]) -> Fq12 {
     let n = ps_aff.len().min(qs_aff.len());
     Bn254::multi_pairing(&ps_aff[..n], &qs_aff[..n]).0
+}
+
+const DORY_PARALLEL_PAIRING_THRESHOLD: usize = 1024;
+
+fn multi_pairing_both_affine_threshold(ps_aff: &[G1Affine], qs_aff: &[G2Affine]) -> Fq12 {
+    let n = ps_aff.len().min(qs_aff.len());
+    if n < DORY_PARALLEL_PAIRING_THRESHOLD {
+        return Bn254::multi_pairing(&ps_aff[..n], &qs_aff[..n]).0;
+    }
+
+    let g1_prepared: Vec<BnG1Prepared<Bn254Config>> =
+        ps_aff[..n].par_iter().copied().map(BnG1Prepared::<Bn254Config>::from).collect();
+    let g2_prepared: Vec<BnG2Prepared<Bn254Config>> =
+        qs_aff[..n].par_iter().copied().map(BnG2Prepared::<Bn254Config>::from).collect();
+
+    let num_chunks = rayon::current_num_threads();
+    let chunk_size = (n / num_chunks.max(1)).max(1);
+    let ml_result = g1_prepared
+        .par_chunks(chunk_size)
+        .zip(g2_prepared.par_chunks(chunk_size))
+        .map(|(g1_chunk, g2_chunk)| Bn254::multi_miller_loop_ref(g1_chunk.iter(), g2_chunk.iter()).0)
+        .product();
+    Bn254::final_exponentiation(MillerLoopOutput(ml_result)).expect("final exponentiation should not fail").0
 }
 
 fn multi_pairing_setup_g2_cached_affine(
