@@ -3,10 +3,7 @@ use super::*;
 // TODO: figure out how to deal with signed operands.
 impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<ORI> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand) {
-        (
-            self.register_state.rs1_operand(),
-            Rep3Operand::Public(self.instruction.operands.imm.into()),
-        )
+        (self.register_state.rs1_operand(), Rep3Operand::Public(self.instruction.operands.imm.into()))
     }
 
     #[tracing::instrument(skip_all, name = "ORI::output", level = "trace")]
@@ -20,10 +17,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<ORI> {
             .iter()
             .map(|st| {
                 let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*st);
-                (
-                    l.as_binary_or_trivial(io_ctx.id),
-                    r.as_binary_or_trivial(io_ctx.id),
-                )
+                (l.as_binary_or_trivial(io_ctx.id), r.as_binary_or_trivial(io_ctx.id))
             })
             .unzip();
         rep3_ring::binary::or_many(&x, &y, io_ctx)?

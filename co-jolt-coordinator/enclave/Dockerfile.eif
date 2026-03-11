@@ -1,0 +1,21 @@
+# Stage 1: Build coordinator as static musl binary
+FROM rust:1-alpine AS builder
+RUN apk add --no-cache musl-dev cmake make perl linux-headers g++
+WORKDIR /src
+COPY . .
+RUN RUSTFLAGS="-A warnings" cargo build --release \
+    --target x86_64-unknown-linux-musl \
+    -p co-jolt-coordinator --features aws_nitro \
+    --bin coordinator
+
+# Stage 2: Minimal runtime image for EIF
+FROM alpine:3.20
+COPY --from=builder /src/target/x86_64-unknown-linux-musl/release/coordinator /usr/local/bin/coordinator
+# Copy pre-generated Dory SRS files so coordinator uses the same SRS as workers/client.
+# Without these, the enclave would generate a random SRS that mismatches the host.
+# The SRS files are staged into .srs/ by `make build-eif` based on SRS_MIN/SRS_MAX.
+# Note: Nitro enclave init ignores WORKDIR, so start.sh explicitly cd's to /data.
+COPY .srs/ /data/
+COPY co-jolt-coordinator/enclave/start.sh /usr/local/bin/start.sh
+RUN chmod +x /usr/local/bin/start.sh
+ENTRYPOINT ["/usr/local/bin/start.sh"]

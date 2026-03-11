@@ -30,10 +30,7 @@ impl Rep3RegisterState for Rep3RegisterStateFormatVirtualI {
         let (old, new) = public_state.rd_values();
         Self {
             rs1: Rep3Operand::Public(public_state.rs1_value().into()),
-            rd: (
-                Rep3Operand::Public(old.into()),
-                Rep3Operand::Public(new.into()),
-            ),
+            rd: (Rep3Operand::Public(old.into()), Rep3Operand::Public(new.into())),
         }
     }
 
@@ -41,10 +38,7 @@ impl Rep3RegisterState for Rep3RegisterStateFormatVirtualI {
         _public_state: &T,
         shares: &mut impl Iterator<Item = Rep3Operand>,
     ) -> Self {
-        Self {
-            rs1: shares.next().unwrap(),
-            rd: (shares.next().unwrap(), shares.next().unwrap()),
-        }
+        Self { rs1: shares.next().unwrap(), rd: (shares.next().unwrap(), shares.next().unwrap()) }
     }
 
     fn shared_operands_mut(&mut self) -> Vec<&mut Rep3Operand> {

@@ -37,10 +37,7 @@ impl Rep3RegisterState for Rep3RegisterStateFormatS {
         _public_state: &T,
         shares: &mut impl Iterator<Item = Rep3Operand>,
     ) -> Self {
-        Self {
-            rs1: shares.next().unwrap(),
-            rs2: shares.next().unwrap(),
-        }
+        Self { rs1: shares.next().unwrap(), rs2: shares.next().unwrap() }
     }
 
     fn shared_operands_mut(&mut self) -> Vec<&mut Rep3Operand> {

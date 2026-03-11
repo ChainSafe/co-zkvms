@@ -5,9 +5,7 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance};
 use crate::transcripts::Transcript;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
-use crate::zkvm::witness::{
-    compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial,
-};
+use crate::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial};
 use anyhow::Context;
 
 use super::verifier_dags::{BytecodeDag, LookupsDag, RamDag, RegistersDag, SpartanDag};

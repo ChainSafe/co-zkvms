@@ -8,10 +8,7 @@ use crate::{
     poly::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, PolynomialBinding},
-        opening_proof::{
-            OpeningPoint, SumcheckId, VerifierOpeningAccumulator,
-            BIG_ENDIAN,
-        },
+        opening_proof::{OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN},
         ra_poly::RaPolynomial,
         split_eq_poly::GruenSplitEqPolynomial,
     },
@@ -312,7 +309,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for BooleanitySumcheck<
             opening_point.r,
         );
     }
-
 }
 
 impl<F: JoltField> BooleanitySumcheck<F> {

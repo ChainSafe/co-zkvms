@@ -2,12 +2,12 @@ use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 
-use jolt_core::field::JoltField;
 use crate::poly::commitment::Rep3CommitmentScheme;
 pub use crate::subprotocols::sumcheck::{
     BatchedSumcheckInstance, PublicSumcheckInstance, Rep3SumcheckInstance,
 };
 use crate::zkvm::dag::state_manager::StateManager;
+use jolt_core::field::JoltField;
 
 // ---------------------------------------------------------------------------
 // Staged sumcheck pipeline trait (coordinator side)
@@ -70,7 +70,7 @@ where
     PCS: CommitmentScheme<Field = F> + Rep3CommitmentScheme<F, ProofTranscript>,
     N: Rep3NetworkCoordinator,
 {
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, name = "stage2_instances")]
     fn stage2_instances(
         &mut self,
         sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
@@ -146,7 +146,7 @@ where
         Ok(stage2_instances)
     }
 
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, name = "stage3_instances")]
     fn stage3_instances(
         &mut self,
         state: &mut StateManager<'_, F, ProofTranscript, PCS>,
@@ -259,7 +259,9 @@ where
                 MultilinearPolynomial, PolynomialEvaluation,
             };
 
-            use crate::zkvm::ram::{build_initial_memory_state, val_evaluation::Rep3RamValEvaluation};
+            use crate::zkvm::ram::{
+                build_initial_memory_state, val_evaluation::Rep3RamValEvaluation,
+            };
 
             let initial_ram_state = build_initial_memory_state(
                 &state.preprocessing.shared.ram,
@@ -308,7 +310,7 @@ where
         ])
     }
 
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, name = "stage4_instances")]
     fn stage4_instances(
         &mut self,
         state: &mut StateManager<'_, F, ProofTranscript, PCS>,

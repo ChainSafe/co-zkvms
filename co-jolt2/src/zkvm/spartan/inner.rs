@@ -48,16 +48,12 @@ impl<F: JoltField> Rep3InnerSumcheckWorker<F> {
         let num_vars_uniform = key.num_vars_uniform_padded();
 
         // poly_abc_small: PUBLIC — combined A/B/C matrix evaluation with RLC
-        let poly_abc_small = MixedPolynomial::from_public_evals(
-            key.evaluate_small_matrix_rlc(rx_var, gamma),
-            party_id,
-        );
+        let poly_abc_small = MixedPolynomial::from_public_evals(key.evaluate_small_matrix_rlc(rx_var, gamma), party_id);
 
         // poly_z: MIXED — shared witness evals + public constant column
         let mut bind_z = vec![Rep3Value::zero_public(); num_vars_uniform];
         for r1cs_input in ALL_R1CS_INPUTS.iter() {
-            bind_z[r1cs_input.to_index()] =
-                Rep3Value::Shared(claimed_witness_evals[r1cs_input.to_index()]);
+            bind_z[r1cs_input.to_index()] = Rep3Value::Shared(claimed_witness_evals[r1cs_input.to_index()]);
         }
         // Set constant column
         let const_col = JoltR1CSInputs::num_inputs();
@@ -66,27 +62,15 @@ impl<F: JoltField> Rep3InnerSumcheckWorker<F> {
         }
 
         let poly_z = MixedPolynomial::new(bind_z, party_id);
-        assert_eq!(
-            poly_abc_small.len(),
-            poly_z.len(),
-            "poly_abc_small and poly_z length mismatch"
-        );
+        assert_eq!(poly_abc_small.len(), poly_z.len(), "poly_abc_small and poly_z length mismatch");
 
         let num_rounds = num_vars_uniform.log_2();
 
-        Self {
-            poly_abc_small,
-            poly_z,
-            num_rounds,
-            input_claim,
-            party_id,
-        }
+        Self { poly_abc_small, poly_z, num_rounds, input_claim, party_id }
     }
 }
 
-impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
-    for Rep3InnerSumcheckWorker<F>
-{
+impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Rep3InnerSumcheckWorker<F> {
     fn degree(&self) -> usize {
         2
     }
@@ -127,15 +111,8 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         let eval_degree = max_degree.max(2);
         let mut evals = vec![AdditiveShare::<F>::zero(); max_degree];
         for i in 0..half_len {
-            let abc_evals = self.poly_abc_small.sumcheck_evals(
-                i,
-                eval_degree,
-                BindingOrder::HighToLow,
-                party_id,
-            );
-            let z_evals =
-                self.poly_z
-                    .sumcheck_evals(i, eval_degree, BindingOrder::HighToLow, party_id);
+            let abc_evals = self.poly_abc_small.sumcheck_evals(i, eval_degree, BindingOrder::HighToLow, party_id);
+            let z_evals = self.poly_z.sumcheck_evals(i, eval_degree, BindingOrder::HighToLow, party_id);
             for j in 0..max_degree {
                 evals[j] += abc_evals[j].mul(&z_evals[j]).into_additive(party_id);
             }
@@ -155,10 +132,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         self.poly_z.bind(r, BindingOrder::HighToLow);
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.to_vec())
     }
 

@@ -50,9 +50,7 @@ pub use future::{B2ABucketExtend, SuffixFutureBatch};
 /// `T::Half`-sized shares, each holding `suffix_len/2` bits.
 pub trait Uninterleavable: IntRing2k + B2ABucketExtend + AsPrimitive<Self::Half> {
     type Half: IntRing2k + B2ABucketExtend + AsPrimitive<Self>;
-    fn uninterleave(
-        s: Rep3RingShare<Self>,
-    ) -> (Rep3RingShare<Self::Half>, Rep3RingShare<Self::Half>)
+    fn uninterleave(s: Rep3RingShare<Self>) -> (Rep3RingShare<Self::Half>, Rep3RingShare<Self::Half>)
     where
         Standard: Distribution<Self::Half>;
 }
@@ -88,22 +86,12 @@ macro_rules! impl_uninterleavable {
     };
 }
 
-impl_uninterleavable!(
-    u16,
-    u8,
-    0x5555u16,
-    [(1, 0x3333u16), (2, 0x0F0Fu16), (4, 0x00FFu16)]
-);
+impl_uninterleavable!(u16, u8, 0x5555u16, [(1, 0x3333u16), (2, 0x0F0Fu16), (4, 0x00FFu16)]);
 impl_uninterleavable!(
     u32,
     u16,
     0x5555_5555u32,
-    [
-        (1, 0x3333_3333u32),
-        (2, 0x0F0F_0F0Fu32),
-        (4, 0x00FF_00FFu32),
-        (8, 0x0000_FFFFu32)
-    ]
+    [(1, 0x3333_3333u32), (2, 0x0F0F_0F0Fu32), (4, 0x00FF_00FFu32), (8, 0x0000_FFFFu32)]
 );
 impl_uninterleavable!(
     u64,
@@ -276,20 +264,17 @@ where
 
     // One suffix: constant 1 for all cycles
     if matches!(suffix, Suffixes::One) {
-        out.extend_ready(
-            base..base + n,
-            std::iter::repeat(Rep3Value::Public(F::one())).take(n),
-        );
+        out.extend_ready(base..base + n, std::iter::repeat(Rep3Value::Public(F::one())).take(n));
         return Ok(());
     }
 
     match data {
-        SuffixBitsBatch::Uninterleaved(left, right) => eval_suffix_uninterleaved::<T, F, N>(
-            suffix, left, right, suffix_len, io_ctx, party_id, base, out,
-        ),
-        SuffixBitsBatch::Interleaved(bits) => eval_suffix_interleaved::<T, F, N>(
-            suffix, bits, suffix_len, io_ctx, party_id, base, out,
-        ),
+        SuffixBitsBatch::Uninterleaved(left, right) => {
+            eval_suffix_uninterleaved::<T, F, N>(suffix, left, right, suffix_len, io_ctx, party_id, base, out)
+        }
+        SuffixBitsBatch::Interleaved(bits) => {
+            eval_suffix_interleaved::<T, F, N>(suffix, bits, suffix_len, io_ctx, party_id, base, out)
+        }
     }
 }
 
@@ -461,12 +446,8 @@ where
         }
         MixedBatch::Public(pubs) => {
             for (i, &p) in pubs.iter().enumerate() {
-                let val =
-                    suffix.suffix_mle::<XLEN>(LookupBits::new((p & mask) as u128, suffix_len));
-                out.extend_ready(
-                    std::iter::once(base + i),
-                    std::iter::once(Rep3Value::Public(F::from_u64(val))),
-                );
+                let val = suffix.suffix_mle::<XLEN>(LookupBits::new((p & mask) as u128, suffix_len));
+                out.extend_ready(std::iter::once(base + i), std::iter::once(Rep3Value::Public(F::from_u64(val))));
             }
             (Vec::new(), Vec::new())
         }
@@ -476,8 +457,7 @@ where
             for (i, entry) in mixed.iter().enumerate() {
                 match entry {
                     Either::Public(p) => {
-                        let val = suffix
-                            .suffix_mle::<XLEN>(LookupBits::new((*p & mask) as u128, suffix_len));
+                        let val = suffix.suffix_mle::<XLEN>(LookupBits::new((*p & mask) as u128, suffix_len));
                         out.extend_ready(
                             std::iter::once(base + i),
                             std::iter::once(Rep3Value::Public(F::from_u64(val))),
@@ -522,10 +502,7 @@ where
         for (i, (&xp, &yp)) in x_pubs.iter().zip(y_pubs.iter()).enumerate() {
             let interleaved = interleave_bits(xp, yp);
             let val = suffix.suffix_mle::<XLEN>(LookupBits::new(interleaved, suffix_len));
-            out.extend_ready(
-                std::iter::once(base + i),
-                std::iter::once(Rep3Value::Public(F::from_u64(val))),
-            );
+            out.extend_ready(std::iter::once(base + i), std::iter::once(Rep3Value::Public(F::from_u64(val))));
         }
         return Ok(());
     }
@@ -553,8 +530,7 @@ where
                             }
                         };
                         let interleaved = interleave_bits(*xp, yp);
-                        let val =
-                            suffix.suffix_mle::<XLEN>(LookupBits::new(interleaved, suffix_len));
+                        let val = suffix.suffix_mle::<XLEN>(LookupBits::new(interleaved, suffix_len));
                         out.extend_ready(
                             std::iter::once(base + i),
                             std::iter::once(Rep3Value::Public(F::from_u64(val))),
@@ -596,9 +572,7 @@ where
                 io_ctx,
                 out,
                 |x, yp| {
-                    let mask = RingElement(
-                        T::Half::try_from(yp as u128).unwrap_or_else(|_| unreachable!()),
-                    );
+                    let mask = RingElement(T::Half::try_from(yp as u128).unwrap_or_else(|_| unreachable!()));
                     *x & mask
                 },
                 |xs, ys, ctx| rep3_ring::binary::and_many::<T::Half, _>(xs, ys, ctx),
@@ -613,9 +587,7 @@ where
                 io_ctx,
                 out,
                 |x, yp| {
-                    let mask = RingElement(
-                        !T::Half::try_from(yp as u128).unwrap_or_else(|_| unreachable!()),
-                    );
+                    let mask = RingElement(!T::Half::try_from(yp as u128).unwrap_or_else(|_| unreachable!()));
                     *x & mask
                 },
                 |xs, ys, ctx| {
@@ -636,9 +608,7 @@ where
                 io_ctx,
                 out,
                 |x, yp| {
-                    let mask = RingElement(
-                        T::Half::try_from(yp as u128).unwrap_or_else(|_| unreachable!()),
-                    );
+                    let mask = RingElement(T::Half::try_from(yp as u128).unwrap_or_else(|_| unreachable!()));
                     rep3_ring::binary::xor_public(&(*x & RingElement(!mask.0)), &mask, party_id)
                 },
                 |xs, ys, ctx| rep3_ring::binary::or_many::<T::Half, _>(xs, ys, ctx),
@@ -648,10 +618,7 @@ where
         // --- B2A(H): value extraction (right can be public or shared) ---
         Suffixes::RightOperand => match right {
             MixedBatch::Public(y_pubs) => {
-                out.extend_ready(
-                    indices_iter,
-                    (0..n).map(|j| Rep3Value::Public(F::from_u64(y_pubs[orig(j)]))),
-                );
+                out.extend_ready(indices_iter, (0..n).map(|j| Rep3Value::Public(F::from_u64(y_pubs[orig(j)]))));
             }
             MixedBatch::Shared(ys) => {
                 out.extend_b2a_ring::<T::Half>(indices_iter, ys.iter().copied());
@@ -667,10 +634,7 @@ where
                             );
                         }
                         Either::Shared(y) => {
-                            out.extend_b2a_ring::<T::Half>(
-                                std::iter::once(base + i),
-                                std::iter::once(*y),
-                            );
+                            out.extend_b2a_ring::<T::Half>(std::iter::once(base + i), std::iter::once(*y));
                         }
                     }
                 }
@@ -681,16 +645,10 @@ where
         }
         Suffixes::Lsb => match right {
             MixedBatch::Public(y_pubs) => {
-                out.extend_ready(
-                    indices_iter,
-                    (0..n).map(|j| Rep3Value::Public(F::from_u64(y_pubs[orig(j)] & 1))),
-                );
+                out.extend_ready(indices_iter, (0..n).map(|j| Rep3Value::Public(F::from_u64(y_pubs[orig(j)] & 1))));
             }
             MixedBatch::Shared(ys) => {
-                out.extend_bitinject(
-                    indices_iter,
-                    ys.iter().map(|y| downcast::<T::Half, Bit>(*y)),
-                );
+                out.extend_bitinject(indices_iter, ys.iter().map(|y| downcast::<T::Half, Bit>(*y)));
             }
             MixedBatch::Mixed(mixed) => {
                 for (j, _) in xs.iter().enumerate() {
@@ -718,15 +676,13 @@ where
         // and_many only for shared y elements, then a single Kogge-Stone tree.
         Suffixes::LessThan => {
             // lt(x, y) = !(x >= y)
-            let ge_bits =
-                comparators::ge_many_mixed::<T, _>(xs, right, n, &orig, party_id, io_ctx, false)?;
+            let ge_bits = comparators::ge_many_mixed::<T, _>(xs, right, n, &orig, party_id, io_ctx, false)?;
             let lt_bits: Vec<_> = ge_bits.iter().map(|b| !b).collect();
             out.extend_bitinject(indices_iter, lt_bits.into_iter());
         }
         Suffixes::GreaterThan => {
             // gt(x, y) = !(y >= x)
-            let ge_bits =
-                comparators::ge_many_mixed::<T, _>(xs, right, n, &orig, party_id, io_ctx, true)?;
+            let ge_bits = comparators::ge_many_mixed::<T, _>(xs, right, n, &orig, party_id, io_ctx, true)?;
             let gt_bits: Vec<_> = ge_bits.iter().map(|b| !b).collect();
             out.extend_bitinject(indices_iter, gt_bits.into_iter());
         }
@@ -744,29 +700,21 @@ where
 
         // --- BitInject: division checks (right always shared — division tables) ---
         Suffixes::DivByZero => {
-            comparators::eval_div_by_zero::<T, F, N>(
-                xs, right, suffix_len, party_id, io_ctx, base, &orig, out,
-            )?;
+            comparators::eval_div_by_zero::<T, F, N>(xs, right, suffix_len, party_id, io_ctx, base, &orig, out)?;
         }
         Suffixes::TwoLsb => {
             let ys = right.as_shared();
-            let x_lsb: Vec<Rep3RingShare<Bit>> =
-                xs.iter().map(|x| downcast::<T::Half, Bit>(*x)).collect();
-            let y_lsb: Vec<Rep3RingShare<Bit>> =
-                ys.iter().map(|y| downcast::<T::Half, Bit>(*y)).collect();
+            let x_lsb: Vec<Rep3RingShare<Bit>> = xs.iter().map(|x| downcast::<T::Half, Bit>(*x)).collect();
+            let y_lsb: Vec<Rep3RingShare<Bit>> = ys.iter().map(|y| downcast::<T::Half, Bit>(*y)).collect();
             let x_or_y = rep3_ring::binary::or_many::<Bit, _>(&x_lsb, &y_lsb, io_ctx)?;
             let result: Vec<_> = x_or_y.iter().map(|b| !b).collect();
             out.extend_bitinject(indices_iter, result.into_iter());
         }
         Suffixes::ChangeDivisor => {
-            comparators::eval_change_divisor::<T, F, N>(
-                xs, right, suffix_len, party_id, io_ctx, base, &orig, out,
-            )?;
+            comparators::eval_change_divisor::<T, F, N>(xs, right, suffix_len, party_id, io_ctx, base, &orig, out)?;
         }
         Suffixes::ChangeDivisorW => {
-            comparators::eval_change_divisor_w::<T, F, N>(
-                xs, right, suffix_len, party_id, io_ctx, base, &orig, out,
-            )?;
+            comparators::eval_change_divisor_w::<T, F, N>(xs, right, suffix_len, party_id, io_ctx, base, &orig, out)?;
         }
 
         // --- Ready: sign extension (right always public for shift tables) ---
@@ -863,8 +811,7 @@ where
                 xs.iter().enumerate().map(|(j, x)| {
                     let yp = y_pubs[orig(j)];
                     let y_mask = T::Half::try_from(yp as u128).unwrap_or_else(|_| {
-                        T::Half::try_from(yp as u128 & ((1u128 << T::Half::K) - 1))
-                            .unwrap_or_else(|_| unreachable!())
+                        T::Half::try_from(yp as u128 & ((1u128 << T::Half::K) - 1)).unwrap_or_else(|_| unreachable!())
                     });
                     let masked = *x & RingElement(!y_mask);
                     let shift = LookupBits::new(yp as u128, suffix_len / 2).leading_ones() as usize;
@@ -882,14 +829,8 @@ where
                     let shift = (yp as u128).trailing_zeros().min(XLEN as u32 / 2) as usize;
                     let shifted = x32 >> shift;
                     Rep3RingShare {
-                        a: RingElement(
-                            T::Half::try_from(shifted.a.0 as u128)
-                                .unwrap_or_else(|_| unreachable!()),
-                        ),
-                        b: RingElement(
-                            T::Half::try_from(shifted.b.0 as u128)
-                                .unwrap_or_else(|_| unreachable!()),
-                        ),
+                        a: RingElement(T::Half::try_from(shifted.a.0 as u128).unwrap_or_else(|_| unreachable!())),
+                        b: RingElement(T::Half::try_from(shifted.b.0 as u128).unwrap_or_else(|_| unreachable!())),
                     }
                 }),
             );
@@ -923,14 +864,8 @@ where
                     let lo = LookupBits::new(y_truncated_bits as u128, half_xlen).leading_ones();
                     let shifted = masked << lo as usize;
                     Rep3RingShare {
-                        a: RingElement(
-                            T::Half::try_from(shifted.a.0 as u128)
-                                .unwrap_or_else(|_| unreachable!()),
-                        ),
-                        b: RingElement(
-                            T::Half::try_from(shifted.b.0 as u128)
-                                .unwrap_or_else(|_| unreachable!()),
-                        ),
+                        a: RingElement(T::Half::try_from(shifted.a.0 as u128).unwrap_or_else(|_| unreachable!())),
+                        b: RingElement(T::Half::try_from(shifted.b.0 as u128).unwrap_or_else(|_| unreachable!())),
                     }
                 }),
             );
@@ -956,17 +891,11 @@ where
         | Suffixes::Pow2W
         | Suffixes::SignExtensionUpperHalf
         | Suffixes::OverflowBitsZero => {
-            unreachable!(
-                "Interleaved suffix {:?} received Uninterleaved data",
-                suffix
-            );
+            unreachable!("Interleaved suffix {:?} received Uninterleaved data", suffix);
         }
         #[cfg(feature = "rv64")]
         Suffixes::Rev8W => {
-            unreachable!(
-                "Interleaved suffix {:?} received Uninterleaved data",
-                suffix
-            );
+            unreachable!("Interleaved suffix {:?} received Uninterleaved data", suffix);
         }
     }
 
@@ -990,8 +919,7 @@ where
     F: JoltField,
     N: Rep3Network,
 {
-    let (positions, shared_bits) =
-        split_interleaved_public::<T, F>(suffix, bits, suffix_len, base, out);
+    let (positions, shared_bits) = split_interleaved_public::<T, F>(suffix, bits, suffix_len, base, out);
 
     if shared_bits.is_empty() {
         return Ok(());
@@ -1005,17 +933,12 @@ where
         Suffixes::UpperWord => {
             if T::K <= XLEN {
                 // All bits below XLEN → zero
-                out.extend_ready(
-                    indices,
-                    std::iter::repeat(Rep3Value::Public(F::zero())).take(shared_bits.len()),
-                );
+                out.extend_ready(indices, std::iter::repeat(Rep3Value::Public(F::zero())).take(shared_bits.len()));
             } else {
                 let result_bits = T::K - XLEN;
-                let shifted: Vec<Rep3RingShare<T>> =
-                    shared_bits.iter().map(|b| *b >> XLEN).collect();
+                let shifted: Vec<Rep3RingShare<T>> = shared_bits.iter().map(|b| *b >> XLEN).collect();
                 if result_bits <= T::Half::K {
-                    let dc: Vec<Rep3RingShare<T::Half>> =
-                        shifted.iter().map(|s| downcast(*s)).collect();
+                    let dc: Vec<Rep3RingShare<T::Half>> = shifted.iter().map(|s| downcast(*s)).collect();
                     out.extend_b2a_ring::<T::Half>(indices, dc.into_iter());
                 } else {
                     // Push as full T ring B2A
@@ -1029,24 +952,16 @@ where
                 let result: Vec<Rep3RingShare<T::Half>> = if XLEN >= T::K {
                     shared_bits.iter().map(|b| downcast(*b)).collect()
                 } else {
-                    let mask_val =
-                        T::try_from((1u128 << XLEN) - 1).unwrap_or_else(|_| unreachable!());
-                    shared_bits
-                        .iter()
-                        .map(|b| downcast(*b & RingElement(mask_val)))
-                        .collect()
+                    let mask_val = T::try_from((1u128 << XLEN) - 1).unwrap_or_else(|_| unreachable!());
+                    shared_bits.iter().map(|b| downcast(*b & RingElement(mask_val))).collect()
                 };
                 out.extend_b2a_ring::<T::Half>(indices, result.into_iter());
             } else {
                 let masked: Vec<Rep3RingShare<T>> = if XLEN >= T::K {
                     shared_bits.clone()
                 } else {
-                    let mask_val =
-                        T::try_from((1u128 << XLEN) - 1).unwrap_or_else(|_| unreachable!());
-                    shared_bits
-                        .iter()
-                        .map(|b| *b & RingElement(mask_val))
-                        .collect()
+                    let mask_val = T::try_from((1u128 << XLEN) - 1).unwrap_or_else(|_| unreachable!());
+                    shared_bits.iter().map(|b| *b & RingElement(mask_val)).collect()
                 };
                 out.extend_b2a_ring::<T>(indices, masked.into_iter());
             }
@@ -1058,24 +973,16 @@ where
                 let result: Vec<Rep3RingShare<T::Half>> = if half >= T::K {
                     shared_bits.iter().map(|b| downcast(*b)).collect()
                 } else {
-                    let mask_val =
-                        T::try_from((1u128 << half) - 1).unwrap_or_else(|_| unreachable!());
-                    shared_bits
-                        .iter()
-                        .map(|b| downcast(*b & RingElement(mask_val)))
-                        .collect()
+                    let mask_val = T::try_from((1u128 << half) - 1).unwrap_or_else(|_| unreachable!());
+                    shared_bits.iter().map(|b| downcast(*b & RingElement(mask_val))).collect()
                 };
                 out.extend_b2a_ring::<T::Half>(indices, result.into_iter());
             } else {
                 let masked: Vec<Rep3RingShare<T>> = if half >= T::K {
                     shared_bits.clone()
                 } else {
-                    let mask_val =
-                        T::try_from((1u128 << half) - 1).unwrap_or_else(|_| unreachable!());
-                    shared_bits
-                        .iter()
-                        .map(|b| *b & RingElement(mask_val))
-                        .collect()
+                    let mask_val = T::try_from((1u128 << half) - 1).unwrap_or_else(|_| unreachable!());
+                    shared_bits.iter().map(|b| *b & RingElement(mask_val)).collect()
                 };
                 out.extend_b2a_ring::<T>(indices, masked.into_iter());
             }
@@ -1088,10 +995,7 @@ where
                 .map(|b| {
                     let a_u128: u128 = b.a.0.into();
                     let b_u128: u128 = b.b.0.into();
-                    let v = Rep3RingShare {
-                        a: RingElement(a_u128 as u32),
-                        b: RingElement(b_u128 as u32),
-                    };
+                    let v = Rep3RingShare { a: RingElement(a_u128 as u32), b: RingElement(b_u128 as u32) };
                     let byte0 = v & mask_byte;
                     let byte1 = (v >> 8) & mask_byte;
                     let byte2 = (v >> 16) & mask_byte;
@@ -1103,12 +1007,8 @@ where
                 let result: Vec<Rep3RingShare<T::Half>> = reversed_u32
                     .iter()
                     .map(|r| Rep3RingShare {
-                        a: RingElement(
-                            T::Half::try_from(r.a.0 as u128).unwrap_or_else(|_| unreachable!()),
-                        ),
-                        b: RingElement(
-                            T::Half::try_from(r.b.0 as u128).unwrap_or_else(|_| unreachable!()),
-                        ),
+                        a: RingElement(T::Half::try_from(r.a.0 as u128).unwrap_or_else(|_| unreachable!())),
+                        b: RingElement(T::Half::try_from(r.b.0 as u128).unwrap_or_else(|_| unreachable!())),
                     })
                     .collect();
                 out.extend_b2a_ring::<T::Half>(indices, result.into_iter());
@@ -1119,53 +1019,35 @@ where
         Suffixes::Pow2 => {
             let log_xlen = XLEN.log_2();
             let num_bits = log_xlen.min(suffix_len);
-            let shift_mask_val =
-                T::try_from((1u128 << num_bits) - 1).unwrap_or_else(|_| unreachable!());
-            let shifts: Vec<Rep3RingShare<T>> = shared_bits
-                .iter()
-                .map(|b| *b & RingElement(shift_mask_val))
-                .collect();
-            let result =
-                eval_pow2_from_shift_bits_ready::<T, F, N>(&shifts, num_bits, io_ctx, party_id)?;
+            let shift_mask_val = T::try_from((1u128 << num_bits) - 1).unwrap_or_else(|_| unreachable!());
+            let shifts: Vec<Rep3RingShare<T>> = shared_bits.iter().map(|b| *b & RingElement(shift_mask_val)).collect();
+            let result = eval_pow2_from_shift_bits_ready::<T, F, N>(&shifts, num_bits, io_ctx, party_id)?;
             out.extend_ready(indices, result.into_iter().map(Rep3Value::Shared));
         }
         Suffixes::Pow2W => {
             let num_bits = 5usize.min(suffix_len);
-            let shift_mask_val =
-                T::try_from((1u128 << num_bits) - 1).unwrap_or_else(|_| unreachable!());
-            let shifts: Vec<Rep3RingShare<T>> = shared_bits
-                .iter()
-                .map(|b| *b & RingElement(shift_mask_val))
-                .collect();
-            let result =
-                eval_pow2_from_shift_bits_ready::<T, F, N>(&shifts, num_bits, io_ctx, party_id)?;
+            let shift_mask_val = T::try_from((1u128 << num_bits) - 1).unwrap_or_else(|_| unreachable!());
+            let shifts: Vec<Rep3RingShare<T>> = shared_bits.iter().map(|b| *b & RingElement(shift_mask_val)).collect();
+            let result = eval_pow2_from_shift_bits_ready::<T, F, N>(&shifts, num_bits, io_ctx, party_id)?;
             out.extend_ready(indices, result.into_iter().map(Rep3Value::Shared));
         }
         Suffixes::SignExtensionUpperHalf => {
             let half = XLEN / 2;
             if suffix_len < half {
-                out.extend_ready(
-                    indices,
-                    std::iter::repeat(Rep3Value::Public(F::one())).take(shared_bits.len()),
-                );
+                out.extend_ready(indices, std::iter::repeat(Rep3Value::Public(F::one())).take(shared_bits.len()));
             } else {
                 let sign_bit_pos = half - 1;
                 let weight = F::from_u128(((1u64 << half) - 1) as u128 * (1u128 << half));
                 out.extend_bitinject_scaled(
                     indices,
-                    shared_bits
-                        .iter()
-                        .map(|b| downcast::<T, Bit>(*b >> sign_bit_pos)),
+                    shared_bits.iter().map(|b| downcast::<T, Bit>(*b >> sign_bit_pos)),
                     weight,
                 );
             }
         }
         Suffixes::OverflowBitsZero => {
             if T::K <= XLEN {
-                out.extend_ready(
-                    indices,
-                    std::iter::repeat(Rep3Value::Public(F::one())).take(shared_bits.len()),
-                );
+                out.extend_ready(indices, std::iter::repeat(Rep3Value::Public(F::one())).take(shared_bits.len()));
             } else {
                 let upper: Vec<Rep3RingShare<T>> = shared_bits.iter().map(|b| *b >> XLEN).collect();
                 let eq_bits = rep3_ring::binary::is_zero_many::<T, _>(&upper, io_ctx)?;
@@ -1175,10 +1057,7 @@ where
 
         // These suffixes are uninterleaved-only — should not appear here
         _ => {
-            unreachable!(
-                "Uninterleaved suffix {:?} received Interleaved data",
-                suffix
-            );
+            unreachable!("Uninterleaved suffix {:?} received Interleaved data", suffix);
         }
     }
 
@@ -1210,10 +1089,7 @@ fn eval_right_operand_w<T, F>(
             if T::Half::K >= 32 {
                 let m: u128 = (1u128 << 32) - 1;
                 let mask_val = T::Half::try_from(m).unwrap_or_else(|_| unreachable!());
-                out.extend_b2a_ring::<T::Half>(
-                    indices_iter,
-                    ys.iter().map(|y| *y & RingElement(mask_val)),
-                );
+                out.extend_b2a_ring::<T::Half>(indices_iter, ys.iter().map(|y| *y & RingElement(mask_val)));
             } else {
                 out.extend_b2a_ring::<T::Half>(indices_iter, ys.iter().copied());
             }
@@ -1237,10 +1113,7 @@ fn eval_right_operand_w<T, F>(
                                 std::iter::once(*y & RingElement(mask_val)),
                             );
                         } else {
-                            out.extend_b2a_ring::<T::Half>(
-                                std::iter::once(base + i),
-                                std::iter::once(*y),
-                            );
+                            out.extend_b2a_ring::<T::Half>(std::iter::once(base + i), std::iter::once(*y));
                         }
                     }
                 }
@@ -1265,10 +1138,7 @@ fn eval_sign_extension_right_operand<T, F>(
     let n = xs.len();
     let indices_iter = (0..n).map(|j| base + orig(j));
     if suffix_len < XLEN {
-        out.extend_ready(
-            indices_iter,
-            std::iter::repeat(Rep3Value::Public(F::one())).take(n),
-        );
+        out.extend_ready(indices_iter, std::iter::repeat(Rep3Value::Public(F::one())).take(n));
     } else {
         let sign_bit_pos = XLEN / 2 - 1;
         let weight = F::from_u128((1u128 << XLEN) - (1u128 << (XLEN / 2)));
@@ -1285,8 +1155,7 @@ fn eval_sign_extension_right_operand<T, F>(
             MixedBatch::Shared(ys) => {
                 out.extend_bitinject_scaled(
                     indices_iter,
-                    ys.iter()
-                        .map(|y| downcast::<T::Half, Bit>(*y >> sign_bit_pos)),
+                    ys.iter().map(|y| downcast::<T::Half, Bit>(*y >> sign_bit_pos)),
                     weight,
                 );
             }
@@ -1299,11 +1168,7 @@ fn eval_sign_extension_right_operand<T, F>(
                             let sign = (*yp >> sign_bit_pos) & 1;
                             out.extend_ready(
                                 std::iter::once(idx),
-                                std::iter::once(Rep3Value::Public(if sign == 1 {
-                                    weight
-                                } else {
-                                    F::zero()
-                                })),
+                                std::iter::once(Rep3Value::Public(if sign == 1 { weight } else { F::zero() })),
                             );
                         }
                         Either::Shared(y) => {
@@ -1367,11 +1232,7 @@ where
 /// Mirrors vanilla `SignExtensionSuffix::suffix_mle` on the uninterleaved `y` bits.
 fn compute_sign_extension_from_mask(mask_u64: u64, suffix_len: usize) -> u64 {
     let y_len = suffix_len / 2;
-    let y_low = if y_len >= 64 {
-        mask_u64
-    } else {
-        mask_u64 & ((1u64 << y_len) - 1)
-    };
+    let y_low = if y_len >= 64 { mask_u64 } else { mask_u64 & ((1u64 << y_len) - 1) };
     let padding_len = std::cmp::min(y_low.trailing_zeros() as usize, y_len);
     if padding_len == 0 {
         0
@@ -1385,10 +1246,7 @@ fn to_u32_share<H: IntRing2k>(s: Rep3RingShare<H>) -> Rep3RingShare<u32> {
     // Via Into<u128> → truncate, since H may not impl AsPrimitive<u32> directly.
     let a: u128 = s.a.0.into();
     let b: u128 = s.b.0.into();
-    Rep3RingShare {
-        a: RingElement(a as u32),
-        b: RingElement(b as u32),
-    }
+    Rep3RingShare { a: RingElement(a as u32), b: RingElement(b as u32) }
 }
 
 #[cfg(test)]
@@ -1419,18 +1277,9 @@ mod tests {
             let c: u128 = val ^ a ^ b;
 
             // Party 0: (a, b), Party 1: (b, c), Party 2: (c, a)
-            let share0 = Rep3RingShare {
-                a: RingElement(a),
-                b: RingElement(b),
-            };
-            let share1 = Rep3RingShare {
-                a: RingElement(b),
-                b: RingElement(c),
-            };
-            let share2 = Rep3RingShare {
-                a: RingElement(c),
-                b: RingElement(a),
-            };
+            let share0 = Rep3RingShare { a: RingElement(a), b: RingElement(b) };
+            let share1 = Rep3RingShare { a: RingElement(b), b: RingElement(c) };
+            let share2 = Rep3RingShare { a: RingElement(c), b: RingElement(a) };
 
             let (x0, y0) = u128::uninterleave(share0);
             let (x1, y1) = u128::uninterleave(share1);

@@ -21,9 +21,7 @@ pub fn operand_to_binary_wide(op: &Rep3Operand, id: PartyID) -> Rep3RingShare<Lo
                 RingElement(binary.b.0 as LookupIndexInt),
             )
         }
-        Rep3Operand::Public(v) => {
-            rep3_ring::binary::promote_to_trivial_share(id, &RingElement(*v as LookupIndexInt))
-        }
+        Rep3Operand::Public(v) => rep3_ring::binary::promote_to_trivial_share(id, &RingElement(*v as LookupIndexInt)),
     }
 }
 
@@ -129,32 +127,14 @@ mod tests {
             let cy: LookupIndexInt = (*y_val as LookupIndexInt) ^ ay ^ by;
 
             // Party 0: (a, b), Party 1: (b, c), Party 2: (c, a)
-            let x_share0 = Rep3RingShare {
-                a: RingElement(ax),
-                b: RingElement(bx),
-            };
-            let y_share0 = Rep3RingShare {
-                a: RingElement(ay),
-                b: RingElement(by),
-            };
+            let x_share0 = Rep3RingShare { a: RingElement(ax), b: RingElement(bx) };
+            let y_share0 = Rep3RingShare { a: RingElement(ay), b: RingElement(by) };
 
-            let x_share1 = Rep3RingShare {
-                a: RingElement(bx),
-                b: RingElement(cx),
-            };
-            let y_share1 = Rep3RingShare {
-                a: RingElement(by),
-                b: RingElement(cy),
-            };
+            let x_share1 = Rep3RingShare { a: RingElement(bx), b: RingElement(cx) };
+            let y_share1 = Rep3RingShare { a: RingElement(by), b: RingElement(cy) };
 
-            let x_share2 = Rep3RingShare {
-                a: RingElement(cx),
-                b: RingElement(ax),
-            };
-            let y_share2 = Rep3RingShare {
-                a: RingElement(cy),
-                b: RingElement(ay),
-            };
+            let x_share2 = Rep3RingShare { a: RingElement(cx), b: RingElement(ax) };
+            let y_share2 = Rep3RingShare { a: RingElement(cy), b: RingElement(ay) };
 
             let r0 = interleave_bits_shared(x_share0, y_share0);
             let r1 = interleave_bits_shared(x_share1, y_share1);

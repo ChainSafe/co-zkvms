@@ -2,10 +2,7 @@ use super::*;
 
 impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<BEQ> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand) {
-        (
-            self.register_state.rs1_operand(),
-            self.register_state.rs2_operand(),
-        )
+        (self.register_state.rs1_operand(), self.register_state.rs2_operand())
     }
 
     #[tracing::instrument(skip_all, name = "BEQ::output", level = "trace")]
@@ -25,12 +22,9 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<BEQ> {
                 )
             })
             .unzip();
-        rep3_ring::arithmetic::eq_many(&a, &b, io_ctx)?
-            .into_iter()
-            .zip(out)
-            .for_each(|(x, out)| {
-                *out = FutureRep3Ring::bit_inject_to_field(x);
-            });
+        rep3_ring::arithmetic::eq_many(&a, &b, io_ctx)?.into_iter().zip(out).for_each(|(x, out)| {
+            *out = FutureRep3Ring::bit_inject_to_field(x);
+        });
         Ok(())
     }
 }

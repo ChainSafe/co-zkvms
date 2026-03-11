@@ -10,9 +10,7 @@ use crate::{
     field::{JoltField, MulTrunc},
     poly::{
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
-        opening_proof::{
-            OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
-        },
+        opening_proof::{OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN},
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
@@ -35,10 +33,7 @@ pub struct HammingWeightSumcheck<F: JoltField> {
 
 impl<F: JoltField> HammingWeightSumcheck<F> {
     /// Construct a prover instance from pre-extracted parts.
-    pub fn new_prover_from_parts(
-        gamma_powers: [F; D],
-        G: [Vec<F>; D],
-    ) -> Self {
+    pub fn new_prover_from_parts(gamma_powers: [F; D], G: [Vec<F>; D]) -> Self {
         let ra = G
             .into_iter()
             .map(MultilinearPolynomial::from)
@@ -52,9 +47,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
     }
 
     /// Construct a verifier instance from pre-extracted parts.
-    pub fn new_verifier_from_parts(
-        gamma_powers: [F; D],
-    ) -> Self {
+    pub fn new_verifier_from_parts(gamma_powers: [F; D]) -> Self {
         Self {
             gamma: gamma_powers,
             prover_state: None,
@@ -131,16 +124,18 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingWeightSumche
         accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         _r: &[F::Challenge],
     ) -> F {
-        let ra_claims: Vec<F> = (0..D).map(|i| {
-            let accumulator = accumulator.as_ref().unwrap();
-            let accumulator = accumulator.borrow();
-            accumulator
-                .get_committed_polynomial_opening(
-                    CommittedPolynomial::InstructionRa(i),
-                    SumcheckId::InstructionHammingWeight,
-                )
-                .1
-        }).collect();
+        let ra_claims: Vec<F> = (0..D)
+            .map(|i| {
+                let accumulator = accumulator.as_ref().unwrap();
+                let accumulator = accumulator.borrow();
+                accumulator
+                    .get_committed_polynomial_opening(
+                        CommittedPolynomial::InstructionRa(i),
+                        SumcheckId::InstructionHammingWeight,
+                    )
+                    .1
+            })
+            .collect();
 
         self.gamma
             .iter()

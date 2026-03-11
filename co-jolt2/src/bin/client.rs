@@ -51,9 +51,8 @@ fn main() -> eyre::Result<()> {
         .map(|s| s.trim().parse::<SocketAddr>())
         .collect::<Result<_, _>>()
         .context("parsing worker addresses")?;
-    let worker_addrs: [SocketAddr; 3] = addrs
-        .try_into()
-        .map_err(|v: Vec<_>| eyre::eyre!("expected 3 worker addresses, got {}", v.len()))?;
+    let worker_addrs: [SocketAddr; 3] =
+        addrs.try_into().map_err(|v: Vec<_>| eyre::eyre!("expected 3 worker addresses, got {}", v.len()))?;
 
     info!(?worker_addrs, "connecting to workers");
     let mut client = ProvingClient::connect(worker_addrs)?;
@@ -84,33 +83,28 @@ fn main() -> eyre::Result<()> {
         bytecode: BytecodePreprocessing::preprocess(bytecode.clone()),
         ram: RAMPreprocessing::preprocess(memory_init.clone()),
     };
-    let ram_k = co_jolt2::utils::compute_ram_k(&{
-        let mut t = vanilla_trace;
-        t.resize(padded_len, tracer::instruction::Cycle::NoOp);
-        t
-    }, &shared);
+    let ram_k = co_jolt2::utils::compute_ram_k(
+        &{
+            let mut t = vanilla_trace;
+            t.resize(padded_len, tracer::instruction::Cycle::NoOp);
+            t
+        },
+        &shared,
+    );
 
     info!(padded_len, ram_k, "computed verification parameters");
 
     // Initialize globals before deserialization (Dory types need these)
-    let preprocessing = <JoltArch as Jolt<F, PCS, FS>>::prover_preprocess(
-        bytecode,
-        memory_layout.clone(),
-        memory_init,
-        padded_len,
-    );
+    let preprocessing =
+        <JoltArch as Jolt<F, PCS, FS>>::prover_preprocess(bytecode, memory_layout.clone(), memory_init, padded_len);
     let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
 
     let _dory_guard = DoryGlobals::initialize(DTH_ROOT_OF_K, padded_len);
-    let _poly_guard = AllCommittedPolynomials::initialize(
-        compute_d_parameter(ram_k),
-        preprocessing.shared.bytecode.d,
-    );
+    let _poly_guard = AllCommittedPolynomials::initialize(compute_d_parameter(ram_k), preprocessing.shared.bytecode.d);
 
     // Deserialize the proof
     let proof: JoltProof<F, PCS, FS> =
-        CanonicalDeserialize::deserialize_compressed(&proof_bytes[..])
-            .context("deserializing proof")?;
+        CanonicalDeserialize::deserialize_compressed(&proof_bytes[..]).context("deserializing proof")?;
 
     let twist_switch = proof.twist_sumcheck_switch_index;
     info!(

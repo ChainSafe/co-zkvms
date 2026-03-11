@@ -439,7 +439,6 @@ fn field_vec_from_bytes<F: PrimeField>(bytes: &[u8]) -> io::Result<Vec<F>> {
     Ok(out)
 }
 
-
 fn field_slice_to_bytes<F: PrimeField>(data: &[F]) -> &[u8] {
     const { assert_field_layout::<F>() };
     unsafe { slice::from_raw_parts(data.as_ptr() as *const u8, std::mem::size_of_val(data)) }
@@ -905,7 +904,6 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
             })
             .collect::<Result<Vec<_>, _>>()
     }
-
 
     #[tracing::instrument(skip_all, name = "sync_with_parties", level = "trace")]
     pub fn sync_with_parties(&mut self) -> eyre::Result<()> {

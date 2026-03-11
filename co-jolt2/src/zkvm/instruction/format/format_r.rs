@@ -32,10 +32,7 @@ impl Rep3RegisterState for Rep3RegisterStateFormatR {
         Self {
             rs1: Rep3Operand::Public(public_state.rs1_value().into()),
             rs2: Rep3Operand::Public(public_state.rs2_value().into()),
-            rd: (
-                Rep3Operand::Public(old.into()),
-                Rep3Operand::Public(new.into()),
-            ),
+            rd: (Rep3Operand::Public(old.into()), Rep3Operand::Public(new.into())),
         }
     }
 

@@ -22,12 +22,7 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for RaSumcheck<F> {
         self.input_claim()
     }
 
-    fn compute_prover_message_public(
-        &mut self,
-        round: usize,
-        previous_claim: F,
-        max_degree: usize,
-    ) -> Vec<F> {
+    fn compute_prover_message_public(&mut self, round: usize, previous_claim: F, max_degree: usize) -> Vec<F> {
         let degree = self.degree();
         let base = self.compute_prover_message(round, previous_claim);
 
@@ -68,10 +63,7 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for RaSumcheck<F> {
         self.bind(r_j, round)
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         self.normalize_opening_point(opening_point)
     }
 
@@ -82,11 +74,7 @@ impl<F: JoltField> PublicSumcheckInstanceWorker<F> for RaSumcheck<F> {
         party_id: PartyID,
     ) -> Vec<F> {
         let d = self.d();
-        let claims: Vec<F> = if party_id == PartyID::ID0 {
-            self.ra_i_final_claims()
-        } else {
-            vec![F::zero(); d]
-        };
+        let claims: Vec<F> = if party_id == PartyID::ID0 { self.ra_i_final_claims() } else { vec![F::zero(); d] };
 
         for i in 0..d {
             accumulator.append_sparse_public(

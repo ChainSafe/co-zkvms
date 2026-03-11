@@ -46,8 +46,7 @@ pub fn build_initial_memory_state(
     let mut initial_memory_state: Vec<u64> = vec![0; K];
 
     // Copy bytecode
-    let mut index =
-        remap_address(ram_preprocessing.min_bytecode_address, memory_layout).unwrap() as usize;
+    let mut index = remap_address(ram_preprocessing.min_bytecode_address, memory_layout).unwrap() as usize;
     for word in &ram_preprocessing.bytecode_words {
         initial_memory_state[index] = *word;
         index += 1;
@@ -92,37 +91,30 @@ pub(crate) fn build_initial_memory_state_shared<F: JoltField, N: Rep3NetworkWork
 ) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
     let memory_layout = &program_io.memory_layout;
     let ws = RAM_WORD_SIZE as usize;
-    let mut initial_memory_state: Vec<Rep3PrimeFieldShare<F>> =
-        vec![Rep3PrimeFieldShare::zero_share(); K];
+    let mut initial_memory_state: Vec<Rep3PrimeFieldShare<F>> = vec![Rep3PrimeFieldShare::zero_share(); K];
 
     // Copy bytecode (PUBLIC → trivial shares)
-    let mut index =
-        remap_address(ram_preprocessing.min_bytecode_address, memory_layout).unwrap() as usize;
+    let mut index = remap_address(ram_preprocessing.min_bytecode_address, memory_layout).unwrap() as usize;
     for word in &ram_preprocessing.bytecode_words {
-        initial_memory_state[index] =
-            rep3_arith::promote_to_trivial_share(party_id, F::from_u64(*word));
+        initial_memory_state[index] = rep3_arith::promote_to_trivial_share(party_id, F::from_u64(*word));
         index += 1;
     }
 
     // Pack and convert trusted advice (SHARED)
-    let trusted_advice_start =
-        remap_address(memory_layout.trusted_advice_start, memory_layout).unwrap() as usize;
+    let trusted_advice_start = remap_address(memory_layout.trusted_advice_start, memory_layout).unwrap() as usize;
     if !program_io.trusted_advice.is_empty() {
         let trusted_words = Rep3ProgramIOInput::pack_advice_words(&program_io.trusted_advice);
-        let trusted_field: Vec<Rep3PrimeFieldShare<F>> =
-            binary_ring_to_field_many(&trusted_words, io_ctx.main())?;
+        let trusted_field: Vec<Rep3PrimeFieldShare<F>> = binary_ring_to_field_many(&trusted_words, io_ctx.main())?;
         for (i, share) in trusted_field.into_iter().enumerate() {
             initial_memory_state[trusted_advice_start + i] = share;
         }
     }
 
     // Pack and convert untrusted advice (SHARED)
-    let untrusted_advice_start =
-        remap_address(memory_layout.untrusted_advice_start, memory_layout).unwrap() as usize;
+    let untrusted_advice_start = remap_address(memory_layout.untrusted_advice_start, memory_layout).unwrap() as usize;
     if !program_io.untrusted_advice.is_empty() {
         let untrusted_words = Rep3ProgramIOInput::pack_advice_words(&program_io.untrusted_advice);
-        let untrusted_field: Vec<Rep3PrimeFieldShare<F>> =
-            binary_ring_to_field_many(&untrusted_words, io_ctx.main())?;
+        let untrusted_field: Vec<Rep3PrimeFieldShare<F>> = binary_ring_to_field_many(&untrusted_words, io_ctx.main())?;
         for (i, share) in untrusted_field.into_iter().enumerate() {
             initial_memory_state[untrusted_advice_start + i] = share;
         }
@@ -131,10 +123,8 @@ pub(crate) fn build_initial_memory_state_shared<F: JoltField, N: Rep3NetworkWork
     // Copy inputs (PUBLIC → trivial shares)
     index = remap_address(memory_layout.input_start, memory_layout).unwrap() as usize;
     for chunk in program_io.inputs.chunks(ws) {
-        initial_memory_state[index] = rep3_arith::promote_to_trivial_share(
-            party_id,
-            F::from_u64(jolt_core::zkvm::ram::bytes_to_ram_word(chunk)),
-        );
+        initial_memory_state[index] =
+            rep3_arith::promote_to_trivial_share(party_id, F::from_u64(jolt_core::zkvm::ram::bytes_to_ram_word(chunk)));
         index += 1;
     }
 
@@ -174,13 +164,8 @@ impl<F: JoltField> Rep3RamDagWorker<F> {
         let ws = RAM_WORD_SIZE as usize;
 
         // --- Build initial_memory_state with shared advice ---
-        let initial_memory_state = build_initial_memory_state_shared(
-            ram_preprocessing,
-            &sm.program_io,
-            party_id,
-            K,
-            io_ctx,
-        )?;
+        let initial_memory_state =
+            build_initial_memory_state_shared(ram_preprocessing, &sm.program_io, party_id, K, io_ctx)?;
 
         // --- Convert final memory: Rep3Memory (binary ring shares) → field shares ---
         // Only convert the portion of DRAM that fits within the K-length address space.
@@ -193,8 +178,7 @@ impl<F: JoltField> Rep3RamDagWorker<F> {
         // ring→field conversion to minimize peak RSS.
         let mut final_memory_ring = std::mem::take(&mut sm.prover_state.final_memory_state.data);
         final_memory_ring.truncate(dram_convert_len);
-        let dram_field: Vec<Rep3PrimeFieldShare<F>> =
-            binary_ring_to_field_many(&final_memory_ring, io_ctx.main())?;
+        let dram_field: Vec<Rep3PrimeFieldShare<F>> = binary_ring_to_field_many(&final_memory_ring, io_ctx.main())?;
         drop(final_memory_ring);
 
         // Build val_final as a mixed polynomial: keep known-public regions public,
@@ -202,16 +186,14 @@ impl<F: JoltField> Rep3RamDagWorker<F> {
         let mut final_memory_mixed: Vec<Rep3Value<F>> = vec![Rep3Value::Public(F::zero()); K];
 
         // Copy bytecode (PUBLIC)
-        let mut index =
-            remap_address(ram_preprocessing.min_bytecode_address, memory_layout).unwrap() as usize;
+        let mut index = remap_address(ram_preprocessing.min_bytecode_address, memory_layout).unwrap() as usize;
         for word in &ram_preprocessing.bytecode_words {
             final_memory_mixed[index] = Rep3Value::Public(F::from_u64(*word));
             index += 1;
         }
 
         // Trusted advice (SHARED) — reuse already-converted initial memory shares.
-        let trusted_advice_start =
-            remap_address(memory_layout.trusted_advice_start, memory_layout).unwrap() as usize;
+        let trusted_advice_start = remap_address(memory_layout.trusted_advice_start, memory_layout).unwrap() as usize;
         let trusted_words_len = sm.program_io.trusted_advice.len().div_ceil(ws);
         for i in 0..trusted_words_len {
             final_memory_mixed[trusted_advice_start + i] =
@@ -230,8 +212,7 @@ impl<F: JoltField> Rep3RamDagWorker<F> {
         // Copy inputs (PUBLIC)
         index = remap_address(memory_layout.input_start, memory_layout).unwrap() as usize;
         for chunk in sm.program_io.inputs.chunks(ws) {
-            final_memory_mixed[index] =
-                Rep3Value::Public(F::from_u64(jolt_core::zkvm::ram::bytes_to_ram_word(chunk)));
+            final_memory_mixed[index] = Rep3Value::Public(F::from_u64(jolt_core::zkvm::ram::bytes_to_ram_word(chunk)));
             index += 1;
         }
 
@@ -243,31 +224,22 @@ impl<F: JoltField> Rep3RamDagWorker<F> {
         // Overlay outputs (PUBLIC) — the verifier knows the expected outputs
         index = remap_address(memory_layout.output_start, memory_layout).unwrap() as usize;
         for chunk in sm.program_io.outputs.chunks(ws) {
-            final_memory_mixed[index] =
-                Rep3Value::Public(F::from_u64(jolt_core::zkvm::ram::bytes_to_ram_word(chunk)));
+            final_memory_mixed[index] = Rep3Value::Public(F::from_u64(jolt_core::zkvm::ram::bytes_to_ram_word(chunk)));
             index += 1;
         }
 
         // Copy panic bit to final state (PUBLIC)
         let panic_index = remap_address(memory_layout.panic, memory_layout).unwrap() as usize;
-        final_memory_mixed[panic_index] =
-            Rep3Value::Public(F::from_u64(sm.program_io.panic as u64));
+        final_memory_mixed[panic_index] = Rep3Value::Public(F::from_u64(sm.program_io.panic as u64));
         if !sm.program_io.panic {
-            let termination_index =
-                remap_address(memory_layout.termination, memory_layout).unwrap() as usize;
+            let termination_index = remap_address(memory_layout.termination, memory_layout).unwrap() as usize;
             final_memory_mixed[termination_index] = Rep3Value::Public(F::one());
         }
 
         let val_init = Rep3DensePolynomial::new(initial_memory_state);
         let val_final = MixedPolynomial::new(final_memory_mixed, party_id);
 
-        Ok(Self {
-            val_init,
-            val_final,
-            stage2: None,
-            stage3: None,
-            stage4: None,
-        })
+        Ok(Self { val_init, val_final, stage2: None, stage3: None, stage4: None })
     }
 
     pub fn set_stage2_init(&mut self, gamma: F, input_claim: F, r_address: Vec<F::Challenge>) {
@@ -283,27 +255,19 @@ impl<F: JoltField> Rep3RamDagWorker<F> {
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
-    SumcheckStagesWorker<F, PCS, N> for Rep3RamDagWorker<F>
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker> SumcheckStagesWorker<F, PCS, N>
+    for Rep3RamDagWorker<F>
 {
     fn stage2_instances(
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
         _io_ctx: &mut mpc_core::protocols::rep3::network::IoContextPool<N>,
     ) -> Result<Vec<BatchedSumcheckWorkerInstance<F, N>>, eyre::Report> {
-        let (gamma, input_claim, r_address) = self
-            .stage2
-            .take()
-            .expect("Rep3RamDagWorker stage2 init not set");
+        let (gamma, input_claim, r_address) = self.stage2.take().expect("Rep3RamDagWorker stage2 init not set");
         let raf_evaluation = Rep3RafEvaluationWorker::new(sm);
         let read_write_checking =
             Rep3RamReadWriteCheckingWorker::new(self.val_init.coeffs_ref(), sm, gamma, input_claim);
-        let output_check = Rep3OutputSumcheckWorker::new(
-            self.val_init.clone(),
-            self.val_final.clone(),
-            r_address,
-            sm,
-        );
+        let output_check = Rep3OutputSumcheckWorker::new(self.val_init.clone(), self.val_final.clone(), r_address, sm);
 
         Ok(vec![
             BatchedSumcheckWorkerInstance::Secret(Box::new(raf_evaluation)),
@@ -322,24 +286,18 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
         use jolt_core::zkvm::ram::hamming_booleanity::HammingBooleanitySumcheck;
         use jolt_core::zkvm::witness::VirtualPolynomial;
 
-        let (val_final_input_claim, val_eval_input_claim) = self
-            .stage3
-            .take()
-            .expect("Rep3RamDagWorker stage3 init not set");
+        let (val_final_input_claim, val_eval_input_claim) =
+            self.stage3.take().expect("Rep3RamDagWorker stage3 init not set");
 
         // ValEvaluation must be constructed BEFORE ValFinal because ValFinal `.take()`s ram_inc.
         let ram_inc = sm.prover_state.cycle_witness.ram_inc_ref().clone();
-        let val_eval =
-            val_evaluation::Rep3RamValEvaluationWorker::new(sm, val_eval_input_claim, ram_inc);
+        let val_eval = val_evaluation::Rep3RamValEvaluationWorker::new(sm, val_eval_input_claim, ram_inc);
         let val_final = Rep3ValFinalSumcheckWorker::new(sm, val_final_input_claim);
 
         let hamming_bool: HammingBooleanitySumcheck<F> = if sm.party_id == PartyID::ID0 {
             let r_cycle = sm
                 .accumulator
-                .get_virtual_polynomial_opening(
-                    VirtualPolynomial::LookupOutput,
-                    SumcheckId::SpartanOuter,
-                )
+                .get_virtual_polynomial_opening(VirtualPolynomial::LookupOutput, SumcheckId::SpartanOuter)
                 .0
                 .r;
             let memory_layout = &sm.program_io.memory_layout;
@@ -354,10 +312,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
         } else {
             let log_T = sm
                 .accumulator
-                .get_virtual_polynomial_opening(
-                    VirtualPolynomial::LookupOutput,
-                    SumcheckId::SpartanOuter,
-                )
+                .get_virtual_polynomial_opening(VirtualPolynomial::LookupOutput, SumcheckId::SpartanOuter)
                 .0
                 .r
                 .len();
@@ -382,16 +337,12 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
         use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
         use jolt_core::poly::ra_poly::RaPolynomial;
         use jolt_core::zkvm::ram::{
-            booleanity::BooleanitySumcheck as RamBooleanity,
-            hamming_weight::HammingWeightSumcheck as RamHammingWeight,
+            booleanity::BooleanitySumcheck as RamBooleanity, hamming_weight::HammingWeightSumcheck as RamHammingWeight,
             ra_virtual::RaSumcheck as RamRaSumcheck,
         };
         use std::sync::Arc;
 
-        let init = self
-            .stage4
-            .take()
-            .expect("Rep3RamDagWorker stage4 init not set");
+        let init = self.stage4.take().expect("Rep3RamDagWorker stage4 init not set");
 
         let ram_K = sm.ram_K;
         let d = compute_d_parameter(ram_K);
@@ -416,52 +367,31 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
             let dth_root_log = DTH_ROOT_OF_K.log_2();
 
             // HammingWeight eq_r_cycle from accumulator
-            let (r_cycle_point, _) = sm.accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::RamHammingWeight,
-                SumcheckId::RamHammingBooleanity,
-            );
+            let (r_cycle_point, _) = sm
+                .accumulator
+                .get_virtual_polynomial_opening(VirtualPolynomial::RamHammingWeight, SumcheckId::RamHammingBooleanity);
             let eq_r_cycle = EqPolynomial::evals(&r_cycle_point.r);
 
-            let F_arrays = compute_address_chunk_hists::<F>(
-                &addresses,
-                &eq_r_cycle,
-                d,
-                chunk_size,
-                dth_root_log,
-            );
+            let F_arrays = compute_address_chunk_hists::<F>(&addresses, &eq_r_cycle, d, chunk_size, dth_root_log);
 
-            let hamming_weight = RamHammingWeight::new_prover_from_parts(
-                init.hamming_gamma_powers,
-                init.hamming_input_claim,
-                F_arrays,
-            );
+            let hamming_weight =
+                RamHammingWeight::new_prover_from_parts(init.hamming_gamma_powers, init.hamming_input_claim, F_arrays);
 
             // Booleanity uses its OWN eq_r_cycle (from transcript challenge),
             // which differs from HammingWeight's r_cycle (from accumulator opening).
             let bool_eq_r_cycle = EqPolynomial::evals(&init.bool_r_cycle);
-            let G_arrays = compute_address_chunk_hists::<F>(
-                &addresses,
-                &bool_eq_r_cycle,
-                d,
-                chunk_size,
-                dth_root_log,
-            );
+            let G_arrays = compute_address_chunk_hists::<F>(&addresses, &bool_eq_r_cycle, d, chunk_size, dth_root_log);
 
             // RaSumcheck: build ra_i_polys and eq_poly from trace
-            let eq_tables: Vec<Vec<F>> = init
-                .ra_r_address_chunks
-                .iter()
-                .map(|chunk| EqPolynomial::evals(chunk))
-                .collect();
+            let eq_tables: Vec<Vec<F>> =
+                init.ra_r_address_chunks.iter().map(|chunk| EqPolynomial::evals(chunk)).collect();
 
             let eq_polys = [
                 &EqPolynomial::<F>::evals(&init.ra_r_cycle[0]).into(),
                 &EqPolynomial::<F>::evals(&init.ra_r_cycle[1]).into(),
                 &EqPolynomial::<F>::evals(&init.ra_r_cycle[2]).into(),
             ];
-            let eq_poly = MultilinearPolynomial::from(
-                DensePolynomial::linear_combination(&eq_polys, &init.ra_gamma).Z,
-            );
+            let eq_poly = MultilinearPolynomial::from(DensePolynomial::linear_combination(&eq_polys, &init.ra_gamma).Z);
 
             let ra_i_polys: Vec<RaPolynomial<u8, F>> = (0..d)
                 .into_par_iter()
@@ -510,10 +440,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
                 BatchedSumcheckWorkerInstance::Public(Box::new(ra_virtual)),
             ]
         } else {
-            let hamming_weight = RamHammingWeight::new_verifier_from_parts(
-                init.hamming_gamma_powers,
-                init.hamming_input_claim,
-            );
+            let hamming_weight =
+                RamHammingWeight::new_verifier_from_parts(init.hamming_gamma_powers, init.hamming_input_claim);
 
             let booleanity = RamBooleanity::new_verifier_from_parts(
                 d,

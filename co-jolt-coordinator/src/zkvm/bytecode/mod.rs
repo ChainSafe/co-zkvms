@@ -22,9 +22,9 @@ use rayon::iter::{IndexedParallelIterator, ParallelIterator};
 use rayon::prelude::ParallelSlice;
 use strum::IntoEnumIterator;
 
-use jolt_core::field::JoltField;
 use crate::zkvm::dag::stage::BatchedSumcheckInstance;
 use crate::zkvm::dag::state_manager::StateManager;
+use jolt_core::field::JoltField;
 
 pub mod booleanity;
 pub mod hamming_weight;

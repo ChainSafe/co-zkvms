@@ -49,9 +49,10 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
             let point = OpeningPoint::<BIG_ENDIAN, F>::new(r_concat.clone());
             let key = OpeningId::Committed(*label, sumcheck);
             self.openings.insert(key, (point, *claim));
-            self.sumchecks.push(Rep3CoordinatorReductionSumcheck::new_one_hot(
-                *label, sumcheck, r_address, r_cycle, *claim,
-            ));
+            self.sumchecks
+                .push(Rep3CoordinatorReductionSumcheck::new_one_hot(
+                    *label, sumcheck, r_address, r_cycle, *claim,
+                ));
         }
     }
 
@@ -66,12 +67,13 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
         assert_eq!(polynomials.len(), claims.len());
         transcript.append_scalars(&claims);
 
-        self.sumchecks.push(Rep3CoordinatorReductionSumcheck::new_dense(
-            polynomials.clone(),
-            sumcheck,
-            opening_point.clone(),
-            claims.clone(),
-        ));
+        self.sumchecks
+            .push(Rep3CoordinatorReductionSumcheck::new_dense(
+                polynomials.clone(),
+                sumcheck,
+                opening_point.clone(),
+                claims.clone(),
+            ));
 
         for (label, claim) in polynomials.into_iter().zip(claims.into_iter()) {
             let point = OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone());
@@ -132,15 +134,20 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
         network: &mut N,
     ) -> eyre::Result<ReducedOpeningProof<F, PCS, ProofTranscript>>
     where
-        PCS: CommitmentScheme<Field = F>
-            + Rep3CommitmentScheme<F, ProofTranscript>,
+        PCS: CommitmentScheme<Field = F> + Rep3CommitmentScheme<F, ProofTranscript>,
         ProofTranscript: Transcript,
         N: mpc_core::protocols::rep3::network::Rep3NetworkCoordinator,
     {
         let total_gammas: usize = self
             .sumchecks
             .iter()
-            .map(|s| if s.polynomials.len() > 1 { s.polynomials.len() } else { 1 })
+            .map(|s| {
+                if s.polynomials.len() > 1 {
+                    s.polynomials.len()
+                } else {
+                    1
+                }
+            })
             .sum();
         let all_gammas: Vec<F> = transcript.challenge_vector(total_gammas);
         network.broadcast_request(all_gammas.clone())?;

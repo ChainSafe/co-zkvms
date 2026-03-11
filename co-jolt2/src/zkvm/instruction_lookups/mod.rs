@@ -75,32 +75,15 @@ pub struct Rep3LookupsDagWorker<F: JoltField> {
 
 impl<F: JoltField> Rep3LookupsDagWorker<F> {
     pub fn new(one_hot_polys: [Rep3OneHotPolynomial<F>; D]) -> Self {
-        Self {
-            stage2: None,
-            stage3: None,
-            G: None,
-            eq_r_cycle: None,
-            one_hot_polys: Arc::new(one_hot_polys),
-        }
+        Self { stage2: None, stage3: None, G: None, eq_r_cycle: None, one_hot_polys: Arc::new(one_hot_polys) }
     }
 
     pub fn set_stage2_init(&mut self, gamma: [F; D], r_address: Vec<F::Challenge>) {
         self.stage2 = Some((gamma, r_address));
     }
 
-    pub fn set_stage3_init(
-        &mut self,
-        hamming_gamma: [F; D],
-        read_raf_gamma: F,
-        rv_claim: F,
-        raf_claim: F,
-    ) {
-        self.stage3 = Some(LookupStage3Init {
-            hamming_gamma,
-            read_raf_gamma,
-            rv_claim,
-            raf_claim,
-        });
+    pub fn set_stage3_init(&mut self, hamming_gamma: [F; D], read_raf_gamma: F, rv_claim: F, raf_claim: F) {
+        self.stage3 = Some(LookupStage3Init { hamming_gamma, read_raf_gamma, rv_claim, raf_claim });
     }
 
     pub fn stage3_instances<PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>(
@@ -110,10 +93,7 @@ impl<F: JoltField> Rep3LookupsDagWorker<F> {
         preproc: &mut PreprocessingPool<F>,
     ) -> Vec<BatchedSumcheckWorkerInstance<F, N>> {
         let G = self.G.take().unwrap();
-        let init = self
-            .stage3
-            .take()
-            .expect("Rep3LookupsDagWorker stage3 init not set");
+        let init = self.stage3.take().expect("Rep3LookupsDagWorker stage3 init not set");
 
         // ReadRaf (created before HammingWeight, matching vanilla ordering)
         let eq_r_cycle = self.eq_r_cycle.take().unwrap();
@@ -154,34 +134,24 @@ impl<F: JoltField> Rep3LookupsDagWorker<F> {
     ) -> eyre::Result<Vec<F::Challenge>> {
         let (ra_input_claim, ra_r_address, ra_r_cycle): (F, Vec<F::Challenge>, Vec<F::Challenge>) =
             io_ctx.network().receive_request()?;
-        let mut ra_worker = Rep3InstructionRaSumcheckWorker::new(
-            self.one_hot_polys.clone(),
-            &ra_r_address,
-            ra_r_cycle,
-            ra_input_claim,
-        );
+        let mut ra_worker =
+            Rep3InstructionRaSumcheckWorker::new(self.one_hot_polys.clone(), &ra_r_address, ra_r_cycle, ra_input_claim);
         ra_virtual::prove_worker(&mut ra_worker, accumulator, io_ctx)
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
-    SumcheckStagesWorker<F, PCS, N> for Rep3LookupsDagWorker<F>
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker> SumcheckStagesWorker<F, PCS, N>
+    for Rep3LookupsDagWorker<F>
 {
     fn stage2_instances(
         &mut self,
         sm: &mut StateManagerWorker<'_, F, PCS>,
         _io_ctx: &mut IoContextPool<N>,
     ) -> Result<Vec<BatchedSumcheckWorkerInstance<F, N>>, eyre::Report> {
-        let (gamma, r_address) = self
-            .stage2
-            .take()
-            .expect("Rep3LookupsDagWorker stage2 init not set");
+        let (gamma, r_address) = self.stage2.take().expect("Rep3LookupsDagWorker stage2 init not set");
         let r_cycle = sm
             .accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::LookupOutput,
-                SumcheckId::SpartanOuter,
-            )
+            .get_virtual_polynomial_opening(VirtualPolynomial::LookupOutput, SumcheckId::SpartanOuter)
             .0
             .r
             .clone();
@@ -201,9 +171,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
             sm.party_id,
         );
 
-        Ok(vec![BatchedSumcheckWorkerInstance::Secret(Box::new(
-            booleanity,
-        ))])
+        Ok(vec![BatchedSumcheckWorkerInstance::Secret(Box::new(booleanity))])
     }
 }
 

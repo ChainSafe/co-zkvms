@@ -4,4 +4,5 @@ WORKDIR /src
 COPY . .
 RUN RUSTFLAGS="-A warnings" cargo build --release \
     --target x86_64-unknown-linux-musl \
-    -p co-jolt-coordinator
+    -p co-jolt-coordinator --features aws_nitro \
+    --bin coordinator --bin host_proxy

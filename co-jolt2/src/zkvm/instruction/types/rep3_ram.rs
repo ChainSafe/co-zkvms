@@ -59,10 +59,9 @@ impl Rep3RAMAccess {
     /// Consumes operands from `shares` in the same order as `shared_operands_mut`.
     pub fn from_shared(access: RAMAccess, shares: &mut impl Iterator<Item = Rep3Operand>) -> Self {
         match access {
-            RAMAccess::Read(read) => Rep3RAMAccess::Read(Rep3RAMRead {
-                address: read.address,
-                value: shares.next().unwrap(),
-            }),
+            RAMAccess::Read(read) => {
+                Rep3RAMAccess::Read(Rep3RAMRead { address: read.address, value: shares.next().unwrap() })
+            }
             RAMAccess::Write(write) => Rep3RAMAccess::Write(Rep3RAMWrite {
                 address: write.address,
                 pre_value: shares.next().unwrap(),
@@ -75,10 +74,7 @@ impl Rep3RAMAccess {
 
 impl From<RAMRead> for Rep3RAMAccess {
     fn from(read: RAMRead) -> Self {
-        Rep3RAMAccess::Read(Rep3RAMRead {
-            address: read.address,
-            value: Rep3Operand::Public(read.value as i128),
-        })
+        Rep3RAMAccess::Read(Rep3RAMRead { address: read.address, value: Rep3Operand::Public(read.value as i128) })
     }
 }
 

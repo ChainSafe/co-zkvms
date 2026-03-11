@@ -23,6 +23,7 @@ pub trait Rep3Program {
 }
 
 impl Rep3Program for Program {
+    #[tracing::instrument(skip_all, name = "Program::generate_trace_shares")]
     fn generate_trace_shares<R: RngCore>(
         &mut self,
         inputs: &[u8],
@@ -43,15 +44,12 @@ impl Rep3Program for Program {
         let ram_K = compute_ram_k(&trace, &shared);
 
         let program_io_shares = Rep3ProgramIOInput::generate_secret_shares(program_io, rng);
-        let memory_shares =
-            Rep3Memory::generate_secret_shares(memory, &shared.memory_layout, ram_K, rng);
+        let memory_shares = Rep3Memory::generate_secret_shares(memory, &shared.memory_layout, ram_K, rng);
 
         let trace_shares = share_trace(trace, rng);
 
-        let [io0, io1, io2]: [Rep3ProgramIOInput; 3] =
-            program_io_shares.try_into().expect("expected 3 shares");
-        let [mem0, mem1, mem2]: [Rep3Memory; 3] =
-            memory_shares.try_into().expect("expected 3 shares");
+        let [io0, io1, io2]: [Rep3ProgramIOInput; 3] = program_io_shares.try_into().expect("expected 3 shares");
+        let [mem0, mem1, mem2]: [Rep3Memory; 3] = memory_shares.try_into().expect("expected 3 shares");
         let [t0, t1, t2]: [Vec<Rep3Cycle>; 3] = trace_shares;
 
         [(t0, mem0, io0), (t1, mem1, io1), (t2, mem2, io2)]
@@ -64,10 +62,7 @@ impl Rep3Program for Program {
 /// 1. Extract operand values from the vanilla Cycle
 /// 2. Generate binary shares for each value
 /// 3. Build 3 Rep3Cycles via `from_cycle_shared`
-pub fn share_trace<R: RngCore>(
-    trace: Vec<tracer::instruction::Cycle>,
-    rng: &mut R,
-) -> [Vec<Rep3Cycle>; 3] {
+pub fn share_trace<R: RngCore>(trace: Vec<tracer::instruction::Cycle>, rng: &mut R) -> [Vec<Rep3Cycle>; 3] {
     use rand::SeedableRng;
     use rand_chacha::ChaCha12Rng;
 
@@ -117,10 +112,7 @@ fn public_operand_indices(cycle: &tracer::instruction::Cycle) -> &'static [usize
 /// Extracts operand values directly from the vanilla Cycle, generates binary
 /// shares, and builds 3 Rep3Cycles via `from_cycle_shared`.
 /// Operands at indices returned by `public_operand_indices` are kept public.
-fn share_cycle(
-    cycle: &tracer::instruction::Cycle,
-    rng: &mut impl rand::Rng,
-) -> (Rep3Cycle, Rep3Cycle, Rep3Cycle) {
+fn share_cycle(cycle: &tracer::instruction::Cycle, rng: &mut impl rand::Rng) -> (Rep3Cycle, Rep3Cycle, Rep3Cycle) {
     let mut copied_cycle = cycle.clone();
     let values = Rep3Cycle::extract_operand_values(&copied_cycle);
     let public_indices = public_operand_indices(cycle);
@@ -138,15 +130,8 @@ fn share_cycle(
                 let op = Rep3Operand::Public(v as i128);
                 [op, op, op]
             } else {
-                let s = rep3_ring::binary::generate_shares_rep3(
-                    v as jolt_common::constants::XlenInt,
-                    rng,
-                );
-                [
-                    Rep3Operand::from_binary(s[0]),
-                    Rep3Operand::from_binary(s[1]),
-                    Rep3Operand::from_binary(s[2]),
-                ]
+                let s = rep3_ring::binary::generate_shares_rep3(v as jolt_common::constants::XlenInt, rng);
+                [Rep3Operand::from_binary(s[0]), Rep3Operand::from_binary(s[1]), Rep3Operand::from_binary(s[2])]
             }
         })
         .collect();

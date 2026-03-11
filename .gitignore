@@ -32,3 +32,10 @@ papers/
 .zed/settings.json
 
 co-jolt2/.tee-artifacts/
+
+# Nitro Enclave build artifacts
+co-jolt-coordinator/enclave/coordinator.eif
+co-jolt-coordinator/enclave/host_proxy
+
+# Dory SRS files (generated at runtime)
+dory_urs_*.urs

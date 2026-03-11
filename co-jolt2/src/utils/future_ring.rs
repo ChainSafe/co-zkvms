@@ -157,11 +157,7 @@ where
     Args: Send + Copy,
     Standard: Distribution<R>,
 {
-    #[tracing::instrument(
-        skip_all,
-        name = "FutureRep3Ring::fulfill_batched_to_field",
-        level = "trace"
-    )]
+    #[tracing::instrument(skip_all, name = "FutureRep3Ring::fulfill_batched_to_field", level = "trace")]
     fn fulfill_batched<N: Rep3NetworkWorker, MapFn>(
         self,
         io_ctx: &mut IoContextPool<N>,
@@ -438,11 +434,7 @@ where
     Args: Send + Copy,
     Standard: Distribution<R>,
 {
-    #[tracing::instrument(
-        skip_all,
-        name = "FutureRep3Ring::fulfill_batched_to_ring",
-        level = "trace"
-    )]
+    #[tracing::instrument(skip_all, name = "FutureRep3Ring::fulfill_batched_to_ring", level = "trace")]
     fn fulfill_batched<N: Rep3NetworkWorker, MapFn>(
         self,
         io_ctx: &mut IoContextPool<N>,
