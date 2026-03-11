@@ -20,8 +20,7 @@ fn generate_cert() -> (CertificateDer<'static>, PrivateKeyDer<'static>) {
         rcgen::generate_simple_self_signed(vec!["localhost".to_string(), "127.0.0.1".to_string()])
             .expect("cert generation");
     let cert_der = CertificateDer::from(cert.der().to_vec());
-    let key_der =
-        PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_pair.serialize_der())).clone_key();
+    let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_pair.serialize_der())).clone_key();
     (cert_der, key_der)
 }
 
@@ -56,20 +55,13 @@ fn build_test_configs(base_port: u16) -> [NetworkConfig; 3] {
 /// `make_input(party_index)`, runs `work_fn`, and returns the result.
 ///
 /// Returns an array of 3 results.
-pub fn run_rep3_test<I, O, W>(
-    base_port: u16,
-    num_io_forks: u32,
-    make_input: impl Fn(usize) -> I,
-    work_fn: W,
-) -> [O; 3]
+pub fn run_rep3_test<I, O, W>(base_port: u16, num_io_forks: u32, make_input: impl Fn(usize) -> I, work_fn: W) -> [O; 3]
 where
     I: Send + 'static,
     O: Send + 'static,
     W: Fn(I, IoContextPool<Rep3MpcNet>) -> eyre::Result<O> + Send + Sync + 'static,
 {
-    rustls::crypto::aws_lc_rs::default_provider()
-        .install_default()
-        .ok(); // ignore if already installed
+    rustls::crypto::aws_lc_rs::default_provider().install_default().ok(); // ignore if already installed
 
     let configs = build_test_configs(base_port);
     let work_fn = Arc::new(work_fn);
@@ -88,24 +80,18 @@ where
                     .build()
                     .unwrap();
                 pool.install(|| {
-                    let network = Rep3MpcNet::new(config, 0)
-                        .with_context(|| format!("party {i} network init"))
-                        .unwrap();
+                    let network =
+                        Rep3MpcNet::new(config, 0).with_context(|| format!("party {i} network init")).unwrap();
                     let io_ctx = IoContextPool::init(network, num_io_forks)
                         .with_context(|| format!("party {i} io_ctx init"))
                         .unwrap();
-                    work_fn(input, io_ctx)
-                        .with_context(|| format!("party {i} work"))
-                        .unwrap()
+                    work_fn(input, io_ctx).with_context(|| format!("party {i} work")).unwrap()
                 })
             })
         })
         .collect();
 
-    let results: Vec<O> = handles
-        .into_iter()
-        .map(|h| h.join().expect("worker thread panicked"))
-        .collect();
+    let results: Vec<O> = handles.into_iter().map(|h| h.join().expect("worker thread panicked")).collect();
 
     results.try_into().unwrap_or_else(|_| unreachable!())
 }
@@ -188,9 +174,7 @@ where
     WF: Fn(WI, IoContextPool<Rep3MpcNet>) -> eyre::Result<WO> + Send + Sync + 'static,
     CF: FnOnce(CI, &mut Rep3QuicNetCoordinator) -> eyre::Result<CO> + Send + 'static,
 {
-    rustls::crypto::aws_lc_rs::default_provider()
-        .install_default()
-        .ok();
+    rustls::crypto::aws_lc_rs::default_provider().install_default().ok();
 
     let (worker_configs, coordinator_config) = build_test_configs_with_coordinator(base_port);
     let worker_fn = Arc::new(worker_fn);
@@ -207,15 +191,12 @@ where
                     .build()
                     .unwrap();
                 pool.install(|| {
-                    let network = Rep3MpcNet::new(config, 0)
-                        .with_context(|| format!("party {i} network init"))
-                        .unwrap();
+                    let network =
+                        Rep3MpcNet::new(config, 0).with_context(|| format!("party {i} network init")).unwrap();
                     let io_ctx = IoContextPool::init(network, num_io_forks)
                         .with_context(|| format!("party {i} io_ctx init"))
                         .unwrap();
-                    worker_fn(input, io_ctx)
-                        .with_context(|| format!("party {i} work"))
-                        .unwrap()
+                    worker_fn(input, io_ctx).with_context(|| format!("party {i} work")).unwrap()
                 })
             })
         })
@@ -224,28 +205,19 @@ where
     // Spawn coordinator thread
     let coordinator_input = make_coordinator_input();
     let coordinator_handle = thread::spawn(move || {
-        let pool = rayon::ThreadPoolBuilder::new()
-            .thread_name(|idx| format!("coordinator-rayon-{idx}"))
-            .build()
-            .unwrap();
+        let pool =
+            rayon::ThreadPoolBuilder::new().thread_name(|idx| format!("coordinator-rayon-{idx}")).build().unwrap();
         pool.install(|| {
-            let mut network = Rep3QuicNetCoordinator::new(coordinator_config, 0)
-                .context("coordinator network init")
-                .unwrap();
-            coordinator_fn(coordinator_input, &mut network)
-                .context("coordinator work")
-                .unwrap()
+            let mut network =
+                Rep3QuicNetCoordinator::new(coordinator_config, 0).context("coordinator network init").unwrap();
+            coordinator_fn(coordinator_input, &mut network).context("coordinator work").unwrap()
         })
     });
 
     // Collect results
-    let worker_results: Vec<WO> = worker_handles
-        .into_iter()
-        .map(|h| h.join().expect("worker thread panicked"))
-        .collect();
-    let coordinator_result = coordinator_handle
-        .join()
-        .expect("coordinator thread panicked");
+    let worker_results: Vec<WO> =
+        worker_handles.into_iter().map(|h| h.join().expect("worker thread panicked")).collect();
+    let coordinator_result = coordinator_handle.join().expect("coordinator thread panicked");
 
     let worker_array = worker_results.try_into().unwrap_or_else(|_| unreachable!());
     (worker_array, coordinator_result)
@@ -258,11 +230,7 @@ pub use mpc_core::protocols::rep3::test_utils::run_rep3_local_test_with_coordina
 
 /// Compare two multilinear polynomials coefficient-by-coefficient.
 /// Panics with a detailed mismatch report if they differ.
-pub fn check_poly<F: JoltField>(
-    poly: &MultilinearPolynomial<F>,
-    check: &MultilinearPolynomial<F>,
-    label: &str,
-) {
+pub fn check_poly<F: JoltField>(poly: &MultilinearPolynomial<F>, check: &MultilinearPolynomial<F>, label: &str) {
     assert_eq!(poly.len(), check.len(), "len mismatch {label}");
     let len = poly.len();
     let mut mismatches = Vec::new();
@@ -274,10 +242,6 @@ pub fn check_poly<F: JoltField>(
         }
     }
     if !mismatches.is_empty() {
-        panic!(
-            "{label}: {} mismatches (first at pos {}, len {len})",
-            mismatches.len(),
-            mismatches[0].0,
-        );
+        panic!("{label}: {} mismatches (first at pos {}, len {len})", mismatches.len(), mismatches[0].0,);
     }
 }

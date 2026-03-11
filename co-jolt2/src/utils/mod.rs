@@ -21,20 +21,12 @@ use tracer::instruction::Cycle;
 pub fn compute_ram_k(trace: &[Cycle], preprocessing: &JoltSharedPreprocessing) -> usize {
     let max_from_trace = trace
         .par_iter()
-        .filter_map(|cycle| {
-            remap_address(
-                cycle.ram_access().address() as u64,
-                &preprocessing.memory_layout,
-            )
-        })
+        .filter_map(|cycle| remap_address(cycle.ram_access().address() as u64, &preprocessing.memory_layout))
         .max()
         .unwrap_or(0);
 
-    let max_from_bytecode = remap_address(
-        preprocessing.ram.min_bytecode_address,
-        &preprocessing.memory_layout,
-    )
-    .unwrap_or(0)
+    let max_from_bytecode = remap_address(preprocessing.ram.min_bytecode_address, &preprocessing.memory_layout)
+        .unwrap_or(0)
         + preprocessing.ram.bytecode_words.len() as u64
         + 1;
 

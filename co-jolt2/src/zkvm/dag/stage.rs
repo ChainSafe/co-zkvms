@@ -16,12 +16,8 @@ use jolt_core::field::JoltField;
 ///
 /// Each subsystem DAG node (e.g. `Rep3LookupsDagWorker`)
 /// implements this trait to contribute sumcheck instances from shared polynomials.
-pub trait SumcheckStagesWorker<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
-{
-    fn stage1_prove(
-        &mut self,
-        _sm: &mut StateManagerWorker<'_, F, PCS>,
-    ) -> Result<(), eyre::Report> {
+pub trait SumcheckStagesWorker<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker> {
+    fn stage1_prove(&mut self, _sm: &mut StateManagerWorker<'_, F, PCS>) -> Result<(), eyre::Report> {
         Ok(())
     }
 
@@ -67,10 +63,8 @@ pub struct Rep3JoltDagStagesWorker<F: JoltField> {
     lookups_dag: Option<crate::zkvm::instruction_lookups::Rep3LookupsDagWorker<F>>,
 
     // Witness-time lookup polynomials (consumed when we create lookups_dag).
-    instruction_one_hot_polys: Option<
-        [crate::poly::one_hot_polynomial::Rep3OneHotPolynomial<F>;
-            jolt_core::zkvm::instruction_lookups::D],
-    >,
+    instruction_one_hot_polys:
+        Option<[crate::poly::one_hot_polynomial::Rep3OneHotPolynomial<F>; jolt_core::zkvm::instruction_lookups::D]>,
 }
 
 impl<F: JoltField> Rep3JoltDagStagesWorker<F> {
@@ -93,8 +87,8 @@ impl<F: JoltField> Rep3JoltDagStagesWorker<F> {
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker>
-    SumcheckStagesWorker<F, PCS, N> for Rep3JoltDagStagesWorker<F>
+impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker> SumcheckStagesWorker<F, PCS, N>
+    for Rep3JoltDagStagesWorker<F>
 where
     rand::distributions::Standard: rand::distributions::Distribution<u32>
         + rand::distributions::Distribution<u64>
@@ -114,13 +108,8 @@ where
             self.ram_dag = Some(crate::zkvm::ram::Rep3RamDagWorker::new(sm, io_ctx)?);
         }
         if self.lookups_dag.is_none() {
-            let polys = self
-                .instruction_one_hot_polys
-                .take()
-                .expect("instruction_one_hot_polys already consumed");
-            self.lookups_dag = Some(crate::zkvm::instruction_lookups::Rep3LookupsDagWorker::new(
-                polys,
-            ));
+            let polys = self.instruction_one_hot_polys.take().expect("instruction_one_hot_polys already consumed");
+            self.lookups_dag = Some(crate::zkvm::instruction_lookups::Rep3LookupsDagWorker::new(polys));
         }
 
         let party_id = io_ctx.party_id();
@@ -140,8 +129,7 @@ where
 
         // 2) Registers read-write checking — receive (gamma, input_claim)
         let (reg_gamma, reg_input_claim): (F, F) = io_ctx.network().receive_request()?;
-        self.registers_dag
-            .set_stage2_init(reg_gamma, reg_input_claim);
+        self.registers_dag.set_stage2_init(reg_gamma, reg_input_claim);
         let registers_instances = self.registers_dag.stage2_instances(sm, io_ctx)?;
 
         // 3) RAM — receive (gamma, input_claim, r_address)
@@ -151,17 +139,14 @@ where
         let ram_instances = ram_dag.stage2_instances(sm, io_ctx)?;
 
         // 4) Lookups booleanity — receive (gamma_powers, r_address)
-        let (lookups_gamma, lookups_r_address): (
-            [F; jolt_core::zkvm::instruction_lookups::D],
-            Vec<F::Challenge>,
-        ) = io_ctx.network().receive_request()?;
+        let (lookups_gamma, lookups_r_address): ([F; jolt_core::zkvm::instruction_lookups::D], Vec<F::Challenge>) =
+            io_ctx.network().receive_request()?;
         lookups_dag.set_stage2_init(lookups_gamma, lookups_r_address);
         let lookups_instances = lookups_dag.stage2_instances(sm, io_ctx)?;
 
         // Collect all instances in vanilla order
-        let mut instances: Vec<BatchedSumcheckWorkerInstance<F, N>> = Vec::with_capacity(
-            1 + registers_instances.len() + ram_instances.len() + lookups_instances.len(),
-        );
+        let mut instances: Vec<BatchedSumcheckWorkerInstance<F, N>> =
+            Vec::with_capacity(1 + registers_instances.len() + ram_instances.len() + lookups_instances.len());
         instances.push(BatchedSumcheckWorkerInstance::Secret(Box::new(inner)));
         instances.extend(registers_instances);
         instances.extend(ram_instances);
@@ -189,19 +174,16 @@ where
         let lookups_dag = self.lookups_dag.as_mut().expect("lookups_dag missing");
 
         // Receive stage3 init data from coordinator (three messages).
-        let (gamma_pc, input_claim_pc, input_claim_product): (F, F, F) =
-            io_ctx.network().receive_request()?;
-        let (
-            registers_val_claim,
-            lookups_gamma_vec,
-            ram_val_final_input_claim,
-            ram_val_eval_input_claim,
-        ): (F, Vec<F>, F, F) = io_ctx.network().receive_request()?;
-        let lookups_gamma: [F; jolt_core::zkvm::instruction_lookups::D] = lookups_gamma_vec
-            .try_into()
-            .map_err(|_| eyre::eyre!("lookups gamma vec has wrong length"))?;
-        let (read_raf_gamma, read_raf_rv_claim, read_raf_raf_claim): (F, F, F) =
-            io_ctx.network().receive_request()?;
+        let (gamma_pc, input_claim_pc, input_claim_product): (F, F, F) = io_ctx.network().receive_request()?;
+        let (registers_val_claim, lookups_gamma_vec, ram_val_final_input_claim, ram_val_eval_input_claim): (
+            F,
+            Vec<F>,
+            F,
+            F,
+        ) = io_ctx.network().receive_request()?;
+        let lookups_gamma: [F; jolt_core::zkvm::instruction_lookups::D] =
+            lookups_gamma_vec.try_into().map_err(|_| eyre::eyre!("lookups gamma vec has wrong length"))?;
+        let (read_raf_gamma, read_raf_rv_claim, read_raf_raf_claim): (F, F, F) = io_ctx.network().receive_request()?;
 
         // 1) Spartan: PCSumcheck (public) + ProductVirtualization (secret)
         let log_T = sm
@@ -213,33 +195,21 @@ where
 
         let pc_sumcheck = if party_id == mpc_core::protocols::rep3::PartyID::ID0 {
             let cycle_witness = &sm.prover_state.cycle_witness;
-            let unexpanded_pc_poly: jolt_core::poly::multilinear_polynomial::MultilinearPolynomial<
-                F,
-            > = cycle_witness.pc_sumcheck_unexpanded_pc().to_vec().into();
+            let unexpanded_pc_poly: jolt_core::poly::multilinear_polynomial::MultilinearPolynomial<F> =
+                cycle_witness.pc_sumcheck_unexpanded_pc().to_vec().into();
             let pc_indices: Vec<u64> = cycle_witness.meta().iter().map(|m| m.pc_index).collect();
-            let pc_poly: jolt_core::poly::multilinear_polynomial::MultilinearPolynomial<F> =
-                pc_indices.into();
+            let pc_poly: jolt_core::poly::multilinear_polynomial::MultilinearPolynomial<F> = pc_indices.into();
 
             let mask = 1u32 << (CircuitFlags::IsNoop as usize);
-            let is_noop: Vec<u8> = cycle_witness
-                .pc_sumcheck_flags_bits()
-                .iter()
-                .map(|bits| ((bits & mask) != 0) as u8)
-                .collect();
-            let is_noop_poly: jolt_core::poly::multilinear_polynomial::MultilinearPolynomial<F> =
-                is_noop.into();
+            let is_noop: Vec<u8> =
+                cycle_witness.pc_sumcheck_flags_bits().iter().map(|bits| ((bits & mask) != 0) as u8).collect();
+            let is_noop_poly: jolt_core::poly::multilinear_polynomial::MultilinearPolynomial<F> = is_noop.into();
 
-            let r_cycle = sm
-                .accumulator
-                .get_virtual_polynomial_opening(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter)
-                .0
-                .r;
-            let (_, eq_plus_one_evals) =
-                jolt_core::poly::eq_poly::EqPlusOnePolynomial::<F>::evals(&r_cycle, None);
+            let r_cycle =
+                sm.accumulator.get_virtual_polynomial_opening(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter).0.r;
+            let (_, eq_plus_one_evals) = jolt_core::poly::eq_poly::EqPlusOnePolynomial::<F>::evals(&r_cycle, None);
             let eq_plus_one_poly =
-                jolt_core::poly::multilinear_polynomial::MultilinearPolynomial::from(
-                    eq_plus_one_evals,
-                );
+                jolt_core::poly::multilinear_polynomial::MultilinearPolynomial::from(eq_plus_one_evals);
 
             PCSumcheck::<F>::new_prover_from_polys(
                 input_claim_pc,
@@ -257,20 +227,14 @@ where
         // PCSumcheck inputs are fully materialized into owned polynomials above.
         sm.prover_state.cycle_witness.drop_pc_sumcheck_inputs();
 
-        let product_sumcheck =
-            Rep3ProductVirtualizationSumcheckWorker::<F>::new(sm, input_claim_product);
+        let product_sumcheck = Rep3ProductVirtualizationSumcheckWorker::<F>::new(sm, input_claim_product);
 
         // 2) Registers: ValEvaluation (secret)
         self.registers_dag.set_stage3_init(registers_val_claim);
         let registers_stage3 = self.registers_dag.stage3_instances(sm, io_ctx, preproc)?;
 
         // 3) Lookups: ReadRaf (secret) + HammingWeight (secret)
-        lookups_dag.set_stage3_init(
-            lookups_gamma,
-            read_raf_gamma,
-            read_raf_rv_claim,
-            read_raf_raf_claim,
-        );
+        lookups_dag.set_stage3_init(lookups_gamma, read_raf_gamma, read_raf_rv_claim, read_raf_raf_claim);
         let lookups_stage3 = lookups_dag.stage3_instances(sm, io_ctx, preproc);
 
         // 4) RAM: ValEvaluation (secret) + ValFinal (secret) + HammingBooleanity (public)
@@ -280,13 +244,10 @@ where
         // Collect all instances in vanilla ordering:
         // spartan(PC, Product) → registers(Val) → lookups(ReadRaf, HammingWeight)
         // → ram(ValEvaluation, ValFinal, HammingBooleanity)
-        let mut stage3_instances: Vec<BatchedSumcheckWorkerInstance<F, N>> = Vec::with_capacity(
-            2 + registers_stage3.len() + lookups_stage3.len() + ram_stage3.len(),
-        );
+        let mut stage3_instances: Vec<BatchedSumcheckWorkerInstance<F, N>> =
+            Vec::with_capacity(2 + registers_stage3.len() + lookups_stage3.len() + ram_stage3.len());
         stage3_instances.push(BatchedSumcheckWorkerInstance::Public(Box::new(pc_sumcheck)));
-        stage3_instances.push(BatchedSumcheckWorkerInstance::Secret(Box::new(
-            product_sumcheck,
-        )));
+        stage3_instances.push(BatchedSumcheckWorkerInstance::Secret(Box::new(product_sumcheck)));
         stage3_instances.extend(registers_stage3);
         stage3_instances.extend(lookups_stage3);
         stage3_instances.extend(ram_stage3);
@@ -325,12 +286,7 @@ where
         // Lookups RA init (always active; mirrors vanilla stage4).
         let one_hot_polys = lookups_dag.one_hot_polys.clone();
         drop(lookups_dag);
-        let ra_worker = Rep3InstructionRaSumcheckWorker::new(
-            one_hot_polys,
-            &ra_r_address,
-            ra_r_cycle,
-            ra_input_claim,
-        );
+        let ra_worker = Rep3InstructionRaSumcheckWorker::new(one_hot_polys, &ra_r_address, ra_r_cycle, ra_input_claim);
         let lookups_stage4: Vec<BatchedSumcheckWorkerInstance<F, N>> =
             vec![BatchedSumcheckWorkerInstance::Secret(Box::new(ra_worker))];
 

@@ -200,8 +200,9 @@ impl<F: JoltField> SpartanDag<F> {
         );
         drop(acc);
 
-        let input_claim_pc =
-            next_unexpanded_pc_eval + gamma_pc * next_pc_eval + gamma_pc.square() * next_is_noop_eval;
+        let input_claim_pc = next_unexpanded_pc_eval
+            + gamma_pc * next_pc_eval
+            + gamma_pc.square() * next_is_noop_eval;
         let spartan_pc = PCSumcheck::<F>::new_verifier_from_openings(
             input_claim_pc,
             gamma_pc,
@@ -323,10 +324,8 @@ impl RamDag {
             &self.initial_ram_state,
             sm,
         );
-        let val_final = ValFinalSumcheck::new_verifier::<ProofTranscript, PCS>(
-            &self.initial_ram_state,
-            sm,
-        );
+        let val_final =
+            ValFinalSumcheck::new_verifier::<ProofTranscript, PCS>(&self.initial_ram_state, sm);
         let log_T = sm.trace_length.log_2();
         let hamming_bool = HammingBooleanitySumcheck::<F>::new_verifier_from_parts(log_T);
 
@@ -362,15 +361,15 @@ impl RamDag {
             hamming_gamma_powers[i] = hamming_gamma_powers[i - 1] * hamming_gamma;
         }
         let accumulator = sm.get_verifier_accumulator();
-        let (_, hamming_booleanity_claim) = accumulator
-            .borrow()
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RamHammingWeight,
-                SumcheckId::RamHammingBooleanity,
-            );
+        let (_, hamming_booleanity_claim) = accumulator.borrow().get_virtual_polynomial_opening(
+            VirtualPolynomial::RamHammingWeight,
+            SumcheckId::RamHammingBooleanity,
+        );
         let hamming_input_claim = hamming_booleanity_claim * hamming_gamma_powers.iter().sum::<F>();
-        let hamming_weight =
-            HammingWeightSumcheck::new_verifier_from_parts(hamming_gamma_powers, hamming_input_claim);
+        let hamming_weight = HammingWeightSumcheck::new_verifier_from_parts(
+            hamming_gamma_powers,
+            hamming_input_claim,
+        );
 
         // Booleanity
         let bool_r_cycle: Vec<F::Challenge> = sm
@@ -386,8 +385,13 @@ impl RamDag {
         for i in 1..d {
             bool_gamma_powers[i] = bool_gamma_powers[i - 1] * bool_gamma;
         }
-        let booleanity =
-            BooleanitySumcheck::new_verifier_from_parts(d, T, bool_r_cycle, bool_r_address, bool_gamma_powers);
+        let booleanity = BooleanitySumcheck::new_verifier_from_parts(
+            d,
+            T,
+            bool_r_cycle,
+            bool_r_address,
+            bool_gamma_powers,
+        );
 
         // RaSumcheck
         let acc = accumulator.borrow();
@@ -401,8 +405,8 @@ impl RamDag {
             SumcheckId::RamReadWriteChecking,
         );
         let (_, r_cycle_rw) = r_rw.split_at_r(log_K);
-        let (r_raf, ra_claim_raf) =
-            acc.get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation);
+        let (r_raf, ra_claim_raf) = acc
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation);
         let (_, r_cycle_raf) = r_raf.split_at_r(log_K);
         drop(acc);
 
@@ -419,8 +423,9 @@ impl RamDag {
 
         let ra_gamma: F = sm.transcript.borrow_mut().challenge_scalar();
         let ra_gamma_arr = [F::one(), ra_gamma, ra_gamma.square()];
-        let combined_ra_claim =
-            ra_gamma_arr[0] * ra_claim_val + ra_gamma_arr[1] * ra_claim_rw + ra_gamma_arr[2] * ra_claim_raf;
+        let combined_ra_claim = ra_gamma_arr[0] * ra_claim_val
+            + ra_gamma_arr[1] * ra_claim_rw
+            + ra_gamma_arr[2] * ra_claim_raf;
 
         let ra_virtual = RaSumcheck::new_verifier_from_parts(
             ra_gamma_arr,
@@ -723,8 +728,11 @@ impl BytecodeDag {
         let eq_r_register_2 = EqPolynomial::<F>::evals(
             &r_register_2[..(common::constants::REGISTER_COUNT as usize).log_2()],
         );
-        let val_2 =
-            BytecodeReadRaf::<F>::compute_val_2_from_bytecode(bytecode, &gamma_powers_2, &eq_r_register_2);
+        let val_2 = BytecodeReadRaf::<F>::compute_val_2_from_bytecode(
+            bytecode,
+            &gamma_powers_2,
+            &eq_r_register_2,
+        );
 
         // Val3 needs eq_r_register from val evaluation
         let acc = accumulator.borrow();
@@ -739,8 +747,11 @@ impl BytecodeDag {
         let eq_r_register_3 = EqPolynomial::<F>::evals(
             &r_register_3[..(common::constants::REGISTER_COUNT as usize).log_2()],
         );
-        let val_3 =
-            BytecodeReadRaf::<F>::compute_val_3_from_bytecode(bytecode, &gamma_powers_3, &eq_r_register_3);
+        let val_3 = BytecodeReadRaf::<F>::compute_val_3_from_bytecode(
+            bytecode,
+            &gamma_powers_3,
+            &eq_r_register_3,
+        );
 
         // r_cycles from accumulator
         let acc = accumulator.borrow();

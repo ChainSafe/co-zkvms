@@ -5,8 +5,8 @@ pub mod ram;
 pub mod registers;
 pub mod spartan;
 
-use jolt_core::field::JoltField;
 use crate::poly::commitment::Rep3CommitmentScheme;
+use jolt_core::field::JoltField;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::dag::proof_serialization::JoltProof;
@@ -23,8 +23,7 @@ use crate::zkvm::dag::state_manager::StateManager;
 
 pub trait Rep3Jolt<F: JoltField, PCS, ProofTranscript: Transcript>
 where
-    PCS: CommitmentScheme<Field = F>
-        + Rep3CommitmentScheme<F, ProofTranscript>,
+    PCS: CommitmentScheme<Field = F> + Rep3CommitmentScheme<F, ProofTranscript>,
 {
     fn prove<N: Rep3NetworkCoordinator>(
         preprocessing: &JoltVerifierPreprocessing<F, PCS>,

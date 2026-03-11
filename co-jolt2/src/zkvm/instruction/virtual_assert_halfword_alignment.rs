@@ -2,27 +2,17 @@ use super::*;
 
 impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAssertHalfwordAlignment> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand) {
-        (
-            self.register_state.rs1_operand(),
-            Rep3Operand::Public(self.instruction.operands.imm as u64 as i128),
-        )
+        (self.register_state.rs1_operand(), Rep3Operand::Public(self.instruction.operands.imm as u64 as i128))
     }
 
-    fn to_lookup_index(
-        &self,
-        party_id: PartyID,
-    ) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
+    fn to_lookup_index(&self, party_id: PartyID) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
         let (left, right) = <Self as Rep3LookupQuery<XLEN>>::to_instruction_inputs(self);
         let l = left.as_arithmetic_or_trivial_wide(party_id);
         let r = right.as_arithmetic_or_trivial_wide(party_id);
         FutureRep3Ring::a2b(l + r)
     }
 
-    #[tracing::instrument(
-        skip_all,
-        name = "VirtualAssertHalfwordAlignment::output",
-        level = "trace"
-    )]
+    #[tracing::instrument(skip_all, name = "VirtualAssertHalfwordAlignment::output", level = "trace")]
     fn to_lookup_output_batched<'a, F: JoltField, N: Rep3Network>(
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
@@ -34,18 +24,12 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAssertHa
             .iter()
             .map(|st| {
                 let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*st);
-                (
-                    l.as_binary_or_trivial(io_ctx.id),
-                    r.as_binary_or_trivial(io_ctx.id),
-                )
+                (l.as_binary_or_trivial(io_ctx.id), r.as_binary_or_trivial(io_ctx.id))
             })
             .unzip();
         let sums = rep3_ring::binary::add_many(&a, &b, io_ctx)?;
         // Mask to get just the LSB (as u32 share), then check if zero
-        let lsbs: Vec<_> = sums
-            .iter()
-            .map(|s| *s & RingElement(1 as XlenInt))
-            .collect();
+        let lsbs: Vec<_> = sums.iter().map(|s| *s & RingElement(1 as XlenInt)).collect();
         let is_even = rep3_ring::binary::is_zero_many(&lsbs, io_ctx)?;
         is_even.into_iter().zip(out).for_each(|(x, out)| {
             *out = FutureRep3Ring::bit_inject_to_field(x);

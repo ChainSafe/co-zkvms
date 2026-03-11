@@ -42,18 +42,13 @@ impl Rep3SpartanDagWorker {
         let cycle_witness = &state.prover_state.cycle_witness;
         let num_steps = cycle_witness.len();
         eyre::ensure!(num_steps.is_power_of_two(), "num_steps must be pow2");
-        eyre::ensure!(
-            !cycle_witness.stage1_lookup_output().is_empty(),
-            "cycle_witness.lookup_output not populated"
-        );
+        eyre::ensure!(!cycle_witness.stage1_lookup_output().is_empty(), "cycle_witness.lookup_output not populated");
 
         let key = UniformSpartanKey::<F>::new(num_steps);
         let num_constraints = UNIFORM_R1CS.len();
         let padded_num_constraints = key.padded_row_constraint_per_step();
-        let num_chunks = core::cmp::min(
-            rayon::current_num_threads().next_power_of_two() * 16,
-            core::cmp::max(1, num_steps / 2),
-        );
+        let num_chunks =
+            core::cmp::min(rayon::current_num_threads().next_power_of_two() * 16, core::cmp::max(1, num_steps / 2));
 
         // Precompute Product shares = left_input * right_input for ALL rows.
         // We only batch MPC shared×shared multiplication for the rows where BOTH inputs are shared.
@@ -69,8 +64,7 @@ impl Rep3SpartanDagWorker {
 
         // Important: keep ordering deterministic across parties.
         // Do not build this list with a parallel filter+collect (ordering is not guaranteed).
-        let (shared_mul_rows, mul_map) =
-            build_shared_mul_rows_and_map(&flags_bits, mask_both_shared);
+        let (shared_mul_rows, mul_map) = build_shared_mul_rows_and_map(&flags_bits, mask_both_shared);
 
         let mul_products: Vec<Rep3PrimeFieldShare<F>> = {
             let _span = tracing::trace_span!(
@@ -116,13 +110,8 @@ impl Rep3SpartanDagWorker {
                     let right_shared = (fb & mask_right_rs2) != 0;
 
                     match (left_shared, right_shared) {
-                        (true, false) => rep3_arithmetic::mul_public(
-                            row.rs1_value(),
-                            row.to_right_public_input(),
-                        ),
-                        (false, true) => {
-                            rep3_arithmetic::mul_public(row.rs2_value(), row.to_left_public_input())
-                        }
+                        (true, false) => rep3_arithmetic::mul_public(row.rs1_value(), row.to_right_public_input()),
+                        (false, true) => rep3_arithmetic::mul_public(row.rs2_value(), row.to_left_public_input()),
                         (false, false) => {
                             let l = row.to_left_public_input();
                             let r = row.to_right_public_input();
@@ -136,13 +125,9 @@ impl Rep3SpartanDagWorker {
 
         // Materialize per-cycle R1CS inputs (cheap; uses cached cycle witness).
         let cycle_inputs: Vec<Rep3R1CSCycleInputs<F>> = {
-            let _span = tracing::trace_span!(
-                "spartan_stage1_cycle_inputs",
-                num_steps,
-                num_constraints,
-                padded_num_constraints
-            )
-            .entered();
+            let _span =
+                tracing::trace_span!("spartan_stage1_cycle_inputs", num_steps, num_constraints, padded_num_constraints)
+                    .entered();
             (0..num_steps)
                 .into_par_iter()
                 .map(|t| {
@@ -188,14 +173,10 @@ impl Rep3SpartanDagWorker {
         // Cache SpartanOuter openings in the worker accumulator for later stages.
         let opening_point_cycle = OpeningPoint::<BIG_ENDIAN, F>::new(r_cycle.to_vec());
 
-        let committed_polys: Vec<CommittedPolynomial> = COMMITTED_R1CS_INPUTS
-            .iter()
-            .map(|input| CommittedPolynomial::try_from(input).ok().unwrap())
-            .collect();
-        let committed_claims: Vec<Rep3PrimeFieldShare<F>> = COMMITTED_R1CS_INPUTS
-            .iter()
-            .map(|input| claimed_witness_evals[input.to_index()])
-            .collect();
+        let committed_polys: Vec<CommittedPolynomial> =
+            COMMITTED_R1CS_INPUTS.iter().map(|input| CommittedPolynomial::try_from(input).ok().unwrap()).collect();
+        let committed_claims: Vec<Rep3PrimeFieldShare<F>> =
+            COMMITTED_R1CS_INPUTS.iter().map(|input| claimed_witness_evals[input.to_index()]).collect();
         state.accumulator.append_dense(
             committed_polys,
             SumcheckId::SpartanOuter,
@@ -209,18 +190,10 @@ impl Rep3SpartanDagWorker {
             }
             let poly = VirtualPolynomial::try_from(input).ok().unwrap();
             let eval = claimed_witness_evals[input.to_index()];
-            state.accumulator.append_virtual(
-                poly,
-                SumcheckId::SpartanOuter,
-                opening_point_cycle.clone(),
-                eval,
-            );
+            state.accumulator.append_virtual(poly, SumcheckId::SpartanOuter, opening_point_cycle.clone(), eval);
         }
 
-        let claimed_additive: Vec<AdditiveShare<F>> = claimed_witness_evals
-            .iter()
-            .map(|x| x.into_additive())
-            .collect();
+        let claimed_additive: Vec<AdditiveShare<F>> = claimed_witness_evals.iter().map(|x| x.into_additive()).collect();
         io_ctx.network().send_response(claimed_additive)?;
 
         Ok((r_reversed, claimed_witness_evals))

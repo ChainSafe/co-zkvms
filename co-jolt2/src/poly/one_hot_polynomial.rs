@@ -100,15 +100,9 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
         let mut opened_iter = opened_active.into_iter();
         let masked_indices_c: Vec<Option<u8>> = nonzero_indices
             .iter()
-            .map(|opt| {
-                opt.as_ref()
-                    .map(|_| opened_iter.next().expect("active index open"))
-            })
+            .map(|opt| opt.as_ref().map(|_| opened_iter.next().expect("active index open")))
             .collect();
-        debug_assert!(
-            opened_iter.next().is_none(),
-            "opened_active length mismatch"
-        );
+        debug_assert!(opened_iter.next().is_none(), "opened_active length mismatch");
 
         // Inject the OHV bits into prime-field shares once.
         let rand_ohv_e_field: Vec<Rep3PrimeFieldShare<F>> =
@@ -131,12 +125,7 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
         masked_indices_c: Arc<Vec<Option<u8>>>,
         rand_ohv_e_field: Arc<Vec<Rep3PrimeFieldShare<F>>>,
     ) -> Self {
-        Self {
-            K,
-            masked_indices_c,
-            rand_ohv_e_field,
-            ..Default::default()
-        }
+        Self { K, masked_indices_c, rand_ohv_e_field, ..Default::default() }
     }
 
     /// Reconstruct the plaintext `nonzero_indices` from 3 parties' Rep3OneHotPolynomial shares.
@@ -147,11 +136,7 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
     pub fn reconstruct_indices(polys: [&Self; 3]) -> Vec<Option<u8>> {
         // Binary rep3 reconstruct: secret = a_0 XOR a_1 XOR a_2
         let r = (polys[0].r_share.a ^ polys[1].r_share.a ^ polys[2].r_share.a).0;
-        polys[0]
-            .masked_indices_c
-            .iter()
-            .map(|opt| opt.map(|c| c ^ r))
-            .collect()
+        polys[0].masked_indices_c.iter().map(|opt| opt.map(|c| c ^ r)).collect()
     }
 
     /// The number of rows in the coefficient matrix used to
@@ -247,9 +232,7 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
             let g: Vec<F> = self.rand_ohv_e_field.iter().map(|s| s.a).collect();
             let mut g_hat = g;
             fwht_in_place(&mut g_hat);
-            let inv_k = F::from(self.K as u64)
-                .inverse()
-                .expect("K invertible in field");
+            let inv_k = F::from(self.K as u64).inverse().expect("K invertible in field");
 
             let rows_per_k = t / row_len;
             let chunk_commitments: Vec<Vec<G>> = {
@@ -311,11 +294,7 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
         // This directly accumulates (row, col) contributions for each candidate `k` using the
         // shared bit `E_field[c XOR k]` and the public base at `col`.
         let _guard = tracing::trace_span!("fallback").entered();
-        let active_t = self
-            .masked_indices_c
-            .iter()
-            .filter(|opt| opt.is_some())
-            .count();
+        let active_t = self.masked_indices_c.iter().filter(|opt| opt.is_some()).count();
 
         // Note: parallelizing `msm_field_elements` here via rayon can overflow the default
         // rayon worker thread stack on some platforms/configs. Keep this sequential for now;
@@ -383,9 +362,7 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
             let g: Vec<F> = self.rand_ohv_e_field.iter().map(|s| s.a).collect();
             let mut g_hat = g;
             fwht_in_place(&mut g_hat);
-            let inv_k = F::from(self.K as u64)
-                .inverse()
-                .expect("K invertible in field");
+            let inv_k = F::from(self.K as u64).inverse().expect("K invertible in field");
 
             // For each row_offset, compute conv[c] = Σ_k g[k XOR c] * l_vec[k * rows_per_k + row_offset]
             // via FWHT XOR-convolution: conv = IFWHT(FWHT(g) · FWHT(h)) / K
@@ -415,47 +392,40 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
                 .collect();
 
             // Accumulate into v_vec using precomputed convolution lookups.
-            v_vec
-                .par_iter_mut()
-                .enumerate()
-                .for_each(|(col_index, dest)| {
-                    let mut col_dot_product = F::zero();
-                    for (row_offset, t_idx) in (col_index..t).step_by(row_len).enumerate() {
-                        if let Some(c) = self.masked_indices_c[t_idx] {
-                            col_dot_product += convolutions[row_offset][c as usize];
-                        }
+            v_vec.par_iter_mut().enumerate().for_each(|(col_index, dest)| {
+                let mut col_dot_product = F::zero();
+                for (row_offset, t_idx) in (col_index..t).step_by(row_len).enumerate() {
+                    if let Some(c) = self.masked_indices_c[t_idx] {
+                        col_dot_product += convolutions[row_offset][c as usize];
                     }
-                    *dest += coeff * col_dot_product;
-                });
+                }
+                *dest += coeff * col_dot_product;
+            });
         } else {
             // T < row_len case
             let num_chunks = rayon::current_num_threads().next_power_of_two();
             let chunk_size = std::cmp::max(1, num_columns / num_chunks);
 
-            v_vec
-                .par_chunks_mut(chunk_size)
-                .enumerate()
-                .for_each(|(chunk_index, chunk)| {
-                    let min_col_index = chunk_index * chunk_size;
-                    let max_col_index = min_col_index + chunk_size;
-                    for (t_idx, opt_c) in self.masked_indices_c.iter().enumerate() {
-                        if let Some(c) = opt_c {
-                            for k in 0..self.K {
-                                let global_index = k as u128 * t as u128 + t_idx as u128;
-                                let col_index = (global_index % row_len as u128) as usize;
-                                if col_index >= min_col_index && col_index < max_col_index {
-                                    let row_index = (global_index / row_len as u128) as usize;
-                                    let e_idx = k ^ (*c as usize);
-                                    if row_index < l_vec.len() {
-                                        chunk[col_index % chunk_size] += coeff
-                                            * self.rand_ohv_e_field[e_idx].a
-                                            * l_vec[row_index];
-                                    }
+            v_vec.par_chunks_mut(chunk_size).enumerate().for_each(|(chunk_index, chunk)| {
+                let min_col_index = chunk_index * chunk_size;
+                let max_col_index = min_col_index + chunk_size;
+                for (t_idx, opt_c) in self.masked_indices_c.iter().enumerate() {
+                    if let Some(c) = opt_c {
+                        for k in 0..self.K {
+                            let global_index = k as u128 * t as u128 + t_idx as u128;
+                            let col_index = (global_index % row_len as u128) as usize;
+                            if col_index >= min_col_index && col_index < max_col_index {
+                                let row_index = (global_index / row_len as u128) as usize;
+                                let e_idx = k ^ (*c as usize);
+                                if row_index < l_vec.len() {
+                                    chunk[col_index % chunk_size] +=
+                                        coeff * self.rand_ohv_e_field[e_idx].a * l_vec[row_index];
                                 }
                             }
                         }
                     }
-                });
+                }
+            });
         }
     }
 
@@ -544,11 +514,7 @@ impl<F: JoltField> Rep3OneHotPolynomialProverOpening<F> {
     }
 
     /// Returns the sumcheck univariate evaluations at {0, 2} for the current round.
-    pub fn compute_prover_message(
-        &mut self,
-        round: usize,
-        previous_claim: F,
-    ) -> [Rep3PrimeFieldShare<F>; 2] {
+    pub fn compute_prover_message(&mut self, round: usize, previous_claim: F) -> [Rep3PrimeFieldShare<F>; 2] {
         let log_k = self.polynomial.K.log_2();
 
         if round < log_k {
@@ -583,12 +549,7 @@ impl<F: JoltField> Rep3OneHotPolynomialProverOpening<F> {
                     (inner0 * B_evals[0], inner2 * B_evals[1])
                 })
                 .reduce(
-                    || {
-                        (
-                            Rep3PrimeFieldShare::zero_share(),
-                            Rep3PrimeFieldShare::zero_share(),
-                        )
-                    },
+                    || (Rep3PrimeFieldShare::zero_share(), Rep3PrimeFieldShare::zero_share()),
                     |(mut a0, mut a2), (b0, b2)| {
                         a0 += b0;
                         a2 += b2;
@@ -647,8 +608,7 @@ impl<F: JoltField> Rep3OneHotPolynomialProverOpening<F> {
 
             // Normalize by eq_r_address_claim (public), matching vanilla.
             let previous_norm = previous_claim / eq_r_address_claim;
-            let previous_norm_share =
-                Rep3PrimeFieldShare::promote_from_trivial(&previous_norm, self.party_id);
+            let previous_norm_share = Rep3PrimeFieldShare::promote_from_trivial(&previous_norm, self.party_id);
 
             // Compute eq evals for the current round from the cycle-state scalar and the next w entry.
             let current_scalar = self.eq_cycle_state.D.get_current_scalar();
@@ -712,9 +672,7 @@ impl<F: JoltField> Rep3OneHotPolynomialProverOpening<F> {
                 let num_x_in = d_gruen.E_in_current_len();
                 let num_x_out = d_gruen.E_out_current_len();
                 let num_x_out_bits = num_x_out.log_2();
-                debug_assert!(
-                    num_x_in == 0 || ((num_x_in - 1) << num_x_out_bits | (num_x_out - 1)) < H.len()
-                );
+                debug_assert!(num_x_in == 0 || ((num_x_in - 1) << num_x_out_bits | (num_x_out - 1)) < H.len());
 
                 (0..num_x_in)
                     .into_par_iter()
@@ -760,9 +718,7 @@ impl<F: JoltField> Rep3OneHotPolynomialProverOpening<F> {
         let log_k = self.polynomial.K.log_2();
 
         if round < log_k {
-            self.eq_address_state
-                .B
-                .bind_parallel(r, BindingOrder::HighToLow);
+            self.eq_address_state.B.bind_parallel(r, BindingOrder::HighToLow);
             self.eq_address_state.F.update(r);
             self.eq_address_state.num_variables_bound += 1;
 
@@ -771,8 +727,7 @@ impl<F: JoltField> Rep3OneHotPolynomialProverOpening<F> {
                 let eq_u = self.eq_address_state.F.clone_values();
                 assert_eq!(eq_u.len(), self.polynomial.K);
 
-                let table_shifted =
-                    shifted_table_from_rand_ohv(&eq_u, &self.polynomial.rand_ohv_e_field);
+                let table_shifted = shifted_table_from_rand_ohv(&eq_u, &self.polynomial.rand_ohv_e_field);
                 *self.polynomial.H.write().unwrap() =
                     Rep3RaPolynomial::new(self.polynomial.masked_indices_c.clone(), table_shifted);
                 self.polynomial.G.clear();
@@ -780,11 +735,7 @@ impl<F: JoltField> Rep3OneHotPolynomialProverOpening<F> {
         } else {
             self.eq_cycle_state.D.bind(r);
             self.eq_cycle_state.num_variables_bound += 1;
-            self.polynomial
-                .H
-                .write()
-                .unwrap()
-                .bind_parallel(r, BindingOrder::HighToLow);
+            self.polynomial.H.write().unwrap().bind_parallel(r, BindingOrder::HighToLow);
         }
     }
 
@@ -802,10 +753,7 @@ pub(crate) fn compute_g_from_masked_indices<F: JoltField>(
 
     // Histogram in masked index space.
     let k_len = polynomial.K;
-    let num_chunks = rayon::current_num_threads()
-        .next_power_of_two()
-        .min(polynomial.masked_indices_c.len())
-        .max(1);
+    let num_chunks = rayon::current_num_threads().next_power_of_two().min(polynomial.masked_indices_c.len()).max(1);
     let chunk_size = (polynomial.masked_indices_c.len() / num_chunks).max(1);
 
     let g_c = polynomial
@@ -859,23 +807,12 @@ pub fn compute_g_from_masked_indices_many<F: JoltField, const D: usize>(
 
     for i in 1..D {
         debug_assert_eq!(polynomials[i].K, k_len, "K mismatch across chunks");
-        debug_assert_eq!(
-            polynomials[i].masked_indices_c.len(),
-            t,
-            "masked indices length mismatch"
-        );
-        debug_assert_eq!(
-            polynomials[i].rand_ohv_e_field.len(),
-            k_len,
-            "E_field length mismatch"
-        );
+        debug_assert_eq!(polynomials[i].masked_indices_c.len(), t, "masked indices length mismatch");
+        debug_assert_eq!(polynomials[i].rand_ohv_e_field.len(), k_len, "E_field length mismatch");
     }
 
     // Histogram in masked index space for all D chunks in one trace pass.
-    let num_chunks = rayon::current_num_threads()
-        .next_power_of_two()
-        .min(t)
-        .max(1);
+    let num_chunks = rayon::current_num_threads().next_power_of_two().min(t).max(1);
     let chunk_size = (t / num_chunks).max(1);
 
     let g_c: [Vec<F>; D] = (0..num_chunks)
@@ -943,10 +880,7 @@ mod tests {
     use std::path::Path;
     use std::sync::RwLock;
 
-    fn share_field_element_rep3<F: JoltField, R: rand::Rng>(
-        val: F,
-        rng: &mut R,
-    ) -> [Rep3PrimeFieldShare<F>; 3] {
+    fn share_field_element_rep3<F: JoltField, R: rand::Rng>(val: F, rng: &mut R) -> [Rep3PrimeFieldShare<F>; 3] {
         let shares = mpc_core::protocols::rep3::arithmetic::generate_shares_rep3(val, rng);
         shares.try_into().expect("rep3 share count")
     }
@@ -955,47 +889,27 @@ mod tests {
         rng: &mut R,
         k: usize,
         t: usize,
-    ) -> (
-        Vec<Option<u8>>,
-        vanilla::OneHotPolynomial<F>,
-        [Rep3OneHotPolynomial<F>; 3],
-    ) {
+    ) -> (Vec<Option<u8>>, vanilla::OneHotPolynomial<F>, [Rep3OneHotPolynomial<F>; 3]) {
         // Plaintext nonzero indices (allow some None entries).
         let mut nonzero_indices_plain: Vec<Option<u8>> = (0..t)
-            .map(|_| {
-                if (rng.next_u32() & 3) == 0 {
-                    None
-                } else {
-                    Some((rng.next_u32() as u8) & 0xff)
-                }
-            })
+            .map(|_| if (rng.next_u32() & 3) == 0 { None } else { Some((rng.next_u32() as u8) & 0xff) })
             .collect();
         if nonzero_indices_plain.iter().all(|x| x.is_none()) {
             nonzero_indices_plain[0] = Some(7);
         }
 
-        let vanilla_poly =
-            vanilla::OneHotPolynomial::<F>::from_indices(nonzero_indices_plain.clone(), k);
+        let vanilla_poly = vanilla::OneHotPolynomial::<F>::from_indices(nonzero_indices_plain.clone(), k);
 
         // Choose a fixed RandOHV mask index r (plaintext) and build the public masked indices
         // c[j] = k(j) XOR r.
         let r_mask: u8 = (rng.next_u32() as u8) & 0xff;
-        let masked_indices_c: Arc<Vec<Option<u8>>> = Arc::new(
-            nonzero_indices_plain
-                .iter()
-                .map(|opt| opt.map(|kj| kj ^ r_mask))
-                .collect(),
-        );
+        let masked_indices_c: Arc<Vec<Option<u8>>> =
+            Arc::new(nonzero_indices_plain.iter().map(|opt| opt.map(|kj| kj ^ r_mask)).collect());
 
         // Replicated arithmetic shares of E_field = e(r_mask).
-        let mut e_field_party: [Vec<Rep3PrimeFieldShare<F>>; 3] =
-            std::array::from_fn(|_| Vec::with_capacity(k));
+        let mut e_field_party: [Vec<Rep3PrimeFieldShare<F>>; 3] = std::array::from_fn(|_| Vec::with_capacity(k));
         for i in 0..k {
-            let bit = if i as u8 == r_mask {
-                F::one()
-            } else {
-                F::zero()
-            };
+            let bit = if i as u8 == r_mask { F::one() } else { F::zero() };
             let shares = share_field_element_rep3(bit, rng);
             for pid in 0..3 {
                 e_field_party[pid].push(shares[pid]);
@@ -1024,8 +938,7 @@ mod tests {
                     // Note: `rep3_ring::arithmetic::generate_shares_rep3` uses plain subtraction on
                     // unsigned integers and can panic under debug overflow checks; the binary/XOR
                     // generator is safe in debug builds.
-                    let shares =
-                        mpc_core::protocols::rep3_ring::binary::generate_shares_rep3(kj, rng);
+                    let shares = mpc_core::protocols::rep3_ring::binary::generate_shares_rep3(kj, rng);
                     for pid in 0..3 {
                         nonzero_indices_shares[pid].push(Some(shares[pid]));
                     }
@@ -1033,16 +946,15 @@ mod tests {
             }
         }
 
-        let rep3_polys: [Rep3OneHotPolynomial<F>; 3] =
-            std::array::from_fn(|pid| Rep3OneHotPolynomial {
-                K: k,
-                masked_indices_c: masked_indices_c.clone(),
-                rand_ohv_e_field: e_field_party[pid].clone(),
-                num_variables_bound: 0,
-                G: vec![],
-                H: Arc::new(RwLock::new(Rep3RaPolynomial::None)),
-                r_share: Rep3RingShare::default(),
-            });
+        let rep3_polys: [Rep3OneHotPolynomial<F>; 3] = std::array::from_fn(|pid| Rep3OneHotPolynomial {
+            K: k,
+            masked_indices_c: masked_indices_c.clone(),
+            rand_ohv_e_field: e_field_party[pid].clone(),
+            num_variables_bound: 0,
+            G: vec![],
+            H: Arc::new(RwLock::new(Rep3RaPolynomial::None)),
+            r_share: Rep3RingShare::default(),
+        });
 
         (nonzero_indices_plain, vanilla_poly, rep3_polys)
     }
@@ -1058,8 +970,7 @@ mod tests {
 
         let table: Vec<F> = (0..K).map(|_| F::random(&mut rng)).collect();
 
-        let mut e_field_party: [Vec<Rep3PrimeFieldShare<F>>; 3] =
-            std::array::from_fn(|_| Vec::with_capacity(K));
+        let mut e_field_party: [Vec<Rep3PrimeFieldShare<F>>; 3] = std::array::from_fn(|_| Vec::with_capacity(K));
         for i in 0..K {
             let bit = if i as u8 == r { F::one() } else { F::zero() };
             let shares = share_field_element_rep3(bit, &mut rng);
@@ -1104,30 +1015,18 @@ mod tests {
 
         // Random indices with some None entries.
         let mut k_plain: Vec<Option<u8>> = (0..T)
-            .map(|_| {
-                if (rng.next_u32() & 3) == 0 {
-                    None
-                } else {
-                    Some((rng.next_u32() as u8) & 0xff)
-                }
-            })
+            .map(|_| if (rng.next_u32() & 3) == 0 { None } else { Some((rng.next_u32() as u8) & 0xff) })
             .collect();
         // Ensure at least one active entry.
         if k_plain.iter().all(|x| x.is_none()) {
             k_plain[0] = Some(7);
         }
 
-        let masked_indices_c: Vec<Option<u8>> =
-            k_plain.iter().map(|opt| opt.map(|k| k ^ r_mask)).collect();
+        let masked_indices_c: Vec<Option<u8>> = k_plain.iter().map(|opt| opt.map(|k| k ^ r_mask)).collect();
 
-        let mut e_field_party: [Vec<Rep3PrimeFieldShare<F>>; 3] =
-            std::array::from_fn(|_| Vec::with_capacity(K));
+        let mut e_field_party: [Vec<Rep3PrimeFieldShare<F>>; 3] = std::array::from_fn(|_| Vec::with_capacity(K));
         for i in 0..K {
-            let bit = if i as u8 == r_mask {
-                F::one()
-            } else {
-                F::zero()
-            };
+            let bit = if i as u8 == r_mask { F::one() } else { F::zero() };
             let shares = share_field_element_rep3(bit, &mut rng);
             for pid in 0..3 {
                 e_field_party[pid].push(shares[pid]);
@@ -1148,8 +1047,7 @@ mod tests {
         let r_address: Vec<F> = (0..log_k).map(|_| F::random(&mut rng)).collect();
         let r_cycle: Vec<F> = (0..log_t).map(|_| F::random(&mut rng)).collect();
 
-        let shares: [Rep3PrimeFieldShare<F>; 3] =
-            std::array::from_fn(|pid| polys[pid].evaluate(&r_address, &r_cycle));
+        let shares: [Rep3PrimeFieldShare<F>; 3] = std::array::from_fn(|pid| polys[pid].evaluate(&r_address, &r_cycle));
         let got = combine_field_element(shares[0], shares[1], shares[2]);
 
         // Plaintext reference.
@@ -1177,32 +1075,23 @@ mod tests {
 
         // Vanilla OneHotPolynomial depends on DoryGlobals for sizing assertions and its Dory-backed evaluate().
         crate::poly::commitment::dory::test_support::init_dory_globals(k, t);
-        let (nonzero_indices_plain, vanilla_poly, polys) =
-            build_matching_polys::<F, _>(&mut rng, k, t);
+        let (nonzero_indices_plain, vanilla_poly, polys) = build_matching_polys::<F, _>(&mut rng, k, t);
 
         // Random opening points.
         let r_address: Vec<<F as jolt_core::field::JoltField>::Challenge> =
-            std::iter::repeat_with(|| {
-                <F as jolt_core::field::JoltField>::Challenge::random(&mut rng)
-            })
-            .take(log_k)
-            .collect();
+            std::iter::repeat_with(|| <F as jolt_core::field::JoltField>::Challenge::random(&mut rng))
+                .take(log_k)
+                .collect();
         let r_cycle: Vec<<F as jolt_core::field::JoltField>::Challenge> =
-            std::iter::repeat_with(|| {
-                <F as jolt_core::field::JoltField>::Challenge::random(&mut rng)
-            })
-            .take(log_t)
-            .collect();
+            std::iter::repeat_with(|| <F as jolt_core::field::JoltField>::Challenge::random(&mut rng))
+                .take(log_t)
+                .collect();
         let r_concat = [r_address.as_slice(), r_cycle.as_slice()].concat();
 
         // Evaluate: Rep3 (reconstructed) matches vanilla OneHotPolynomial::evaluate (Dory-backed).
         let rep3_eval_shares: [Rep3PrimeFieldShare<F>; 3] =
             std::array::from_fn(|pid| polys[pid].evaluate(&r_address, &r_cycle));
-        let rep3_eval = combine_field_element(
-            rep3_eval_shares[0],
-            rep3_eval_shares[1],
-            rep3_eval_shares[2],
-        );
+        let rep3_eval = combine_field_element(rep3_eval_shares[0], rep3_eval_shares[1], rep3_eval_shares[2]);
         let vanilla_eval = vanilla_poly.evaluate(&r_concat);
         assert_eq!(rep3_eval, vanilla_eval, "evaluate mismatch");
 
@@ -1214,10 +1103,7 @@ mod tests {
             .filter_map(|(j, opt_k)| opt_k.map(|kk| (j, kk)))
             .map(|(j, kk)| eq_all[(kk as usize) * t + j])
             .sum();
-        assert_eq!(
-            vanilla_eval, dense_eval,
-            "vanilla Dory evaluate != true MLE"
-        );
+        assert_eq!(vanilla_eval, dense_eval, "vanilla Dory evaluate != true MLE");
 
         // Sumcheck message equivalence (compute_prover_message + bind), round-by-round.
         let eq_address_state = vanilla::EqAddressState::<F>::new(&r_address);
@@ -1229,19 +1115,18 @@ mod tests {
         );
         vanilla_opening.initialize(vanilla_poly.clone());
 
-        let mut rep3_openings: [Rep3OneHotPolynomialProverOpening<F>; 3] =
-            std::array::from_fn(|pid| {
-                Rep3OneHotPolynomialProverOpening::new(
-                    polys[pid].clone(),
-                    &r_address,
-                    &r_cycle,
-                    match pid {
-                        0 => PartyID::ID0,
-                        1 => PartyID::ID1,
-                        _ => PartyID::ID2,
-                    },
-                )
-            });
+        let mut rep3_openings: [Rep3OneHotPolynomialProverOpening<F>; 3] = std::array::from_fn(|pid| {
+            Rep3OneHotPolynomialProverOpening::new(
+                polys[pid].clone(),
+                &r_address,
+                &r_cycle,
+                match pid {
+                    0 => PartyID::ID0,
+                    1 => PartyID::ID1,
+                    _ => PartyID::ID2,
+                },
+            )
+        });
 
         // Dense reference for the product polynomial `one_hot * eq(r_concat, ·)`.
         let mut dense_coeffs = vec![F::zero(); k * t];
@@ -1253,26 +1138,18 @@ mod tests {
         let mut dense_poly = DensePolynomial::<F>::new(dense_coeffs);
         let mut eq_poly = DensePolynomial::<F>::new(EqPolynomial::<F>::evals(&r_concat));
 
-        let input_claim: F = dense_poly
-            .Z
-            .iter()
-            .zip(eq_poly.Z.iter())
-            .take(dense_poly.len())
-            .map(|(a, b)| *a * *b)
-            .sum();
+        let input_claim: F =
+            dense_poly.Z.iter().zip(eq_poly.Z.iter()).take(dense_poly.len()).map(|(a, b)| *a * *b).sum();
         let mut previous_claim = input_claim;
 
         for round in 0..(log_k + log_t) {
             let vanilla_msg = vanilla_opening.compute_prover_message(round, previous_claim);
             assert_eq!(vanilla_msg.len(), 2);
 
-            let rep3_msgs: [[Rep3PrimeFieldShare<F>; 2]; 3] = std::array::from_fn(|pid| {
-                rep3_openings[pid].compute_prover_message(round, previous_claim)
-            });
-            let rep3_msg0 =
-                combine_field_element(rep3_msgs[0][0], rep3_msgs[1][0], rep3_msgs[2][0]);
-            let rep3_msg2 =
-                combine_field_element(rep3_msgs[0][1], rep3_msgs[1][1], rep3_msgs[2][1]);
+            let rep3_msgs: [[Rep3PrimeFieldShare<F>; 2]; 3] =
+                std::array::from_fn(|pid| rep3_openings[pid].compute_prover_message(round, previous_claim));
+            let rep3_msg0 = combine_field_element(rep3_msgs[0][0], rep3_msgs[1][0], rep3_msgs[2][0]);
+            let rep3_msg2 = combine_field_element(rep3_msgs[0][1], rep3_msgs[1][1], rep3_msgs[2][1]);
 
             // Dense reference sumcheck message at {0,2}.
             let mut expected0 = F::zero();
@@ -1281,20 +1158,13 @@ mod tests {
             for i in 0..half {
                 expected0 += dense_poly.Z[i] * eq_poly.Z[i];
 
-                let poly_bound_point =
-                    dense_poly.Z[i + half] + dense_poly.Z[i + half] - dense_poly.Z[i];
+                let poly_bound_point = dense_poly.Z[i + half] + dense_poly.Z[i + half] - dense_poly.Z[i];
                 let eq_bound_point = eq_poly.Z[i + half] + eq_poly.Z[i + half] - eq_poly.Z[i];
                 expected2 += poly_bound_point * eq_bound_point;
             }
 
-            assert_eq!(
-                vanilla_msg[0], expected0,
-                "round {round} vanilla eval(0) mismatch"
-            );
-            assert_eq!(
-                vanilla_msg[1], expected2,
-                "round {round} vanilla eval(2) mismatch"
-            );
+            assert_eq!(vanilla_msg[0], expected0, "round {round} vanilla eval(0) mismatch");
+            assert_eq!(vanilla_msg[1], expected2, "round {round} vanilla eval(2) mismatch");
             assert_eq!(rep3_msg0, expected0, "round {round} rep3 eval(0) mismatch");
             assert_eq!(rep3_msg2, expected2, "round {round} rep3 eval(2) mismatch");
 
@@ -1312,11 +1182,7 @@ mod tests {
             eq_poly.bind_parallel(r, BindingOrder::HighToLow);
         }
 
-        assert_eq!(
-            vanilla_opening.final_sumcheck_claim(),
-            dense_poly.Z[0],
-            "vanilla final sumcheck claim"
-        );
+        assert_eq!(vanilla_opening.final_sumcheck_claim(), dense_poly.Z[0], "vanilla final sumcheck claim");
         let rep3_final = combine_field_element(
             rep3_openings[0].final_sumcheck_claim(),
             rep3_openings[1].final_sumcheck_claim(),
@@ -1343,19 +1209,13 @@ mod tests {
         crate::poly::commitment::dory::test_support::init_dory_globals(k, t);
         let row_len = DoryGlobals::get_num_columns();
 
-        let (_nonzero_indices_plain, vanilla_poly, polys) =
-            build_matching_polys::<F, _>(&mut rng, k, t);
+        let (_nonzero_indices_plain, vanilla_poly, polys) = build_matching_polys::<F, _>(&mut rng, k, t);
 
-        let bases: Vec<G1Affine> = (0..row_len)
-            .map(|_| G1Projective::rand(&mut rng).into_affine())
-            .collect();
+        let bases: Vec<G1Affine> = (0..row_len).map(|_| G1Projective::rand(&mut rng).into_affine()).collect();
 
         let vanilla_rows = vanilla_poly.commit_rows::<G1Projective>(&bases);
-        let rep3_rows: [Vec<G1Projective>; 3] = std::array::from_fn(|pid| {
-            polys[pid]
-                .commit_rows::<G1Projective>(&bases)
-                .expect("rep3 commit_rows")
-        });
+        let rep3_rows: [Vec<G1Projective>; 3] =
+            std::array::from_fn(|pid| polys[pid].commit_rows::<G1Projective>(&bases).expect("rep3 commit_rows"));
 
         assert_eq!(rep3_rows[0].len(), vanilla_rows.len());
         assert_eq!(rep3_rows[1].len(), vanilla_rows.len());

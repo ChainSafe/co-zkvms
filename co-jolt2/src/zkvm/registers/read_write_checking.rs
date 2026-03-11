@@ -1,9 +1,7 @@
 use jolt_common::constants::REGISTER_COUNT;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::eq_poly::EqPolynomial;
-use jolt_core::poly::multilinear_polynomial::{
-    BindingOrder, MultilinearPolynomial, PolynomialBinding,
-};
+use jolt_core::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN};
 use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
 use jolt_core::transcripts::Transcript;
@@ -106,13 +104,11 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
         checkpoints.push([Rep3PrimeFieldShare::<F>::zero_share(); K]);
 
         for (chunk_index, delta) in deltas.into_iter().enumerate() {
-            let next: [Rep3PrimeFieldShare<F>; K] =
-                std::array::from_fn(|k| checkpoints[chunk_index][k] + delta[k]);
+            let next: [Rep3PrimeFieldShare<F>; K] = std::array::from_fn(|k| checkpoints[chunk_index][k] + delta[k]);
             checkpoints.push(next);
         }
 
-        let mut val_checkpoints: Vec<Rep3PrimeFieldShare<F>> =
-            vec![Rep3PrimeFieldShare::zero_share(); K * num_chunks];
+        let mut val_checkpoints: Vec<Rep3PrimeFieldShare<F>> = vec![Rep3PrimeFieldShare::zero_share(); K * num_chunks];
         val_checkpoints
             .par_chunks_mut(K)
             .zip(checkpoints.into_par_iter())
@@ -142,19 +138,14 @@ impl<F: JoltField> ReadWriteCheckingProverState<F> {
 
         let gruens_eq_r_prime = GruenSplitEqPolynomial::<F>::new(r_prime, BindingOrder::LowToHigh);
 
-        let addresses: Vec<(u8, u8, u8)> = (0..T)
-            .into_par_iter()
-            .map(|j| (meta[j].rs1_addr, meta[j].rs2_addr, meta[j].rd_addr))
-            .collect();
+        let addresses: Vec<(u8, u8, u8)> =
+            (0..T).into_par_iter().map(|j| (meta[j].rs1_addr, meta[j].rs2_addr, meta[j].rd_addr)).collect();
 
         let data_buffers: Vec<DataBuffers<F>> = (0..num_chunks)
             .into_par_iter()
             .map(|_| DataBuffers {
                 val_j_0: [Rep3PrimeFieldShare::zero_share(); K],
-                val_j_r: [
-                    [Rep3PrimeFieldShare::zero_share(); K],
-                    [Rep3PrimeFieldShare::zero_share(); K],
-                ],
+                val_j_r: [[Rep3PrimeFieldShare::zero_share(); K], [Rep3PrimeFieldShare::zero_share(); K]],
                 rs1_ra: [[F::zero(); K]; 2],
                 rs2_ra: [[F::zero(); K]; 2],
                 rd_wa: [[F::zero(); K]; 2],
@@ -199,9 +190,8 @@ impl<F: JoltField> Rep3RegistersReadWriteCheckingWorker<F> {
         let party_id = sm.party_id;
         let T = sm.prover_state.cycle_witness.len();
 
-        let (r_cycle, _) = sm
-            .accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
+        let (r_cycle, _) =
+            sm.accumulator.get_virtual_polynomial_opening(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
 
         let gamma_sqr = gamma.square();
 
@@ -252,153 +242,131 @@ impl<F: JoltField> Rep3RegistersReadWriteCheckingWorker<F> {
                 .map(|((I_chunk, buffers), checkpoint)| {
                     let mut evals = [Rep3Value::zero_share(); 2];
 
-                    let DataBuffers {
-                        val_j_0,
-                        val_j_r,
-                        rs1_ra,
-                        rs2_ra,
-                        rd_wa,
-                        dirty_indices,
-                    } = buffers;
+                    let DataBuffers { val_j_0, val_j_r, rs1_ra, rs2_ra, rd_wa, dirty_indices } = buffers;
 
                     val_j_0.copy_from_slice(checkpoint);
 
-                    I_chunk
-                        .chunk_by(|a, b| a.0 / 2 == b.0 / 2)
-                        .for_each(|inc_chunk| {
-                            let j_prime = inc_chunk[0].0;
+                    I_chunk.chunk_by(|a, b| a.0 / 2 == b.0 / 2).for_each(|inc_chunk| {
+                        let j_prime = inc_chunk[0].0;
 
-                            // Build public ra/wa histograms for the pair of rows
-                            for j in j_prime << round..(j_prime + 1) << round {
-                                let j_bound = j % (1 << round);
-                                let (k_rs1, k_rs2, k_rd) = addresses[j];
-                                dirty_indices[k_rs1 as usize] = true;
-                                rs1_ra[0][k_rs1 as usize] += A[j_bound];
-                                dirty_indices[k_rs2 as usize] = true;
-                                rs2_ra[0][k_rs2 as usize] += A[j_bound];
-                                dirty_indices[k_rd as usize] = true;
-                                rd_wa[0][k_rd as usize] += A[j_bound];
+                        // Build public ra/wa histograms for the pair of rows
+                        for j in j_prime << round..(j_prime + 1) << round {
+                            let j_bound = j % (1 << round);
+                            let (k_rs1, k_rs2, k_rd) = addresses[j];
+                            dirty_indices[k_rs1 as usize] = true;
+                            rs1_ra[0][k_rs1 as usize] += A[j_bound];
+                            dirty_indices[k_rs2 as usize] = true;
+                            rs2_ra[0][k_rs2 as usize] += A[j_bound];
+                            dirty_indices[k_rd as usize] = true;
+                            rd_wa[0][k_rd as usize] += A[j_bound];
+                        }
+
+                        for j in (j_prime + 1) << round..(j_prime + 2) << round {
+                            let j_bound = j % (1 << round);
+                            let (k_rs1, k_rs2, k_rd) = addresses[j];
+                            dirty_indices[k_rs1 as usize] = true;
+                            rs1_ra[1][k_rs1 as usize] += A[j_bound];
+                            dirty_indices[k_rs2 as usize] = true;
+                            rs2_ra[1][k_rs2 as usize] += A[j_bound];
+                            dirty_indices[k_rd as usize] = true;
+                            rd_wa[1][k_rd as usize] += A[j_bound];
+                        }
+
+                        for k in (0..K).filter(|&k| dirty_indices[k]) {
+                            val_j_r[0][k] = val_j_0[k];
+                        }
+                        let mut inc_iter = inc_chunk.iter().peekable();
+
+                        // First row
+                        loop {
+                            let (row, col, inc_lt, inc) = inc_iter.next().unwrap();
+                            debug_assert_eq!(*row, j_prime);
+                            val_j_r[0][*col as usize] += *inc_lt;
+                            val_j_0[*col as usize] += *inc;
+                            if inc_iter.peek().unwrap().0 != j_prime {
+                                break;
+                            }
+                        }
+                        for k in (0..K).filter(|&k| dirty_indices[k]) {
+                            val_j_r[1][k] = val_j_0[k];
+                        }
+
+                        // Second row
+                        for inc in inc_iter {
+                            let (row, col, inc_lt, inc) = *inc;
+                            debug_assert_eq!(row, j_prime + 1);
+                            val_j_r[1][col as usize] += inc_lt;
+                            val_j_0[col as usize] += inc;
+                        }
+
+                        let eq_r_prime_eval = gruens_eq_r_prime.E_out_current()[j_prime / 2];
+                        let inc_cycle_evals = {
+                            let inc_0 = inc_cycle.get_bound_coeff(j_prime);
+                            let inc_1 = inc_cycle.get_bound_coeff(j_prime + 1);
+                            [inc_0, inc_1 - inc_0] // [eval_at_0, slope]
+                        };
+
+                        // Compute inner sum over dirty indices
+                        let mut rd_inner = [Rep3PrimeFieldShare::<F>::zero_share(); 2];
+                        let mut rs1_inner = [Rep3PrimeFieldShare::<F>::zero_share(); 2];
+                        let mut rs2_inner = [Rep3PrimeFieldShare::<F>::zero_share(); 2];
+
+                        for k in (0..K).filter(|&k| dirty_indices[k]) {
+                            let val_0 = val_j_r[0][k]; // SHARED
+                            let val_slope = val_j_r[1][k] - val_0; // SHARED
+
+                            if !rd_wa[0][k].is_zero() || !rd_wa[1][k].is_zero() {
+                                let wa_0 = rd_wa[0][k]; // PUBLIC
+                                let wa_slope = rd_wa[1][k] - wa_0;
+                                // wa(PUB) * (inc(SHARED) + val(SHARED))
+                                rd_inner[0] += rep3_arith::mul_public(inc_cycle_evals[0] + val_0, wa_0);
+                                rd_inner[1] += rep3_arith::mul_public(inc_cycle_evals[1] + val_slope, wa_slope);
+                                rd_wa[0][k] = F::zero();
+                                rd_wa[1][k] = F::zero();
                             }
 
-                            for j in (j_prime + 1) << round..(j_prime + 2) << round {
-                                let j_bound = j % (1 << round);
-                                let (k_rs1, k_rs2, k_rd) = addresses[j];
-                                dirty_indices[k_rs1 as usize] = true;
-                                rs1_ra[1][k_rs1 as usize] += A[j_bound];
-                                dirty_indices[k_rs2 as usize] = true;
-                                rs2_ra[1][k_rs2 as usize] += A[j_bound];
-                                dirty_indices[k_rd as usize] = true;
-                                rd_wa[1][k_rd as usize] += A[j_bound];
+                            if !rs1_ra[0][k].is_zero() || !rs1_ra[1][k].is_zero() {
+                                let ra_0 = rs1_ra[0][k];
+                                let ra_slope = rs1_ra[1][k] - ra_0;
+                                rs1_inner[0] += rep3_arith::mul_public(val_0, ra_0);
+                                rs1_inner[1] += rep3_arith::mul_public(val_slope, ra_slope);
+                                rs1_ra[0][k] = F::zero();
+                                rs1_ra[1][k] = F::zero();
                             }
 
-                            for k in (0..K).filter(|&k| dirty_indices[k]) {
-                                val_j_r[0][k] = val_j_0[k];
-                            }
-                            let mut inc_iter = inc_chunk.iter().peekable();
-
-                            // First row
-                            loop {
-                                let (row, col, inc_lt, inc) = inc_iter.next().unwrap();
-                                debug_assert_eq!(*row, j_prime);
-                                val_j_r[0][*col as usize] += *inc_lt;
-                                val_j_0[*col as usize] += *inc;
-                                if inc_iter.peek().unwrap().0 != j_prime {
-                                    break;
-                                }
-                            }
-                            for k in (0..K).filter(|&k| dirty_indices[k]) {
-                                val_j_r[1][k] = val_j_0[k];
+                            if !rs2_ra[0][k].is_zero() || !rs2_ra[1][k].is_zero() {
+                                let ra_0 = rs2_ra[0][k];
+                                let ra_slope = rs2_ra[1][k] - ra_0;
+                                rs2_inner[0] += rep3_arith::mul_public(val_0, ra_0);
+                                rs2_inner[1] += rep3_arith::mul_public(val_slope, ra_slope);
+                                rs2_ra[0][k] = F::zero();
+                                rs2_ra[1][k] = F::zero();
                             }
 
-                            // Second row
-                            for inc in inc_iter {
-                                let (row, col, inc_lt, inc) = *inc;
-                                debug_assert_eq!(row, j_prime + 1);
-                                val_j_r[1][col as usize] += inc_lt;
-                                val_j_0[col as usize] += inc;
-                            }
+                            val_j_r[0][k] = Rep3PrimeFieldShare::zero_share();
+                            val_j_r[1][k] = Rep3PrimeFieldShare::zero_share();
+                        }
+                        dirty_indices.fill(false);
 
-                            let eq_r_prime_eval = gruens_eq_r_prime.E_out_current()[j_prime / 2];
-                            let inc_cycle_evals = {
-                                let inc_0 = inc_cycle.get_bound_coeff(j_prime);
-                                let inc_1 = inc_cycle.get_bound_coeff(j_prime + 1);
-                                [inc_0, inc_1 - inc_0] // [eval_at_0, slope]
-                            };
+                        // Combine with gamma (PUBLIC)
+                        let sum_0 = rd_inner[0]
+                            + rep3_arith::mul_public(rs1_inner[0], gamma)
+                            + rep3_arith::mul_public(rs2_inner[0], gamma_sqr);
+                        let sum_1 = rd_inner[1]
+                            + rep3_arith::mul_public(rs1_inner[1], gamma)
+                            + rep3_arith::mul_public(rs2_inner[1], gamma_sqr);
 
-                            // Compute inner sum over dirty indices
-                            let mut rd_inner = [Rep3PrimeFieldShare::<F>::zero_share(); 2];
-                            let mut rs1_inner = [Rep3PrimeFieldShare::<F>::zero_share(); 2];
-                            let mut rs2_inner = [Rep3PrimeFieldShare::<F>::zero_share(); 2];
-
-                            for k in (0..K).filter(|&k| dirty_indices[k]) {
-                                let val_0 = val_j_r[0][k]; // SHARED
-                                let val_slope = val_j_r[1][k] - val_0; // SHARED
-
-                                if !rd_wa[0][k].is_zero() || !rd_wa[1][k].is_zero() {
-                                    let wa_0 = rd_wa[0][k]; // PUBLIC
-                                    let wa_slope = rd_wa[1][k] - wa_0;
-                                    // wa(PUB) * (inc(SHARED) + val(SHARED))
-                                    rd_inner[0] +=
-                                        rep3_arith::mul_public(inc_cycle_evals[0] + val_0, wa_0);
-                                    rd_inner[1] += rep3_arith::mul_public(
-                                        inc_cycle_evals[1] + val_slope,
-                                        wa_slope,
-                                    );
-                                    rd_wa[0][k] = F::zero();
-                                    rd_wa[1][k] = F::zero();
-                                }
-
-                                if !rs1_ra[0][k].is_zero() || !rs1_ra[1][k].is_zero() {
-                                    let ra_0 = rs1_ra[0][k];
-                                    let ra_slope = rs1_ra[1][k] - ra_0;
-                                    rs1_inner[0] += rep3_arith::mul_public(val_0, ra_0);
-                                    rs1_inner[1] += rep3_arith::mul_public(val_slope, ra_slope);
-                                    rs1_ra[0][k] = F::zero();
-                                    rs1_ra[1][k] = F::zero();
-                                }
-
-                                if !rs2_ra[0][k].is_zero() || !rs2_ra[1][k].is_zero() {
-                                    let ra_0 = rs2_ra[0][k];
-                                    let ra_slope = rs2_ra[1][k] - ra_0;
-                                    rs2_inner[0] += rep3_arith::mul_public(val_0, ra_0);
-                                    rs2_inner[1] += rep3_arith::mul_public(val_slope, ra_slope);
-                                    rs2_ra[0][k] = F::zero();
-                                    rs2_ra[1][k] = F::zero();
-                                }
-
-                                val_j_r[0][k] = Rep3PrimeFieldShare::zero_share();
-                                val_j_r[1][k] = Rep3PrimeFieldShare::zero_share();
-                            }
-                            dirty_indices.fill(false);
-
-                            // Combine with gamma (PUBLIC)
-                            let sum_0 = rd_inner[0]
-                                + rep3_arith::mul_public(rs1_inner[0], gamma)
-                                + rep3_arith::mul_public(rs2_inner[0], gamma_sqr);
-                            let sum_1 = rd_inner[1]
-                                + rep3_arith::mul_public(rs1_inner[1], gamma)
-                                + rep3_arith::mul_public(rs2_inner[1], gamma_sqr);
-
-                            // eq_r_prime(PUB) * sum(SHARED)
-                            evals[0] = evals[0].add(
-                                &Rep3Value::Shared(rep3_arith::mul_public(sum_0, eq_r_prime_eval)),
-                                party_id,
-                            );
-                            evals[1] = evals[1].add(
-                                &Rep3Value::Shared(rep3_arith::mul_public(sum_1, eq_r_prime_eval)),
-                                party_id,
-                            );
-                        });
+                        // eq_r_prime(PUB) * sum(SHARED)
+                        evals[0] =
+                            evals[0].add(&Rep3Value::Shared(rep3_arith::mul_public(sum_0, eq_r_prime_eval)), party_id);
+                        evals[1] =
+                            evals[1].add(&Rep3Value::Shared(rep3_arith::mul_public(sum_1, eq_r_prime_eval)), party_id);
+                    });
                     evals
                 })
                 .reduce(
                     || [Rep3Value::zero_share(); 2],
-                    |running, new| {
-                        [
-                            running[0].add(&new[0], party_id),
-                            running[1].add(&new[1], party_id),
-                        ]
-                    },
+                    |running, new| [running[0].add(&new[0], party_id), running[1].add(&new[1], party_id)],
                 )
         } else {
             // E_in not fully bound — handle E_in and E_out
@@ -413,175 +381,145 @@ impl<F: JoltField> Rep3RegistersReadWriteCheckingWorker<F> {
                     let mut evals_for_current_E_out = [Rep3Value::zero_share(); 2];
                     let mut x_out_prev: Option<usize> = None;
 
-                    let DataBuffers {
-                        val_j_0,
-                        val_j_r,
-                        rs1_ra,
-                        rs2_ra,
-                        rd_wa,
-                        dirty_indices,
-                    } = buffers;
+                    let DataBuffers { val_j_0, val_j_r, rs1_ra, rs2_ra, rd_wa, dirty_indices } = buffers;
                     val_j_0.copy_from_slice(checkpoint);
 
-                    I_chunk
-                        .chunk_by(|a, b| a.0 / 2 == b.0 / 2)
-                        .for_each(|inc_chunk| {
-                            let j_prime = inc_chunk[0].0;
+                    I_chunk.chunk_by(|a, b| a.0 / 2 == b.0 / 2).for_each(|inc_chunk| {
+                        let j_prime = inc_chunk[0].0;
 
-                            for j in j_prime << round..(j_prime + 1) << round {
-                                let j_bound = j % (1 << round);
-                                let (k_rs1, k_rs2, k_rd) = addresses[j];
-                                dirty_indices[k_rs1 as usize] = true;
-                                rs1_ra[0][k_rs1 as usize] += A[j_bound];
-                                dirty_indices[k_rs2 as usize] = true;
-                                rs2_ra[0][k_rs2 as usize] += A[j_bound];
-                                dirty_indices[k_rd as usize] = true;
-                                rd_wa[0][k_rd as usize] += A[j_bound];
+                        for j in j_prime << round..(j_prime + 1) << round {
+                            let j_bound = j % (1 << round);
+                            let (k_rs1, k_rs2, k_rd) = addresses[j];
+                            dirty_indices[k_rs1 as usize] = true;
+                            rs1_ra[0][k_rs1 as usize] += A[j_bound];
+                            dirty_indices[k_rs2 as usize] = true;
+                            rs2_ra[0][k_rs2 as usize] += A[j_bound];
+                            dirty_indices[k_rd as usize] = true;
+                            rd_wa[0][k_rd as usize] += A[j_bound];
+                        }
+
+                        for j in (j_prime + 1) << round..(j_prime + 2) << round {
+                            let j_bound = j % (1 << round);
+                            let (k_rs1, k_rs2, k_rd) = addresses[j];
+                            dirty_indices[k_rs1 as usize] = true;
+                            rs1_ra[1][k_rs1 as usize] += A[j_bound];
+                            dirty_indices[k_rs2 as usize] = true;
+                            rs2_ra[1][k_rs2 as usize] += A[j_bound];
+                            dirty_indices[k_rd as usize] = true;
+                            rd_wa[1][k_rd as usize] += A[j_bound];
+                        }
+
+                        for k in (0..K).filter(|&k| dirty_indices[k]) {
+                            val_j_r[0][k] = val_j_0[k];
+                        }
+                        let mut inc_iter = inc_chunk.iter().peekable();
+                        loop {
+                            let (row, col, inc_lt, inc) = inc_iter.next().unwrap();
+                            debug_assert_eq!(*row, j_prime);
+                            val_j_r[0][*col as usize] += *inc_lt;
+                            val_j_0[*col as usize] += *inc;
+                            if inc_iter.peek().unwrap().0 != j_prime {
+                                break;
+                            }
+                        }
+                        for k in (0..K).filter(|&k| dirty_indices[k]) {
+                            val_j_r[1][k] = val_j_0[k];
+                        }
+                        for entry in inc_iter {
+                            let (row, col, inc_lt, inc) = *entry;
+                            debug_assert_eq!(row, j_prime + 1);
+                            val_j_r[1][col as usize] += inc_lt;
+                            val_j_0[col as usize] += inc;
+                        }
+
+                        let x_in = (j_prime / 2) & x_bitmask;
+                        let x_out = (j_prime / 2) >> num_x_in_bits;
+                        let E_in_eval = gruens_eq_r_prime.E_in_current()[x_in];
+
+                        let inc_cycle_evals = {
+                            let inc_0 = inc_cycle.get_bound_coeff(j_prime);
+                            let inc_1 = inc_cycle.get_bound_coeff(j_prime + 1);
+                            [inc_0, inc_1 - inc_0]
+                        };
+
+                        match x_out_prev {
+                            None => {
+                                x_out_prev = Some(x_out);
+                            }
+                            Some(x) if x_out != x => {
+                                x_out_prev = Some(x_out);
+                                let E_out_eval = gruens_eq_r_prime.E_out_current()[x];
+                                evals[0] = evals[0].add(&evals_for_current_E_out[0].mul_public(E_out_eval), party_id);
+                                evals[1] = evals[1].add(&evals_for_current_E_out[1].mul_public(E_out_eval), party_id);
+                                evals_for_current_E_out = [Rep3Value::zero_share(); 2];
+                            }
+                            _ => (),
+                        }
+
+                        let mut rd_inner = [Rep3PrimeFieldShare::<F>::zero_share(); 2];
+                        let mut rs1_inner = [Rep3PrimeFieldShare::<F>::zero_share(); 2];
+                        let mut rs2_inner = [Rep3PrimeFieldShare::<F>::zero_share(); 2];
+
+                        for k in (0..K).filter(|&k| dirty_indices[k]) {
+                            let val_0 = val_j_r[0][k];
+                            let val_slope = val_j_r[1][k] - val_0;
+
+                            if !rd_wa[0][k].is_zero() || !rd_wa[1][k].is_zero() {
+                                let wa_0 = rd_wa[0][k];
+                                let wa_slope = rd_wa[1][k] - wa_0;
+                                rd_inner[0] += rep3_arith::mul_public(inc_cycle_evals[0] + val_0, wa_0);
+                                rd_inner[1] += rep3_arith::mul_public(inc_cycle_evals[1] + val_slope, wa_slope);
+                                rd_wa[0][k] = F::zero();
+                                rd_wa[1][k] = F::zero();
                             }
 
-                            for j in (j_prime + 1) << round..(j_prime + 2) << round {
-                                let j_bound = j % (1 << round);
-                                let (k_rs1, k_rs2, k_rd) = addresses[j];
-                                dirty_indices[k_rs1 as usize] = true;
-                                rs1_ra[1][k_rs1 as usize] += A[j_bound];
-                                dirty_indices[k_rs2 as usize] = true;
-                                rs2_ra[1][k_rs2 as usize] += A[j_bound];
-                                dirty_indices[k_rd as usize] = true;
-                                rd_wa[1][k_rd as usize] += A[j_bound];
+                            if !rs1_ra[0][k].is_zero() || !rs1_ra[1][k].is_zero() {
+                                let ra_0 = rs1_ra[0][k];
+                                let ra_slope = rs1_ra[1][k] - ra_0;
+                                rs1_inner[0] += rep3_arith::mul_public(val_0, ra_0);
+                                rs1_inner[1] += rep3_arith::mul_public(val_slope, ra_slope);
+                                rs1_ra[0][k] = F::zero();
+                                rs1_ra[1][k] = F::zero();
                             }
 
-                            for k in (0..K).filter(|&k| dirty_indices[k]) {
-                                val_j_r[0][k] = val_j_0[k];
-                            }
-                            let mut inc_iter = inc_chunk.iter().peekable();
-                            loop {
-                                let (row, col, inc_lt, inc) = inc_iter.next().unwrap();
-                                debug_assert_eq!(*row, j_prime);
-                                val_j_r[0][*col as usize] += *inc_lt;
-                                val_j_0[*col as usize] += *inc;
-                                if inc_iter.peek().unwrap().0 != j_prime {
-                                    break;
-                                }
-                            }
-                            for k in (0..K).filter(|&k| dirty_indices[k]) {
-                                val_j_r[1][k] = val_j_0[k];
-                            }
-                            for entry in inc_iter {
-                                let (row, col, inc_lt, inc) = *entry;
-                                debug_assert_eq!(row, j_prime + 1);
-                                val_j_r[1][col as usize] += inc_lt;
-                                val_j_0[col as usize] += inc;
+                            if !rs2_ra[0][k].is_zero() || !rs2_ra[1][k].is_zero() {
+                                let ra_0 = rs2_ra[0][k];
+                                let ra_slope = rs2_ra[1][k] - ra_0;
+                                rs2_inner[0] += rep3_arith::mul_public(val_0, ra_0);
+                                rs2_inner[1] += rep3_arith::mul_public(val_slope, ra_slope);
+                                rs2_ra[0][k] = F::zero();
+                                rs2_ra[1][k] = F::zero();
                             }
 
-                            let x_in = (j_prime / 2) & x_bitmask;
-                            let x_out = (j_prime / 2) >> num_x_in_bits;
-                            let E_in_eval = gruens_eq_r_prime.E_in_current()[x_in];
+                            val_j_r[0][k] = Rep3PrimeFieldShare::zero_share();
+                            val_j_r[1][k] = Rep3PrimeFieldShare::zero_share();
+                        }
+                        dirty_indices.fill(false);
 
-                            let inc_cycle_evals = {
-                                let inc_0 = inc_cycle.get_bound_coeff(j_prime);
-                                let inc_1 = inc_cycle.get_bound_coeff(j_prime + 1);
-                                [inc_0, inc_1 - inc_0]
-                            };
+                        let sum_0 = rd_inner[0]
+                            + rep3_arith::mul_public(rs1_inner[0], gamma)
+                            + rep3_arith::mul_public(rs2_inner[0], gamma_sqr);
+                        let sum_1 = rd_inner[1]
+                            + rep3_arith::mul_public(rs1_inner[1], gamma)
+                            + rep3_arith::mul_public(rs2_inner[1], gamma_sqr);
 
-                            match x_out_prev {
-                                None => {
-                                    x_out_prev = Some(x_out);
-                                }
-                                Some(x) if x_out != x => {
-                                    x_out_prev = Some(x_out);
-                                    let E_out_eval = gruens_eq_r_prime.E_out_current()[x];
-                                    evals[0] = evals[0].add(
-                                        &evals_for_current_E_out[0].mul_public(E_out_eval),
-                                        party_id,
-                                    );
-                                    evals[1] = evals[1].add(
-                                        &evals_for_current_E_out[1].mul_public(E_out_eval),
-                                        party_id,
-                                    );
-                                    evals_for_current_E_out = [Rep3Value::zero_share(); 2];
-                                }
-                                _ => (),
-                            }
-
-                            let mut rd_inner = [Rep3PrimeFieldShare::<F>::zero_share(); 2];
-                            let mut rs1_inner = [Rep3PrimeFieldShare::<F>::zero_share(); 2];
-                            let mut rs2_inner = [Rep3PrimeFieldShare::<F>::zero_share(); 2];
-
-                            for k in (0..K).filter(|&k| dirty_indices[k]) {
-                                let val_0 = val_j_r[0][k];
-                                let val_slope = val_j_r[1][k] - val_0;
-
-                                if !rd_wa[0][k].is_zero() || !rd_wa[1][k].is_zero() {
-                                    let wa_0 = rd_wa[0][k];
-                                    let wa_slope = rd_wa[1][k] - wa_0;
-                                    rd_inner[0] +=
-                                        rep3_arith::mul_public(inc_cycle_evals[0] + val_0, wa_0);
-                                    rd_inner[1] += rep3_arith::mul_public(
-                                        inc_cycle_evals[1] + val_slope,
-                                        wa_slope,
-                                    );
-                                    rd_wa[0][k] = F::zero();
-                                    rd_wa[1][k] = F::zero();
-                                }
-
-                                if !rs1_ra[0][k].is_zero() || !rs1_ra[1][k].is_zero() {
-                                    let ra_0 = rs1_ra[0][k];
-                                    let ra_slope = rs1_ra[1][k] - ra_0;
-                                    rs1_inner[0] += rep3_arith::mul_public(val_0, ra_0);
-                                    rs1_inner[1] += rep3_arith::mul_public(val_slope, ra_slope);
-                                    rs1_ra[0][k] = F::zero();
-                                    rs1_ra[1][k] = F::zero();
-                                }
-
-                                if !rs2_ra[0][k].is_zero() || !rs2_ra[1][k].is_zero() {
-                                    let ra_0 = rs2_ra[0][k];
-                                    let ra_slope = rs2_ra[1][k] - ra_0;
-                                    rs2_inner[0] += rep3_arith::mul_public(val_0, ra_0);
-                                    rs2_inner[1] += rep3_arith::mul_public(val_slope, ra_slope);
-                                    rs2_ra[0][k] = F::zero();
-                                    rs2_ra[1][k] = F::zero();
-                                }
-
-                                val_j_r[0][k] = Rep3PrimeFieldShare::zero_share();
-                                val_j_r[1][k] = Rep3PrimeFieldShare::zero_share();
-                            }
-                            dirty_indices.fill(false);
-
-                            let sum_0 = rd_inner[0]
-                                + rep3_arith::mul_public(rs1_inner[0], gamma)
-                                + rep3_arith::mul_public(rs2_inner[0], gamma_sqr);
-                            let sum_1 = rd_inner[1]
-                                + rep3_arith::mul_public(rs1_inner[1], gamma)
-                                + rep3_arith::mul_public(rs2_inner[1], gamma_sqr);
-
-                            // E_in(PUB) * sum(SHARED)
-                            evals_for_current_E_out[0] = evals_for_current_E_out[0].add(
-                                &Rep3Value::Shared(rep3_arith::mul_public(sum_0, E_in_eval)),
-                                party_id,
-                            );
-                            evals_for_current_E_out[1] = evals_for_current_E_out[1].add(
-                                &Rep3Value::Shared(rep3_arith::mul_public(sum_1, E_in_eval)),
-                                party_id,
-                            );
-                        });
+                        // E_in(PUB) * sum(SHARED)
+                        evals_for_current_E_out[0] = evals_for_current_E_out[0]
+                            .add(&Rep3Value::Shared(rep3_arith::mul_public(sum_0, E_in_eval)), party_id);
+                        evals_for_current_E_out[1] = evals_for_current_E_out[1]
+                            .add(&Rep3Value::Shared(rep3_arith::mul_public(sum_1, E_in_eval)), party_id);
+                    });
 
                     if let Some(x) = x_out_prev {
                         let E_out_eval = gruens_eq_r_prime.E_out_current()[x];
-                        evals[0] = evals[0]
-                            .add(&evals_for_current_E_out[0].mul_public(E_out_eval), party_id);
-                        evals[1] = evals[1]
-                            .add(&evals_for_current_E_out[1].mul_public(E_out_eval), party_id);
+                        evals[0] = evals[0].add(&evals_for_current_E_out[0].mul_public(E_out_eval), party_id);
+                        evals[1] = evals[1].add(&evals_for_current_E_out[1].mul_public(E_out_eval), party_id);
                     }
                     evals
                 })
                 .reduce(
                     || [Rep3Value::zero_share(); 2],
-                    |running, new| {
-                        [
-                            running[0].add(&new[0], party_id),
-                            running[1].add(&new[1], party_id),
-                        ]
-                    },
+                    |running, new| [running[0].add(&new[0], party_id), running[1].add(&new[1], party_id)],
                 )
         };
 
@@ -596,15 +534,7 @@ impl<F: JoltField> Rep3RegistersReadWriteCheckingWorker<F> {
     }
 
     fn phase2_compute_prover_message(&self) -> Vec<AdditiveShare<F>> {
-        let ReadWriteCheckingProverState {
-            inc_cycle,
-            eq_r_prime,
-            rs1_ra,
-            rs2_ra,
-            rd_wa,
-            val,
-            ..
-        } = &self.prover_state;
+        let ReadWriteCheckingProverState { inc_cycle, eq_r_prime, rs1_ra, rs2_ra, rd_wa, val, .. } = &self.prover_state;
         let rs1_ra = rs1_ra.as_ref().unwrap();
         let rs2_ra = rs2_ra.as_ref().unwrap();
         let rd_wa = rd_wa.as_ref().unwrap();
@@ -666,13 +596,7 @@ impl<F: JoltField> Rep3RegistersReadWriteCheckingWorker<F> {
             })
             .reduce(
                 || [AdditiveShare::<F>::zero(); DEGREE],
-                |running, new| {
-                    [
-                        running[0] + new[0],
-                        running[1] + new[1],
-                        running[2] + new[2],
-                    ]
-                },
+                |running, new| [running[0] + new[0], running[1] + new[1], running[2] + new[2]],
             )
             .to_vec();
 
@@ -680,15 +604,7 @@ impl<F: JoltField> Rep3RegistersReadWriteCheckingWorker<F> {
     }
 
     fn phase3_compute_prover_message(&self) -> Vec<AdditiveShare<F>> {
-        let ReadWriteCheckingProverState {
-            inc_cycle,
-            eq_r_prime,
-            rs1_ra,
-            rs2_ra,
-            rd_wa,
-            val,
-            ..
-        } = &self.prover_state;
+        let ReadWriteCheckingProverState { inc_cycle, eq_r_prime, rs1_ra, rs2_ra, rd_wa, val, .. } = &self.prover_state;
         let rs1_ra = rs1_ra.as_ref().unwrap();
         let rs2_ra = rs2_ra.as_ref().unwrap();
         let rd_wa = rd_wa.as_ref().unwrap();
@@ -730,13 +646,7 @@ impl<F: JoltField> Rep3RegistersReadWriteCheckingWorker<F> {
             })
             .reduce(
                 || [AdditiveShare::<F>::zero(); DEGREE],
-                |running, new| {
-                    [
-                        running[0] + new[0],
-                        running[1] + new[1],
-                        running[2] + new[2],
-                    ]
-                },
+                |running, new| [running[0] + new[0], running[1] + new[1], running[2] + new[2]],
             );
 
         // Multiply by public eq_r_prime_eval
@@ -792,13 +702,10 @@ impl<F: JoltField> Rep3RegistersReadWriteCheckingWorker<F> {
 
         // Update A
         let (A_left, A_right) = A.split_at_mut(1 << round);
-        A_left
-            .par_iter_mut()
-            .zip(A_right.par_iter_mut())
-            .for_each(|(x, y)| {
-                *y = *x * r_j;
-                *x -= *y;
-            });
+        A_left.par_iter_mut().zip(A_right.par_iter_mut()).for_each(|(x, y)| {
+            *y = *x * r_j;
+            *x -= *y;
+        });
 
         if round == chunk_size.log_2() - 1 {
             // Materialize full polynomials
@@ -806,69 +713,46 @@ impl<F: JoltField> Rep3RegistersReadWriteCheckingWorker<F> {
 
             // rs1_ra (PUBLIC)
             let mut rs1_evals: Vec<F> = unsafe_allocate_zero_vec(K * num_chunks);
-            rs1_evals
-                .par_chunks_mut(K)
-                .enumerate()
-                .for_each(|(ci, chunk)| {
-                    for (jb, (k, _, _)) in addresses[ci * *chunk_size..(ci + 1) * *chunk_size]
-                        .iter()
-                        .enumerate()
-                    {
-                        chunk[*k as usize] += A[jb];
-                    }
-                });
+            rs1_evals.par_chunks_mut(K).enumerate().for_each(|(ci, chunk)| {
+                for (jb, (k, _, _)) in addresses[ci * *chunk_size..(ci + 1) * *chunk_size].iter().enumerate() {
+                    chunk[*k as usize] += A[jb];
+                }
+            });
             *rs1_ra = Some(MultilinearPolynomial::from(rs1_evals));
 
             // rs2_ra (PUBLIC)
             let mut rs2_evals: Vec<F> = unsafe_allocate_zero_vec(K * num_chunks);
-            rs2_evals
-                .par_chunks_mut(K)
-                .enumerate()
-                .for_each(|(ci, chunk)| {
-                    for (jb, (_, k, _)) in addresses[ci * *chunk_size..(ci + 1) * *chunk_size]
-                        .iter()
-                        .enumerate()
-                    {
-                        chunk[*k as usize] += A[jb];
-                    }
-                });
+            rs2_evals.par_chunks_mut(K).enumerate().for_each(|(ci, chunk)| {
+                for (jb, (_, k, _)) in addresses[ci * *chunk_size..(ci + 1) * *chunk_size].iter().enumerate() {
+                    chunk[*k as usize] += A[jb];
+                }
+            });
             *rs2_ra = Some(MultilinearPolynomial::from(rs2_evals));
 
             // rd_wa (PUBLIC)
             let mut wa_evals: Vec<F> = unsafe_allocate_zero_vec(K * num_chunks);
-            wa_evals
-                .par_chunks_mut(K)
-                .enumerate()
-                .for_each(|(ci, chunk)| {
-                    for (jb, (_, _, k)) in addresses[ci * *chunk_size..(ci + 1) * *chunk_size]
-                        .iter()
-                        .enumerate()
-                    {
-                        chunk[*k as usize] += A[jb];
-                    }
-                });
+            wa_evals.par_chunks_mut(K).enumerate().for_each(|(ci, chunk)| {
+                for (jb, (_, _, k)) in addresses[ci * *chunk_size..(ci + 1) * *chunk_size].iter().enumerate() {
+                    chunk[*k as usize] += A[jb];
+                }
+            });
             *rd_wa = Some(MultilinearPolynomial::from(wa_evals));
 
             // Val (SHARED) — from checkpoints + I increments
             let mut val_evals: Vec<Rep3PrimeFieldShare<F>> = std::mem::take(val_checkpoints);
-            val_evals
-                .par_chunks_mut(K)
-                .zip(I.into_par_iter())
-                .enumerate()
-                .for_each(|(ci, (val_chunk, I_chunk))| {
-                    for (j, k, inc_lt, _inc) in I_chunk.iter_mut() {
-                        debug_assert_eq!(*j, ci);
-                        val_chunk[*k as usize] += *inc_lt;
-                    }
-                });
+            val_evals.par_chunks_mut(K).zip(I.into_par_iter()).enumerate().for_each(|(ci, (val_chunk, I_chunk))| {
+                for (j, k, inc_lt, _inc) in I_chunk.iter_mut() {
+                    debug_assert_eq!(*j, ci);
+                    val_chunk[*k as usize] += *inc_lt;
+                }
+            });
             *val = Some(Rep3DensePolynomial::new(val_evals));
 
             // eq_r_prime (PUBLIC)
-            let eq_evals: Vec<F> =
-                EqPolynomial::<F>::evals(&gruens_eq_r_prime.w[..gruens_eq_r_prime.current_index])
-                    .par_iter()
-                    .map(|x| *x * gruens_eq_r_prime.current_scalar)
-                    .collect();
+            let eq_evals: Vec<F> = EqPolynomial::<F>::evals(&gruens_eq_r_prime.w[..gruens_eq_r_prime.current_index])
+                .par_iter()
+                .map(|x| *x * gruens_eq_r_prime.current_scalar)
+                .collect();
             *eq_r_prime = Some(MultilinearPolynomial::from(eq_evals));
         }
     }
@@ -881,17 +765,10 @@ impl<F: JoltField> Rep3RegistersReadWriteCheckingWorker<F> {
         let eq = ps.eq_r_prime.as_mut().unwrap();
 
         // PUBLIC polys
-        [rs1, rs2, wa, eq]
-            .into_par_iter()
-            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+        [rs1, rs2, wa, eq].into_par_iter().for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
         // SHARED polys
         rayon::join(
-            || {
-                ps.val
-                    .as_mut()
-                    .unwrap()
-                    .bind(r_j.into(), BindingOrder::HighToLow)
-            },
+            || ps.val.as_mut().unwrap().bind(r_j.into(), BindingOrder::HighToLow),
             || ps.inc_cycle.bind(r_j.into(), BindingOrder::HighToLow),
         );
     }
@@ -902,19 +779,12 @@ impl<F: JoltField> Rep3RegistersReadWriteCheckingWorker<F> {
         let rs2 = ps.rs2_ra.as_mut().unwrap();
         let wa = ps.rd_wa.as_mut().unwrap();
 
-        [rs1, rs2, wa]
-            .into_par_iter()
-            .for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
-        ps.val
-            .as_mut()
-            .unwrap()
-            .bind(r_j.into(), BindingOrder::HighToLow);
+        [rs1, rs2, wa].into_par_iter().for_each(|poly| poly.bind_parallel(r_j, BindingOrder::HighToLow));
+        ps.val.as_mut().unwrap().bind(r_j.into(), BindingOrder::HighToLow);
     }
 }
 
-impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
-    for Rep3RegistersReadWriteCheckingWorker<F>
-{
+impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Rep3RegistersReadWriteCheckingWorker<F> {
     fn degree(&self) -> usize {
         DEGREE
     }
@@ -972,10 +842,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         }
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         let log_T = self.T.log_2();
         let mut r_cycle = opening_point[self.sumcheck_switch_index..log_T].to_vec();
         r_cycle.extend(opening_point[..self.sumcheck_switch_index].iter().rev());

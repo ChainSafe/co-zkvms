@@ -20,9 +20,7 @@ use jolt_core::transcripts::Blake2bTranscript;
 use jolt_core::zkvm::dag::jolt_dag::JoltDAG;
 use jolt_core::zkvm::dag::state_manager::StateManager as VanillaStateManager;
 use jolt_core::zkvm::witness::DTH_ROOT_OF_K;
-use jolt_core::zkvm::{
-    JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing, JoltVerifierPreprocessing,
-};
+use jolt_core::zkvm::{JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing, JoltVerifierPreprocessing};
 use tracer::instruction::Cycle;
 
 type F = Fr;
@@ -44,13 +42,7 @@ fn dag_correct() {
     let (mut vanilla_trace, _vanilla_memory, mut io_device) = program.trace(&inputs, &[], &[]);
 
     // Truncate trailing zeros on device outputs, matching what Jolt::prove does.
-    io_device.outputs.truncate(
-        io_device
-            .outputs
-            .iter()
-            .rposition(|&b| b != 0)
-            .map_or(0, |pos| pos + 1),
-    );
+    io_device.outputs.truncate(io_device.outputs.iter().rposition(|&b| b != 0).map_or(0, |pos| pos + 1));
 
     tracing::info!("Trace len: {}", vanilla_trace.len());
     // Pad traces to next power of 2 (+1 termination cycle).
@@ -66,13 +58,12 @@ fn dag_correct() {
         bytecode: jolt_core::zkvm::bytecode::BytecodePreprocessing::preprocess(bytecode.clone()),
         ram: jolt_core::zkvm::ram::RAMPreprocessing::preprocess(memory_init.clone()),
     };
-    let preprocessing: JoltProverPreprocessing<F, PCS> =
-        <JoltArch as Rep3JoltWorker<F, PCS, FS>>::preprocess(
-            bytecode,
-            io_device.memory_layout.clone(),
-            memory_init,
-            padded_len,
-        );
+    let preprocessing: JoltProverPreprocessing<F, PCS> = <JoltArch as Rep3JoltWorker<F, PCS, FS>>::preprocess(
+        bytecode,
+        io_device.memory_layout.clone(),
+        memory_init,
+        padded_len,
+    );
     let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
 
     // 3) Compute ram_K from vanilla trace (must match both sides).
@@ -96,13 +87,7 @@ fn dag_correct() {
             let preprocessing_arc = Arc::clone(&preprocessing_arc_for_workers);
             move |party_idx| {
                 let (trace, memory, advice_shares) = shares_arc[party_idx].clone();
-                (
-                    trace,
-                    memory,
-                    Arc::clone(&preprocessing_arc),
-                    ram_K,
-                    advice_shares,
-                )
+                (trace, memory, Arc::clone(&preprocessing_arc), ram_K, advice_shares)
             }
         },
         {
@@ -155,60 +140,39 @@ fn dag_correct() {
                 #[cfg(feature = "ring-msm")]
                 {
                     if budget.dapoints > 0 {
-                        let dory_num_columns =
-                            jolt_core::poly::commitment::dory::DoryGlobals::get_num_columns();
+                        let dory_num_columns = jolt_core::poly::commitment::dory::DoryGlobals::get_num_columns();
                         let qs = co_jolt2::poly::commitment::dory::precompute_dapoint_qs(
                             &preprocessing.generators,
                             budget.dapoints / 2,
                             dory_num_columns,
                         );
-                        let lazy_dp = mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints(&qs, &mut io_ctx)?;
+                        let lazy_dp =
+                            mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints(&qs, &mut io_ctx)?;
                         pool.set_dapoints(lazy_dp);
                     }
                 }
                 pool
             };
 
-            let state = StateManagerWorker::new(
-                &preprocessing,
-                trace,
-                advice_shares,
-                final_memory_state,
-                party_id,
-                ram_K,
-            );
+            let state =
+                StateManagerWorker::new(&preprocessing, trace, advice_shares, final_memory_state, party_id, ram_K);
             Rep3JoltDagWorker::prove::<F, PCS, FS, _>(state, &mut io_ctx, &mut preproc)
         },
         move |input, net| {
             let (verifier_preprocessing, prover_preprocessing, program_io, ram_K) = input;
             // Match twist_sumcheck_switch_index computation in co-jolt2 zkvm/mod.rs.
-            let num_chunks = rayon::current_num_threads()
-                .next_power_of_two()
-                .min(padded_len);
-            let chunk_size = if num_chunks > 0 {
-                padded_len / num_chunks
-            } else {
-                padded_len
-            };
-            let twist_sumcheck_switch_index = if chunk_size > 0 {
-                chunk_size.trailing_zeros() as usize
-            } else {
-                0
-            };
-            let state: StateManager<'_, F, FS, PCS> = StateManager::new(
-                &verifier_preprocessing,
-                (*program_io).clone(),
-                ram_K,
-                twist_sumcheck_switch_index,
-            )
-            .with_pcs_setup(&prover_preprocessing.generators);
+            let num_chunks = rayon::current_num_threads().next_power_of_two().min(padded_len);
+            let chunk_size = if num_chunks > 0 { padded_len / num_chunks } else { padded_len };
+            let twist_sumcheck_switch_index = if chunk_size > 0 { chunk_size.trailing_zeros() as usize } else { 0 };
+            let state: StateManager<'_, F, FS, PCS> =
+                StateManager::new(&verifier_preprocessing, (*program_io).clone(), ram_K, twist_sumcheck_switch_index)
+                    .with_pcs_setup(&prover_preprocessing.generators);
             Rep3JoltDag::prove(state, net)
         },
     );
 
     // 5) Verify the MPC-produced proof using the local jolt-core verifier.
-    let verifier_preprocessing =
-        Arc::try_unwrap(verifier_preprocessing_arc).unwrap_or_else(|arc| (*arc).clone());
+    let verifier_preprocessing = Arc::try_unwrap(verifier_preprocessing_arc).unwrap_or_else(|arc| (*arc).clone());
     let io_device = Arc::try_unwrap(io_device_arc).unwrap_or_else(|arc| (*arc).clone());
 
     let verifier_sm = VanillaStateManager::from_proof(
@@ -223,14 +187,8 @@ fn dag_correct() {
 }
 
 fn rep3_proof_twist_switch_index(padded_len: usize) -> usize {
-    let num_chunks = rayon::current_num_threads()
-        .next_power_of_two()
-        .min(padded_len);
-    let chunk_size = if num_chunks > 0 {
-        padded_len / num_chunks
-    } else {
-        padded_len
-    };
+    let num_chunks = rayon::current_num_threads().next_power_of_two().min(padded_len);
+    let chunk_size = if num_chunks > 0 { padded_len / num_chunks } else { padded_len };
     if chunk_size > 0 {
         chunk_size.trailing_zeros() as usize
     } else {

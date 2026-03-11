@@ -2,10 +2,7 @@ use super::*;
 
 impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualChangeDivisor> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand) {
-        (
-            self.register_state.rs1_operand(),
-            self.register_state.rs2_operand(),
-        )
+        (self.register_state.rs1_operand(), self.register_state.rs2_operand())
     }
 
     #[tracing::instrument(skip_all, name = "VirtualChangeDivisor::output", level = "trace")]
@@ -20,24 +17,14 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualChangeDi
             .iter()
             .map(|st| {
                 let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*st);
-                (
-                    l.as_arithmetic_or_trivial::<u64>(io_ctx.id),
-                    r.as_arithmetic_or_trivial::<u64>(io_ctx.id),
-                )
+                (l.as_arithmetic_or_trivial::<u64>(io_ctx.id), r.as_arithmetic_or_trivial::<u64>(io_ctx.id))
             })
             .unzip();
         let neg_ones: Vec<_> = (0..steps.len())
-            .map(|_| {
-                rep3_ring::arithmetic::promote_to_trivial_share(
-                    io_ctx.id,
-                    RingElement(u64::from(u32::MAX)),
-                )
-            })
+            .map(|_| rep3_ring::arithmetic::promote_to_trivial_share(io_ctx.id, RingElement(u64::from(u32::MAX))))
             .collect();
         let int_mins: Vec<_> = (0..steps.len())
-            .map(|_| {
-                rep3_ring::arithmetic::promote_to_trivial_share(io_ctx.id, RingElement(1u64 << 31))
-            })
+            .map(|_| rep3_ring::arithmetic::promote_to_trivial_share(io_ctx.id, RingElement(1u64 << 31)))
             .collect();
         let div_eq_neg1 = rep3_ring::arithmetic::eq_many(&divisors, &neg_ones, io_ctx)?;
         let dividend_eq_int_min = rep3_ring::arithmetic::eq_many(&dividends, &int_mins, io_ctx)?;
@@ -61,10 +48,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualChangeDi
 #[cfg(feature = "rv64")]
 impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualChangeDivisorW> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand) {
-        (
-            self.register_state.rs1_operand(),
-            self.register_state.rs2_operand(),
-        )
+        (self.register_state.rs1_operand(), self.register_state.rs2_operand())
     }
 
     #[tracing::instrument(skip_all, name = "VirtualChangeDivisorW::output", level = "trace")]
@@ -79,24 +63,14 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualChangeDi
             .iter()
             .map(|st| {
                 let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*st);
-                (
-                    l.as_arithmetic_or_trivial::<u64>(io_ctx.id),
-                    r.as_arithmetic_or_trivial::<u64>(io_ctx.id),
-                )
+                (l.as_arithmetic_or_trivial::<u64>(io_ctx.id), r.as_arithmetic_or_trivial::<u64>(io_ctx.id))
             })
             .unzip();
         let neg_ones: Vec<_> = (0..steps.len())
-            .map(|_| {
-                rep3_ring::arithmetic::promote_to_trivial_share(
-                    io_ctx.id,
-                    RingElement(u64::from(u32::MAX)),
-                )
-            })
+            .map(|_| rep3_ring::arithmetic::promote_to_trivial_share(io_ctx.id, RingElement(u64::from(u32::MAX))))
             .collect();
         let int_mins: Vec<_> = (0..steps.len())
-            .map(|_| {
-                rep3_ring::arithmetic::promote_to_trivial_share(io_ctx.id, RingElement(1u64 << 31))
-            })
+            .map(|_| rep3_ring::arithmetic::promote_to_trivial_share(io_ctx.id, RingElement(1u64 << 31)))
             .collect();
         let div_eq_neg1 = rep3_ring::arithmetic::eq_many(&divisors, &neg_ones, io_ctx)?;
         let dividend_eq_int_min = rep3_ring::arithmetic::eq_many(&dividends, &int_mins, io_ctx)?;

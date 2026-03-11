@@ -149,9 +149,15 @@ impl<F: JoltField> HammingBooleanitySumcheck<F> {
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingBooleanitySumcheck<F> {
-    fn degree(&self) -> usize { self.degree() }
-    fn num_rounds(&self) -> usize { self.num_rounds() }
-    fn input_claim(&self) -> F { self.input_claim() }
+    fn degree(&self) -> usize {
+        self.degree()
+    }
+    fn num_rounds(&self) -> usize {
+        self.num_rounds()
+    }
+    fn input_claim(&self) -> F {
+        self.input_claim()
+    }
 
     fn expected_output_claim(
         &self,
@@ -205,5 +211,4 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingBooleanitySu
             opening_point,
         );
     }
-
 }

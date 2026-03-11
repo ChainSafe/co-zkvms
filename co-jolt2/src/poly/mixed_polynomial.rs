@@ -17,12 +17,7 @@ pub struct MixedPolynomial<F: JoltField> {
 
 impl<F: JoltField> MixedPolynomial<F> {
     pub fn new(evals: Vec<Rep3Value<F>>, party_id: PartyID) -> Self {
-        Self {
-            num_vars: evals.len().log_2(),
-            len: evals.len(),
-            coeffs: evals,
-            party_id,
-        }
+        Self { num_vars: evals.len().log_2(), len: evals.len(), coeffs: evals, party_id }
     }
 
     pub fn from_public_evals(evals: Vec<F>, party_id: PartyID) -> Self {
@@ -101,12 +96,8 @@ impl<F: JoltField> MixedPolynomial<F> {
     pub fn bound_poly_var_bot(&mut self, r: &F) {
         let n = self.len() / 2;
         for i in 0..n {
-            self.coeffs[i] = self.coeffs[2 * i].add(
-                &self.coeffs[2 * i + 1]
-                    .sub(&self.coeffs[2 * i], self.party_id)
-                    .mul_public(*r),
-                self.party_id,
-            );
+            self.coeffs[i] = self.coeffs[2 * i]
+                .add(&self.coeffs[2 * i + 1].sub(&self.coeffs[2 * i], self.party_id).mul_public(*r), self.party_id);
         }
 
         self.num_vars -= 1;

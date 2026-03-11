@@ -15,8 +15,7 @@ use mpc_net::topology::{MpcStarNetCoordinator, MpcStarNetWorker};
 
 use crate::protocols::rep3::PartyID;
 use crate::protocols::rep3::network::{
-    IoContextPool, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker,
-    Rep3RawFieldTransport,
+    IoContextPool, Rep3Network, Rep3NetworkCoordinator, Rep3NetworkWorker, Rep3RawFieldTransport,
 };
 
 fn to_io_err(msg: impl Into<String>) -> std::io::Error {

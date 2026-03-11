@@ -61,8 +61,7 @@ impl WorkerConnection {
                 .with_no_client_auth(),
         );
 
-        let tcp = TcpStream::connect(addr)
-            .with_context(|| format!("connecting to worker at {addr}"))?;
+        let tcp = TcpStream::connect(addr).with_context(|| format!("connecting to worker at {addr}"))?;
         tcp.set_nodelay(true)?;
 
         let server_name = ServerName::try_from("localhost").unwrap();
@@ -100,17 +99,13 @@ pub struct ProvingClient {
 impl ProvingClient {
     /// Connect to 3 workers via TLS.
     pub fn connect(worker_addrs: [SocketAddr; 3]) -> eyre::Result<Self> {
-        rustls::crypto::aws_lc_rs::default_provider()
-            .install_default()
-            .ok();
+        rustls::crypto::aws_lc_rs::default_provider().install_default().ok();
 
         let w0 = WorkerConnection::connect(worker_addrs[0]).context("worker 0")?;
         let w1 = WorkerConnection::connect(worker_addrs[1]).context("worker 1")?;
         let w2 = WorkerConnection::connect(worker_addrs[2]).context("worker 2")?;
 
-        Ok(Self {
-            workers: [w0, w1, w2],
-        })
+        Ok(Self { workers: [w0, w1, w2] })
     }
 
     /// Trace the program, generate shares, send to workers, and receive the proof.
@@ -125,8 +120,7 @@ impl ProvingClient {
     ) -> eyre::Result<Vec<u8>> {
         // 1. Decode + trace
         let (bytecode, memory_init, _) = program.decode();
-        let (mut vanilla_trace, memory, io_device) =
-            program.trace(inputs, untrusted_advice, trusted_advice);
+        let (mut vanilla_trace, memory, io_device) = program.trace(inputs, untrusted_advice, trusted_advice);
 
         let padded_len = (vanilla_trace.len() + 1).next_power_of_two();
         vanilla_trace.resize(padded_len, Cycle::NoOp);
@@ -141,20 +135,12 @@ impl ProvingClient {
 
         // 2. Generate 3-way secret shares
         let mut rng = OsRng;
-        let program_io_shares =
-            Rep3ProgramIOInput::generate_secret_shares(io_device, &mut rng);
-        let memory_shares = Rep3Memory::generate_secret_shares(
-            memory,
-            &shared.memory_layout,
-            ram_k,
-            &mut rng,
-        );
+        let program_io_shares = Rep3ProgramIOInput::generate_secret_shares(io_device, &mut rng);
+        let memory_shares = Rep3Memory::generate_secret_shares(memory, &shared.memory_layout, ram_k, &mut rng);
         let trace_shares = share_trace(vanilla_trace, &mut rng);
 
-        let [io0, io1, io2]: [Rep3ProgramIOInput; 3] =
-            program_io_shares.try_into().expect("expected 3 shares");
-        let [mem0, mem1, mem2]: [Rep3Memory; 3] =
-            memory_shares.try_into().expect("expected 3 shares");
+        let [io0, io1, io2]: [Rep3ProgramIOInput; 3] = program_io_shares.try_into().expect("expected 3 shares");
+        let [mem0, mem1, mem2]: [Rep3Memory; 3] = memory_shares.try_into().expect("expected 3 shares");
         let [t0, t1, t2]: [Vec<Rep3Cycle>; 3] = trace_shares;
 
         let shares = [(t0, mem0, io0), (t1, mem1, io1), (t2, mem2, io2)];
@@ -170,17 +156,12 @@ impl ProvingClient {
                 padded_len,
                 ram_k,
             };
-            let payload_bytes =
-                bincode::serialize(&payload).context("serializing WorkerPayload")?;
-            self.workers[i]
-                .send(&payload_bytes)
-                .with_context(|| format!("sending payload to worker {i}"))?;
+            let payload_bytes = bincode::serialize(&payload).context("serializing WorkerPayload")?;
+            self.workers[i].send(&payload_bytes).with_context(|| format!("sending payload to worker {i}"))?;
         }
 
         // 4. Wait for proof from worker 0
-        let proof_bytes = self.workers[0]
-            .recv()
-            .context("receiving proof from worker 0")?;
+        let proof_bytes = self.workers[0].recv().context("receiving proof from worker 0")?;
 
         Ok(proof_bytes)
     }
@@ -228,8 +209,6 @@ impl rustls::client::danger::ServerCertVerifier for AcceptAnyCertVerifier {
     }
 
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        rustls::crypto::aws_lc_rs::default_provider()
-            .signature_verification_algorithms
-            .supported_schemes()
+        rustls::crypto::aws_lc_rs::default_provider().signature_verification_algorithms.supported_schemes()
     }
 }

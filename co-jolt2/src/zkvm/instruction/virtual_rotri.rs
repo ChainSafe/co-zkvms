@@ -2,10 +2,7 @@ use super::*;
 
 impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualROTRI> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand) {
-        (
-            self.register_state.rs1_operand(),
-            Rep3Operand::Public(self.instruction.operands.imm.into()),
-        )
+        (self.register_state.rs1_operand(), Rep3Operand::Public(self.instruction.operands.imm.into()))
     }
 
     fn to_lookup_output_batched<'a, F: JoltField, N: Rep3Network>(
@@ -32,10 +29,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualROTRI> {
 #[cfg(feature = "rv64")]
 impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualROTRIW> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand) {
-        (
-            self.register_state.rs1_operand(),
-            Rep3Operand::Public(self.instruction.operands.imm.into()),
-        )
+        (self.register_state.rs1_operand(), Rep3Operand::Public(self.instruction.operands.imm.into()))
     }
 
     fn to_lookup_output_batched<'a, F: JoltField, N: Rep3Network>(

@@ -2,27 +2,17 @@ use super::*;
 
 impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAssertMulUNoOverflow> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand) {
-        (
-            self.register_state.rs1_operand(),
-            self.register_state.rs2_operand(),
-        )
+        (self.register_state.rs1_operand(), self.register_state.rs2_operand())
     }
 
-    fn to_lookup_index(
-        &self,
-        party_id: PartyID,
-    ) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
+    fn to_lookup_index(&self, party_id: PartyID) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
         let (left, right) = <Self as Rep3LookupQuery<XLEN>>::to_instruction_inputs(self);
         let l = left.as_arithmetic_or_trivial_wide(party_id);
         let r = right.as_arithmetic_or_trivial_wide(party_id);
         FutureRep3Ring::mul_a2b(l, r)
     }
 
-    #[tracing::instrument(
-        skip_all,
-        name = "VirtualAssertMulUNoOverflow::output",
-        level = "trace"
-    )]
+    #[tracing::instrument(skip_all, name = "VirtualAssertMulUNoOverflow::output", level = "trace")]
     fn to_lookup_output_batched<'a, F: JoltField, N: Rep3Network>(
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
@@ -42,16 +32,11 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAssertMu
             .unzip();
         let products = rep3_ring::arithmetic::mul_vec(&a, &b, io_ctx)?;
         let binary_products = rep3_ring::conversion::a2b_many(&products, io_ctx)?;
-        let upper_halves: Vec<Rep3RingShare<XlenInt>> = binary_products
-            .into_iter()
-            .map(|product| downcast(product >> XLEN))
-            .collect();
-        rep3_ring::binary::is_zero_many(&upper_halves, io_ctx)?
-            .into_iter()
-            .zip(out)
-            .for_each(|(x, out)| {
-                *out = FutureRep3Ring::bit_inject_to_field(x);
-            });
+        let upper_halves: Vec<Rep3RingShare<XlenInt>> =
+            binary_products.into_iter().map(|product| downcast(product >> XLEN)).collect();
+        rep3_ring::binary::is_zero_many(&upper_halves, io_ctx)?.into_iter().zip(out).for_each(|(x, out)| {
+            *out = FutureRep3Ring::bit_inject_to_field(x);
+        });
         Ok(())
     }
 }

@@ -11,10 +11,7 @@ use crate::{
         multilinear_polynomial::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
-        opening_proof::{
-            OpeningPoint, SumcheckId, VerifierOpeningAccumulator,
-            BIG_ENDIAN,
-        },
+        opening_proof::{OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN},
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
@@ -160,9 +157,15 @@ impl<F: JoltField> RafEvaluationSumcheck<F> {
 }
 
 impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RafEvaluationSumcheck<F> {
-    fn degree(&self) -> usize { self.degree() }
-    fn num_rounds(&self) -> usize { self.num_rounds() }
-    fn input_claim(&self) -> F { self.input_claim() }
+    fn degree(&self) -> usize {
+        self.degree()
+    }
+    fn num_rounds(&self) -> usize {
+        self.num_rounds()
+    }
+    fn input_claim(&self) -> F {
+        self.input_claim()
+    }
 
     fn expected_output_claim(
         &self,
@@ -204,7 +207,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RafEvaluationSumche
             ra_opening_point,
         );
     }
-
 }
 
 // #[cfg(test)]

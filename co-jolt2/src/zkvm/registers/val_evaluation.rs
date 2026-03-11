@@ -1,9 +1,7 @@
 use jolt_common::constants::REGISTER_COUNT;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::eq_poly::EqPolynomial;
-use jolt_core::poly::multilinear_polynomial::{
-    BindingOrder, MultilinearPolynomial, PolynomialBinding,
-};
+use jolt_core::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
@@ -42,17 +40,13 @@ pub struct Rep3ValEvaluationWorker<F: JoltField> {
 }
 
 impl<F: JoltField> Rep3ValEvaluationWorker<F> {
-    pub fn new<PCS: CommitmentScheme<Field = F>>(
-        sm: &mut StateManagerWorker<'_, F, PCS>,
-        val_claim: F,
-    ) -> Self {
+    pub fn new<PCS: CommitmentScheme<Field = F>>(sm: &mut StateManagerWorker<'_, F, PCS>, val_claim: F) -> Self {
         let party_id = sm.party_id;
         let T = sm.prover_state.cycle_witness.len();
 
-        let (opening_point, _) = sm.accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RegistersVal,
-            SumcheckId::RegistersReadWriteChecking,
-        );
+        let (opening_point, _) = sm
+            .accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::RegistersVal, SumcheckId::RegistersReadWriteChecking);
 
         let r_address_len = REGISTER_COUNT.ilog2() as usize;
         let (r_address_slice, r_cycle_slice) = opening_point.split_at(r_address_len);
@@ -61,13 +55,8 @@ impl<F: JoltField> Rep3ValEvaluationWorker<F> {
 
         // wa: PUBLIC polynomial from eq(r_address) and public rd_addr
         let eq_r_address = EqPolynomial::evals(&r_address);
-        let wa_evals: Vec<F> = sm
-            .prover_state
-            .cycle_witness
-            .meta()
-            .par_iter()
-            .map(|m| eq_r_address[m.rd_addr as usize])
-            .collect();
+        let wa_evals: Vec<F> =
+            sm.prover_state.cycle_witness.meta().par_iter().map(|m| eq_r_address[m.rd_addr as usize]).collect();
         let wa = MultilinearPolynomial::from(wa_evals);
 
         // inc = RdInc polynomial (SHARED) — take from cycle_witness (last consumer)
@@ -77,32 +66,20 @@ impl<F: JoltField> Rep3ValEvaluationWorker<F> {
         let mut lt: Vec<F> = unsafe_allocate_zero_vec(T);
         for (i, r) in r_cycle.iter().rev().enumerate() {
             let (evals_left, evals_right) = lt.split_at_mut(1 << i);
-            evals_left
-                .par_iter_mut()
-                .zip(evals_right.par_iter_mut())
-                .for_each(|(x, y)| {
-                    *y = *x * r;
-                    *x += *r - *y;
-                });
+            evals_left.par_iter_mut().zip(evals_right.par_iter_mut()).for_each(|(x, y)| {
+                *y = *x * r;
+                *x += *r - *y;
+            });
         }
         let lt = MultilinearPolynomial::from(lt);
 
         let num_rounds = r_cycle.len().pow2().log_2();
 
-        Self {
-            party_id,
-            input_claim: val_claim,
-            num_rounds,
-            inc,
-            wa,
-            lt,
-        }
+        Self { party_id, input_claim: val_claim, num_rounds, inc, wa, lt }
     }
 }
 
-impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
-    for Rep3ValEvaluationWorker<F>
-{
+impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Rep3ValEvaluationWorker<F> {
     fn degree(&self) -> usize {
         DEGREE
     }
@@ -127,12 +104,8 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
             .into_par_iter()
             .map(|i| {
                 let inc_evals = self.inc.sumcheck_evals(i, DEGREE, BindingOrder::HighToLow);
-                let wa_evals: [F; DEGREE] = self
-                    .wa
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
-                let lt_evals: [F; DEGREE] = self
-                    .lt
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
+                let wa_evals: [F; DEGREE] = self.wa.sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
+                let lt_evals: [F; DEGREE] = self.lt.sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
 
                 // inc(SHARED) * wa(PUB) * lt(PUB) → SHARED (mul_public twice) → AdditiveShare
                 let mut result = [AdditiveShare::<F>::zero(); DEGREE];
@@ -144,13 +117,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
             })
             .reduce(
                 || [AdditiveShare::<F>::zero(); DEGREE],
-                |running, new| {
-                    [
-                        running[0] + new[0],
-                        running[1] + new[1],
-                        running[2] + new[2],
-                    ]
-                },
+                |running, new| [running[0] + new[0], running[1] + new[1], running[2] + new[2]],
             )
             .to_vec();
 
@@ -176,10 +143,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         self.inc.bind(r_j.into(), BindingOrder::HighToLow);
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.to_vec())
     }
 
@@ -188,10 +152,8 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         accumulator: &mut Rep3OpeningAccumulatorWorker<F>,
         r_cycle: OpeningPoint<BIG_ENDIAN, F>,
     ) -> Vec<Rep3PrimeFieldShare<F>> {
-        let (opening_point, _) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RegistersVal,
-            SumcheckId::RegistersReadWriteChecking,
-        );
+        let (opening_point, _) = accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::RegistersVal, SumcheckId::RegistersReadWriteChecking);
         let (r_address, _) = opening_point.split_at(REGISTER_COUNT.ilog2() as usize);
 
         let inc_claim = self.inc.final_sumcheck_claim();
@@ -215,10 +177,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
             self.party_id,
         );
 
-        vec![
-            inc_claim,
-            rep3_arith::promote_to_trivial_share(self.party_id, wa_claim),
-        ]
+        vec![inc_claim, rep3_arith::promote_to_trivial_share(self.party_id, wa_claim)]
     }
 }
 

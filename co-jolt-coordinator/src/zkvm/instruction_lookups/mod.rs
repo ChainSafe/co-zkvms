@@ -8,9 +8,9 @@ use jolt_core::zkvm::instruction_lookups::{D, LOG_K_CHUNK};
 use jolt_core::zkvm::witness::VirtualPolynomial;
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 
-use jolt_core::field::JoltField;
 use crate::zkvm::dag::stage::{BatchedSumcheckInstance, SumcheckStagesCoordinator};
 use crate::zkvm::dag::state_manager::StateManager;
+use jolt_core::field::JoltField;
 
 use self::booleanity::Rep3BooleanitySumcheck;
 use self::hamming_weight::Rep3HammingWeightSumcheck;

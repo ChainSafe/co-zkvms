@@ -4,9 +4,9 @@ use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::bytecode::booleanity::BooleanitySumcheck;
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 
-use jolt_core::field::JoltField;
 use crate::poly::opening_proof::Rep3OpeningAccumulator;
 use crate::subprotocols::sumcheck::PublicSumcheckInstance;
+use jolt_core::field::JoltField;
 
 impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for BooleanitySumcheck<F> {
     fn degree(&self) -> usize {

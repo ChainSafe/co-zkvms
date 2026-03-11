@@ -134,12 +134,8 @@ impl<F: JoltField> Rep3Value<F> {
             (Rep3Value::Public(x), Rep3Value::Additive(y)) => {
                 Rep3Value::Additive(additive::add_public(*y, *x, party_id))
             }
-            (Rep3Value::Additive(x), Rep3Value::Shared(y)) => {
-                Rep3Value::Additive(*x + y.into_additive())
-            }
-            (Rep3Value::Shared(x), Rep3Value::Additive(y)) => {
-                Rep3Value::Additive(x.into_additive() + *y)
-            }
+            (Rep3Value::Additive(x), Rep3Value::Shared(y)) => Rep3Value::Additive(*x + y.into_additive()),
+            (Rep3Value::Shared(x), Rep3Value::Additive(y)) => Rep3Value::Additive(x.into_additive() + *y),
         }
     }
 
@@ -149,13 +145,9 @@ impl<F: JoltField> Rep3Value<F> {
 
     pub fn add_public(&self, other: F, party_id: PartyID) -> Self {
         match self {
-            Rep3Value::Shared(x) => {
-                Rep3Value::Shared(rep3::arithmetic::add_public(*x, other, party_id))
-            }
+            Rep3Value::Shared(x) => Rep3Value::Shared(rep3::arithmetic::add_public(*x, other, party_id)),
             Rep3Value::Public(x) => Rep3Value::Public(*x + other),
-            Rep3Value::Additive(x) => {
-                Rep3Value::Additive(additive::add_public(*x, other, party_id))
-            }
+            Rep3Value::Additive(x) => Rep3Value::Additive(additive::add_public(*x, other, party_id)),
         }
     }
 
@@ -166,9 +158,7 @@ impl<F: JoltField> Rep3Value<F> {
     pub fn add_shared(&self, other: Rep3PrimeFieldShare<F>, party_id: PartyID) -> Self {
         match self {
             Rep3Value::Shared(x) => Rep3Value::Shared(*x + other),
-            Rep3Value::Public(x) => {
-                Rep3Value::Shared(rep3::arithmetic::add_public(other, *x, party_id))
-            }
+            Rep3Value::Public(x) => Rep3Value::Shared(rep3::arithmetic::add_public(other, *x, party_id)),
             Rep3Value::Additive(_) => {
                 panic!("Addition of rep3 and additive shares are not allowed")
             }
@@ -196,39 +186,26 @@ impl<F: JoltField> Rep3Value<F> {
             (Rep3Value::Public(x), Rep3Value::Additive(y)) => {
                 Rep3Value::Additive(additive::sub_public_by_shared(*x, *y, party_id))
             }
-            (Rep3Value::Additive(x), Rep3Value::Shared(y)) => {
-                Rep3Value::Additive(*x - y.into_additive())
-            }
-            (Rep3Value::Shared(x), Rep3Value::Additive(y)) => {
-                Rep3Value::Additive(x.into_additive() - *y)
-            }
+            (Rep3Value::Additive(x), Rep3Value::Shared(y)) => Rep3Value::Additive(*x - y.into_additive()),
+            (Rep3Value::Shared(x), Rep3Value::Additive(y)) => Rep3Value::Additive(x.into_additive() - *y),
         }
     }
 
     pub fn sub_public(&self, other: &F, party_id: PartyID) -> Self {
         match self {
-            Rep3Value::Shared(x) => {
-                Rep3Value::Shared(rep3::arithmetic::sub_shared_by_public(*x, *other, party_id))
-            }
+            Rep3Value::Shared(x) => Rep3Value::Shared(rep3::arithmetic::sub_shared_by_public(*x, *other, party_id)),
             Rep3Value::Public(x) => Rep3Value::Public(*x - *other),
-            Rep3Value::Additive(x) => {
-                Rep3Value::Additive(additive::sub_public_by_shared(*other, *x, party_id))
-            }
+            Rep3Value::Additive(x) => Rep3Value::Additive(additive::sub_public_by_shared(*other, *x, party_id)),
         }
     }
 
-    pub fn mul_reshare<Network>(
-        &self,
-        other: &Self,
-        io_ctx: &mut IoContext<Network>,
-    ) -> eyre::Result<Self>
+    pub fn mul_reshare<Network>(&self, other: &Self, io_ctx: &mut IoContext<Network>) -> eyre::Result<Self>
     where
         Network: Rep3Network,
     {
         Ok(match (self, other) {
             (Rep3Value::Shared(x), Rep3Value::Shared(y)) => Rep3Value::Shared(
-                rep3::arithmetic::mul(*x, *y, io_ctx)
-                    .context("Shared and shared multiplication failed")?,
+                rep3::arithmetic::mul(*x, *y, io_ctx).context("Shared and shared multiplication failed")?,
             ),
             (_, _) => self.mul(other),
         })
@@ -237,12 +214,8 @@ impl<F: JoltField> Rep3Value<F> {
     pub fn mul(&self, other: &Self) -> Self {
         match (self, other) {
             (Rep3Value::Public(x), Rep3Value::Public(y)) => Rep3Value::Public(*x * *y),
-            (Rep3Value::Shared(x), Rep3Value::Public(y)) => {
-                Rep3Value::Shared(rep3::arithmetic::mul_public(*x, *y))
-            }
-            (Rep3Value::Public(x), Rep3Value::Shared(y)) => {
-                Rep3Value::Shared(rep3::arithmetic::mul_public(*y, *x))
-            }
+            (Rep3Value::Shared(x), Rep3Value::Public(y)) => Rep3Value::Shared(rep3::arithmetic::mul_public(*x, *y)),
+            (Rep3Value::Public(x), Rep3Value::Shared(y)) => Rep3Value::Shared(rep3::arithmetic::mul_public(*y, *x)),
             (Rep3Value::Shared(x), Rep3Value::Shared(y)) => Rep3Value::Additive(*x * *y),
             (Rep3Value::Additive(x), Rep3Value::Public(y)) => Rep3Value::Additive(*x * *y),
             (Rep3Value::Public(x), Rep3Value::Additive(y)) => Rep3Value::Additive(*y * *x),
@@ -257,18 +230,10 @@ impl<F: JoltField> Rep3Value<F> {
     pub fn mul_mul_public(&self, other: &Self, public: F) -> Self {
         match (self, other) {
             (Rep3Value::Shared(x), Rep3Value::Shared(y)) => Rep3Value::Additive(*x * *y * public),
-            (Rep3Value::Additive(x), Rep3Value::Public(y)) => {
-                Rep3Value::Additive(*x * (*y * public))
-            }
-            (Rep3Value::Public(x), Rep3Value::Additive(y)) => {
-                Rep3Value::Additive(*y * (*x * public))
-            }
-            (Rep3Value::Shared(x), Rep3Value::Public(y)) => {
-                Rep3Value::Additive(x.into_additive() * (*y * public))
-            }
-            (Rep3Value::Public(x), Rep3Value::Shared(y)) => {
-                Rep3Value::Additive(y.into_additive() * (*x * public))
-            }
+            (Rep3Value::Additive(x), Rep3Value::Public(y)) => Rep3Value::Additive(*x * (*y * public)),
+            (Rep3Value::Public(x), Rep3Value::Additive(y)) => Rep3Value::Additive(*y * (*x * public)),
+            (Rep3Value::Shared(x), Rep3Value::Public(y)) => Rep3Value::Additive(x.into_additive() * (*y * public)),
+            (Rep3Value::Public(x), Rep3Value::Shared(y)) => Rep3Value::Additive(y.into_additive() * (*x * public)),
             _ => self.mul(&other.mul(&public.into())),
         }
     }
@@ -291,8 +256,7 @@ where
     I: IntoIterator<Item = Rep3Value<F>>,
 {
     fn sum_for(self, party_id: PartyID) -> Rep3Value<F> {
-        self.into_iter()
-            .fold(Rep3Value::zero_public(), |acc, x| acc.add(&x, party_id))
+        self.into_iter().fold(Rep3Value::zero_public(), |acc, x| acc.add(&x, party_id))
     }
 }
 
@@ -305,8 +269,7 @@ where
     I: IntoParallelIterator<Item = Rep3Value<F>>,
 {
     fn sum_for(self, party_id: PartyID) -> Rep3Value<F> {
-        self.into_par_iter()
-            .reduce(|| Rep3Value::zero_public(), |acc, x| acc.add(&x, party_id))
+        self.into_par_iter().reduce(|| Rep3Value::zero_public(), |acc, x| acc.add(&x, party_id))
     }
 }
 

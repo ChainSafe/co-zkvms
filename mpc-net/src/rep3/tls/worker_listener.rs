@@ -54,10 +54,7 @@ impl TlsWorkerListener {
             .context("creating TLS server connection for user")?;
         let stream = rustls::StreamOwned::new(tls_conn, tcp_stream);
 
-        Ok(TlsUserConnection {
-            stream,
-            peer_addr,
-        })
+        Ok(TlsUserConnection { stream, peer_addr })
     }
 }
 

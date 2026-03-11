@@ -4,9 +4,9 @@ use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::ram::ra_virtual::RaSumcheck;
 use jolt_core::zkvm::witness::CommittedPolynomial;
 
-use jolt_core::field::JoltField;
 use crate::poly::opening_proof::Rep3OpeningAccumulator;
 use crate::subprotocols::sumcheck::PublicSumcheckInstance;
+use jolt_core::field::JoltField;
 
 impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for RaSumcheck<F> {
     fn degree(&self) -> usize {

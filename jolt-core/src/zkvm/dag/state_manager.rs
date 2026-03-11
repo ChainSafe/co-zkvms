@@ -102,9 +102,7 @@ where
         transcript.append_u64(self.trace_length as u64);
     }
 
-    pub fn get_verifier_data(
-        &self,
-    ) -> (&JoltVerifierPreprocessing<F, PCS>, &JoltDevice, usize) {
+    pub fn get_verifier_data(&self) -> (&JoltVerifierPreprocessing<F, PCS>, &JoltDevice, usize) {
         (self.preprocessing, &self.program_io, self.trace_length)
     }
 

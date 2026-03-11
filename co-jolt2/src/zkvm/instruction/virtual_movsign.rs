@@ -2,10 +2,7 @@ use super::*;
 
 impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualMovsign> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand) {
-        (
-            self.register_state.rs1_operand(),
-            Rep3Operand::Public(self.instruction.operands.imm.into()),
-        )
+        (self.register_state.rs1_operand(), Rep3Operand::Public(self.instruction.operands.imm.into()))
     }
 
     #[tracing::instrument(skip_all, name = "VirtualMovsign::output", level = "trace")]

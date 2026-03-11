@@ -84,7 +84,11 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InstructionRaSumche
                 transcript,
                 vec![CommittedPolynomial::InstructionRa(i)],
                 SumcheckId::InstructionRaVirtualization,
-                r_address_chunk.iter().chain(opening_point.r.iter()).copied().collect(),
+                r_address_chunk
+                    .iter()
+                    .chain(opening_point.r.iter())
+                    .copied()
+                    .collect(),
             );
         }
     }

@@ -12,12 +12,7 @@ use jolt_core::field::JoltField;
 /// Loads 4 values, performs 8 add/sub, writes 4 back — halving memory traffic
 /// vs two separate radix-2 passes over the same data.
 #[inline(always)]
-fn butterfly4<T: Copy + Add<Output = T> + Sub<Output = T>>(
-    a: &mut T,
-    b: &mut T,
-    c: &mut T,
-    d: &mut T,
-) {
+fn butterfly4<T: Copy + Add<Output = T> + Sub<Output = T>>(a: &mut T, b: &mut T, c: &mut T, d: &mut T) {
     // Stage 1: butterflies at stride 1×len
     let t0 = *a + *b;
     let t1 = *a - *b;
@@ -91,11 +86,7 @@ fn fwht_radix4<T: Copy + Add<Output = T> + Sub<Output = T>>(a: &mut [T]) {
             let (ab, cd) = block.split_at_mut(len * 2);
             let (sa, sb) = ab.split_at_mut(len);
             let (sc, sd) = cd.split_at_mut(len);
-            for ((a, b), (c, d)) in sa
-                .iter_mut()
-                .zip(sb.iter_mut())
-                .zip(sc.iter_mut().zip(sd.iter_mut()))
-            {
+            for ((a, b), (c, d)) in sa.iter_mut().zip(sb.iter_mut()).zip(sc.iter_mut().zip(sd.iter_mut())) {
                 butterfly4(a, b, c, d);
             }
         }
@@ -141,11 +132,7 @@ fn fwht_radix8<T: Copy + Add<Output = T> + Sub<Output = T>>(a: &mut [T]) {
                 .iter_mut()
                 .zip(s1.iter_mut())
                 .zip(s2.iter_mut().zip(s3.iter_mut()))
-                .zip(
-                    s4.iter_mut()
-                        .zip(s5.iter_mut())
-                        .zip(s6.iter_mut().zip(s7.iter_mut())),
-                )
+                .zip(s4.iter_mut().zip(s5.iter_mut()).zip(s6.iter_mut().zip(s7.iter_mut())))
             {
                 butterfly8(a, b, c, d, e, f, g, h);
             }
@@ -159,11 +146,7 @@ fn fwht_radix8<T: Copy + Add<Output = T> + Sub<Output = T>>(a: &mut [T]) {
             let (ab, cd) = block.split_at_mut(len * 2);
             let (sa, sb) = ab.split_at_mut(len);
             let (sc, sd) = cd.split_at_mut(len);
-            for ((a, b), (c, d)) in sa
-                .iter_mut()
-                .zip(sb.iter_mut())
-                .zip(sc.iter_mut().zip(sd.iter_mut()))
-            {
+            for ((a, b), (c, d)) in sa.iter_mut().zip(sb.iter_mut()).zip(sc.iter_mut().zip(sd.iter_mut())) {
                 butterfly4(a, b, c, d);
             }
         }
@@ -200,11 +183,7 @@ where
     T: Copy + Send + Sync + Add<Output = T> + Sub<Output = T>,
 {
     let n = a.len();
-    debug_assert!(
-        n.is_power_of_two(),
-        "FWHT input length must be power-of-two, got {}",
-        n
-    );
+    debug_assert!(n.is_power_of_two(), "FWHT input length must be power-of-two, got {}", n);
     if n <= 1 {
         return;
     }
@@ -247,9 +226,7 @@ pub fn unmask_histogram_public<F: JoltField>(
     // FWHT on plain F — half the cost of fwht_rep3
     fwht_in_place(h_f);
 
-    let inv_m = F::from(m as u64)
-        .inverse()
-        .expect("M must be invertible in field");
+    let inv_m = F::from(m as u64).inverse().expect("M must be invertible in field");
 
     // Pointwise F × Rep3 → Additive (no communication, parallelized)
     // Fuse inv_m scaling into pointwise multiply to eliminate a full memory pass.
@@ -302,10 +279,7 @@ pub fn unmask_histogram_public<F: JoltField>(
 pub fn xor_convolve_rep3_with_mul<F: JoltField>(
     a: &mut [Rep3PrimeFieldShare<F>],
     b: &mut [Rep3PrimeFieldShare<F>],
-    mul_fn: impl FnOnce(
-        &[Rep3PrimeFieldShare<F>],
-        &[Rep3PrimeFieldShare<F>],
-    ) -> Vec<Rep3PrimeFieldShare<F>>,
+    mul_fn: impl FnOnce(&[Rep3PrimeFieldShare<F>], &[Rep3PrimeFieldShare<F>]) -> Vec<Rep3PrimeFieldShare<F>>,
 ) -> Vec<Rep3PrimeFieldShare<F>> {
     let n = a.len();
     debug_assert_eq!(n, b.len());
@@ -318,9 +292,7 @@ pub fn xor_convolve_rep3_with_mul<F: JoltField>(
 
     fwht_rep3_in_place(&mut result);
 
-    let inv_n = F::from(n as u64)
-        .inverse()
-        .expect("N must be invertible in field");
+    let inv_n = F::from(n as u64).inverse().expect("N must be invertible in field");
     for r in result.iter_mut() {
         *r = *r * inv_n;
     }
@@ -352,17 +324,12 @@ pub fn shift_eq_table_with_mask<F: JoltField>(
     let mut eq_hat = eq_table.to_vec();
     fwht_in_place(&mut eq_hat);
 
-    let inv_m = F::from(m as u64)
-        .inverse()
-        .expect("M must be invertible in field");
+    let inv_m = F::from(m as u64).inverse().expect("M must be invertible in field");
 
     // Pointwise multiply: public × share (no communication, parallelized)
     // Fuse inv_m scaling into the multiply to eliminate a full memory pass.
-    let mut result: Vec<Rep3PrimeFieldShare<F>> = ehat
-        .par_iter()
-        .zip(eq_hat.par_iter())
-        .map(|(e, &eq)| *e * (eq * inv_m))
-        .collect();
+    let mut result: Vec<Rep3PrimeFieldShare<F>> =
+        ehat.par_iter().zip(eq_hat.par_iter()).map(|(e, &eq)| *e * (eq * inv_m)).collect();
 
     fwht_rep3_in_place(&mut result);
 
@@ -387,8 +354,7 @@ mod tests {
 
         // Create shared values
         let plain: Vec<Fr> = (0..n).map(|i| Fr::from(i as u64 + 1)).collect();
-        let mut shares: [Vec<Rep3PrimeFieldShare<Fr>>; 3] =
-            std::array::from_fn(|_| Vec::with_capacity(n));
+        let mut shares: [Vec<Rep3PrimeFieldShare<Fr>>; 3] = std::array::from_fn(|_| Vec::with_capacity(n));
         for &v in &plain {
             let s = share_field(v, &mut rng);
             for pid in 0..3 {
@@ -480,14 +446,9 @@ mod tests {
         let r_mask: u8 = rand::Rng::gen(&mut rng);
 
         // Build E = one-hot(r_mask) and share it
-        let mut e_shares: [Vec<Rep3PrimeFieldShare<Fr>>; 3] =
-            std::array::from_fn(|_| Vec::with_capacity(n));
+        let mut e_shares: [Vec<Rep3PrimeFieldShare<Fr>>; 3] = std::array::from_fn(|_| Vec::with_capacity(n));
         for i in 0..n {
-            let bit = if i as u8 == r_mask {
-                Fr::from(1u64)
-            } else {
-                Fr::from(0u64)
-            };
+            let bit = if i as u8 == r_mask { Fr::from(1u64) } else { Fr::from(0u64) };
             let s = share_field(bit, &mut rng);
             for pid in 0..3 {
                 e_shares[pid].push(s[pid]);
@@ -501,9 +462,7 @@ mod tests {
         }
 
         // Random public EQ table
-        let eq_table: Vec<Fr> = (0..n)
-            .map(|_| <Fr as ark_ff::UniformRand>::rand(&mut rng))
-            .collect();
+        let eq_table: Vec<Fr> = (0..n).map(|_| <Fr as ark_ff::UniformRand>::rand(&mut rng)).collect();
 
         // Shift using each party's Ehat
         let shifted: [Vec<Rep3PrimeFieldShare<Fr>>; 3] =

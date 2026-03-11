@@ -1,20 +1,11 @@
 use super::*;
 
-impl<const XLEN: usize> Rep3LookupQuery<XLEN>
-    for Rep3RISCVCycle<VirtualAssertValidUnsignedRemainder>
-{
+impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAssertValidUnsignedRemainder> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand) {
-        (
-            self.register_state.rs1_operand(),
-            self.register_state.rs2_operand(),
-        )
+        (self.register_state.rs1_operand(), self.register_state.rs2_operand())
     }
 
-    #[tracing::instrument(
-        skip_all,
-        name = "VirtualAssertValidUnsignedRemainder::output",
-        level = "trace"
-    )]
+    #[tracing::instrument(skip_all, name = "VirtualAssertValidUnsignedRemainder::output", level = "trace")]
     fn to_lookup_output_batched<'a, F: JoltField, N: Rep3Network>(
         &self,
         steps: &[&impl Rep3LookupQuery<XLEN>],
@@ -27,10 +18,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN>
             .iter()
             .map(|st| {
                 let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*st);
-                (
-                    l.as_binary_or_trivial(io_ctx.id),
-                    r.as_binary_or_trivial(io_ctx.id),
-                )
+                (l.as_binary_or_trivial(io_ctx.id), r.as_binary_or_trivial(io_ctx.id))
             })
             .unzip();
         let rem_is_zero = rep3_ring::binary::is_zero_many(&remainders, io_ctx)?;

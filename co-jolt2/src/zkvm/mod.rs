@@ -62,6 +62,7 @@ where
 // ---------------------------------------------------------------------------
 
 impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltArch {
+    #[tracing::instrument(skip_all, name = "jolt_preprocess")]
     fn preprocess(
         bytecode: Vec<tracer::instruction::Instruction>,
         memory_layout: jolt_common::jolt_device::MemoryLayout,
@@ -87,16 +88,7 @@ impl Rep3JoltWorker<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltArch {
         preproc: &mut PreprocessingPool<Fr>,
     ) -> eyre::Result<()> {
         let party_id = io_ctx.party_id();
-        let state = StateManagerWorker::new(
-            preprocessing,
-            trace,
-            program_io,
-            final_memory_state,
-            party_id,
-            ram_K,
-        );
-        Rep3JoltDagWorker::prove::<Fr, DoryCommitmentScheme, Blake2bTranscript, N>(
-            state, io_ctx, preproc,
-        )
+        let state = StateManagerWorker::new(preprocessing, trace, program_io, final_memory_state, party_id, ram_K);
+        Rep3JoltDagWorker::prove::<Fr, DoryCommitmentScheme, Blake2bTranscript, N>(state, io_ctx, preproc)
     }
 }

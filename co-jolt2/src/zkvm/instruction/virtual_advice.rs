@@ -6,19 +6,13 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAdvice> 
         (Rep3Operand::Public(0), Rep3Operand::Public(0))
     }
 
-    fn to_lookup_index(
-        &self,
-        party_id: PartyID,
-    ) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
+    fn to_lookup_index(&self, party_id: PartyID) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
         debug_assert!(
             self.instruction.advice.is_none(),
             "VirtualAdvice plaintext advice must be scrubbed from Rep3 traces"
         );
-        let advice = self
-            .advice
-            .as_ref()
-            .expect("VirtualAdvice shared advice payload missing")
-            .as_binary_or_trivial(party_id);
+        let advice =
+            self.advice.as_ref().expect("VirtualAdvice shared advice payload missing").as_binary_or_trivial(party_id);
         let advice = match XLEN {
             #[cfg(test)]
             8 => Rep3RingShare::new_ring(

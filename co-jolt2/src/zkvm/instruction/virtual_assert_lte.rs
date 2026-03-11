@@ -2,10 +2,7 @@ use super::*;
 
 impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAssertLTE> {
     fn to_instruction_inputs(&self) -> (Rep3Operand, Rep3Operand) {
-        (
-            self.register_state.rs1_operand(),
-            self.register_state.rs2_operand(),
-        )
+        (self.register_state.rs1_operand(), self.register_state.rs2_operand())
     }
 
     #[tracing::instrument(skip_all, name = "VirtualAssertLTE::output", level = "trace")]
@@ -20,19 +17,13 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAssertLT
             .iter()
             .map(|st| {
                 let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*st);
-                (
-                    l.as_binary_or_trivial(io_ctx.id),
-                    r.as_binary_or_trivial(io_ctx.id),
-                )
+                (l.as_binary_or_trivial(io_ctx.id), r.as_binary_or_trivial(io_ctx.id))
             })
             .unzip();
         // rs1 <= rs2 ≡ rs2 >= rs1
-        rep3_ring::arithmetic::ge_many(&b, &a, io_ctx)?
-            .into_iter()
-            .zip(out)
-            .for_each(|(x, out)| {
-                *out = FutureRep3Ring::bit_inject_to_field(x);
-            });
+        rep3_ring::arithmetic::ge_many(&b, &a, io_ctx)?.into_iter().zip(out).for_each(|(x, out)| {
+            *out = FutureRep3Ring::bit_inject_to_field(x);
+        });
         Ok(())
     }
 }

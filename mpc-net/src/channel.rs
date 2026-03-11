@@ -483,7 +483,11 @@ impl ChannelHandle<Bytes, BytesMut> {
                         };
 
                         let read_permit = if len <= read_buf_bytes {
-                            match read_byte_budget.clone().acquire_many_owned(len as u32).await {
+                            match read_byte_budget
+                                .clone()
+                                .acquire_many_owned(len as u32)
+                                .await
+                            {
                                 Ok(permit) => Some(permit),
                                 Err(_) => break,
                             }
@@ -737,12 +741,9 @@ impl ChannelHandle<Bytes, BytesMut> {
                         Ok(rj) => {
                             // Wait for data, processing writes between attempts
                             loop {
-                                match client
-                                    .try_recv(Duration::from_millis(5))
-                                {
+                                match client.try_recv(Duration::from_millis(5)) {
                                     Ok(Some(data)) => {
-                                        let _ =
-                                            rj.ret.send(Ok(BytesMut::from(&data[..])));
+                                        let _ = rj.ret.send(Ok(BytesMut::from(&data[..])));
                                         break;
                                     }
                                     Ok(None) => {
@@ -807,7 +808,9 @@ impl BulkBytesChannelHandle {
                     .clone()
                     .acquire_many_owned(data.len() as u32)
                     .await
-                    .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "bulk write budget closed"))?,
+                    .map_err(|_| {
+                        io::Error::new(io::ErrorKind::BrokenPipe, "bulk write budget closed")
+                    })?,
             )
         } else {
             None
@@ -824,7 +827,10 @@ impl BulkBytesChannelHandle {
         let yield_every = write_chunk.saturating_mul(4).max(write_chunk);
         while off < data.len() {
             let end = (off + write_chunk).min(data.len());
-            write.write_all(&data.slice(off..end)).await.map_err(io_err)?;
+            write
+                .write_all(&data.slice(off..end))
+                .await
+                .map_err(io_err)?;
             off = end;
             if off.saturating_sub(last_yield) >= yield_every && off < data.len() {
                 tokio::task::yield_now().await;
@@ -855,7 +861,11 @@ impl BulkBytesChannelHandle {
         if len != dst.len() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("bulk frame size mismatch: expected {} bytes, got {}", dst.len(), len),
+                format!(
+                    "bulk frame size mismatch: expected {} bytes, got {}",
+                    dst.len(),
+                    len
+                ),
             ));
         }
         read.read_exact(dst).await.map_err(io_err)

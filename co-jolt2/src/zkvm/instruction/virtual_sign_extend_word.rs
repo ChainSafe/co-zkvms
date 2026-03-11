@@ -5,10 +5,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualSignExte
         (self.register_state.rs1_operand(), Rep3Operand::Public(0))
     }
 
-    fn to_lookup_index(
-        &self,
-        party_id: PartyID,
-    ) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
+    fn to_lookup_index(&self, party_id: PartyID) -> FutureRep3Ring<LookupIndexInt, Rep3RingShare<LookupIndexInt>> {
         let (left, right) = <Self as Rep3LookupQuery<XLEN>>::to_instruction_inputs(self);
         let l = left.as_arithmetic_or_trivial_wide(party_id);
         let r = right.as_arithmetic_or_trivial_wide(party_id);
@@ -50,9 +47,8 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualSignExte
             })
             .collect();
         let zeros: Vec<_> = (0..steps.len()).map(|_| Rep3RingShare::default()).collect();
-        let upper_ones: Vec<_> = (0..steps.len())
-            .map(|_| rep3_ring::binary::promote_to_trivial_share(io_ctx.id, &upper_mask))
-            .collect();
+        let upper_ones: Vec<_> =
+            (0..steps.len()).map(|_| rep3_ring::binary::promote_to_trivial_share(io_ctx.id, &upper_mask)).collect();
         // if positive: upper = 0, else: upper = upper_mask
         let uppers = rep3_ring::binary::cmux_many(&is_positive_u64, &zeros, &upper_ones, io_ctx)?;
         // Combine: lower bits from input XOR upper bits from extension

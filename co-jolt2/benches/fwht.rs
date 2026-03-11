@@ -11,9 +11,7 @@ fn make_field_vec() -> Vec<Fr> {
 }
 
 fn make_rep3_vec() -> Vec<Rep3PrimeFieldShare<Fr>> {
-    (0..M)
-        .map(|i| Rep3PrimeFieldShare::new(Fr::from(i as u64 + 1), Fr::from(i as u64 + 2)))
-        .collect()
+    (0..M).map(|i| Rep3PrimeFieldShare::new(Fr::from(i as u64 + 1), Fr::from(i as u64 + 2))).collect()
 }
 
 fn bench(name: &str, f: impl Fn()) {
