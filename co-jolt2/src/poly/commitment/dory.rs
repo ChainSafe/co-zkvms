@@ -45,7 +45,7 @@ type DoryFirstReducePublicMsg = (Option<Fq12>, Option<Fq12>, Option<G1Affine>, O
 type DoryFirstReduceShareMsg = ((Fq12, Fq12), DoryFirstReducePublicMsg);
 type DorySecondReducePublicMsg = (Option<G1Affine>, Option<G1Affine>);
 type DorySecondReduceShareMsg = (((Fq12, Fq12), (G2Affine, G2Affine)), DorySecondReducePublicMsg, (G2Affine, G2Affine));
-type DoryInitShareMsg = (usize, Vec<G1Affine>, Vec<G2Affine>);
+type DoryInitShareMsg = (usize, Vec<G1Affine>);
 
 fn owns_public_vmv_e1(party_id: PartyID) -> bool {
     party_id == PartyID::ID0
@@ -336,9 +336,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
             let _span = tracing::info_span!("v2_init").entered();
             fixed_base_vector_msm_g2(setup, &v_vec_share)
         };
-        let v2_share_affine = G2Projective::normalize_batch(&v2_share);
-
-        network.send_response((num_vars, row_commit_shares_affine, v2_share_affine))?;
+        network.send_response((num_vars, row_commit_shares_affine))?;
 
         // 3) receive masked row commitments from coordinator
         let (row_commitments_affine, mut row_mask_shares): DoryMaskedRowsRequest = {

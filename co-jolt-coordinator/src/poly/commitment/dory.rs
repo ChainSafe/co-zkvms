@@ -39,7 +39,7 @@ type DoryFirstReducePublicMsg = (Option<Fq12>, Option<Fq12>, Option<G1Affine>, O
 type DoryFirstReduceShareMsg = ((Fq12, Fq12), DoryFirstReducePublicMsg);
 type DorySecondReducePublicMsg = (Option<G1Affine>, Option<G1Affine>);
 type DorySecondReduceShareMsg = (((Fq12, Fq12), (G2Affine, G2Affine)), DorySecondReducePublicMsg, (G2Affine, G2Affine));
-type DoryInitShareMsg = (usize, Vec<G1Affine>, Vec<G2Affine>);
+type DoryInitShareMsg = (usize, Vec<G1Affine>);
 
 #[derive(Clone)]
 struct RowMaskState {
@@ -371,28 +371,31 @@ where
         let g1_affine_all = G1Projective::normalize_batch(&g1_all[..(1 << sigma)]);
         let g2_affine_all = G2Projective::normalize_batch(&g2_all[..(1 << sigma)]);
         let blocked_gt_strategy = blocked_gt_strategy();
-        let (row_commitments, mut v2, row_mask_state, nu, l_vec, r_vec) = {
+        eyre::ensure!(
+            matches!(blocked_gt_strategy, BlockedGtStrategy::MpcCorrection),
+            "coordinator recompute path is unsupported after removing init-time v2 reconstruction"
+        );
+        let (row_commitments, row_mask_state, nu, l_vec, r_vec) = {
             let _span = info_span!("init_receive_reconstruct").entered();
-            let init_msgs: Vec<DoryInitShareMsg> = network.receive_responses()?;
+            let init_msgs: Vec<DoryInitShareMsg> = {
+                let _receive_span = info_span!("init_receive_rows").entered();
+                network.receive_responses()?
+            };
             let num_vars = init_msgs[0].0;
             let nu = compute_nu(num_vars, sigma);
-            let reconstruct_v2 = matches!(blocked_gt_strategy, BlockedGtStrategy::CoordinatorRecompute);
 
             let rows_len = init_msgs[0].1.len();
             let mut row_commitments = vec![G1Projective::zero(); rows_len];
-            let mut v2 = reconstruct_v2.then(|| vec![G2Projective::zero(); init_msgs[0].2.len()]);
-            for (_nv, shares, v2_shares) in &init_msgs {
+            for (_nv, shares) in &init_msgs {
                 debug_assert_eq!(*_nv, num_vars);
                 for (acc, s) in row_commitments.iter_mut().zip(shares.iter()) {
                     *acc += s.into_group();
                 }
-                if let Some(v2_acc) = v2.as_mut() {
-                    for (acc, s) in v2_acc.iter_mut().zip(v2_shares.iter()) {
-                        *acc += s.into_group();
-                    }
-                }
             }
-            let (row_commitments_affine, raw_masks) = mask_row_commitments(&row_commitments, setup);
+            let (row_commitments_affine, raw_masks) = {
+                let _mask_span = info_span!("init_mask_rows").entered();
+                mask_row_commitments(&row_commitments, setup)
+            };
             let mut folded_masks = raw_masks.clone();
             if nu < sigma {
                 folded_masks.resize(1 << sigma, Fr::zero());
@@ -404,7 +407,7 @@ where
                 (row_commitments_affine.clone(), mask_shares[2].clone()),
             ];
             {
-                let _broadcast_span = info_span!("masked_rows_broadcast").entered();
+                let _broadcast_span = info_span!("init_send_masked_rows").entered();
                 network.send_requests_to_workers(requests)?;
             }
 
@@ -421,7 +424,6 @@ where
             let r_vec: Vec<Fr> = r_vec_w.iter().map(ark_to_jolt).collect();
             (
                 row_commitments,
-                v2,
                 RowMaskState {
                     raw_masks,
                     folded_masks,
@@ -453,19 +455,10 @@ where
         let blocked_vmv_c = match blocked_gt_strategy {
             BlockedGtStrategy::CoordinatorRecompute => {
                 let _span = info_span!("vmv_local_recompute").entered();
-                let v2_ref = v2
-                    .as_ref()
-                    .expect("coordinator recompute strategy requires reconstructed v2");
                 let _ = vmv_c_masked;
-                compute_blocked_vmv_c(
-                    blocked_gt_strategy,
-                    &v1_pub,
-                    v2_ref,
-                    Some(BlockedVmvCorrectionInput {
-                        row_mask_scalars: &row_mask_state.raw_masks,
-                        worker_shared_v_vec_len: v2_ref.len(),
-                    }),
-                )?
+                return Err(eyre::eyre!(
+                    "coordinator recompute path is unsupported after removing init-time v2 reconstruction"
+                ));
             }
             BlockedGtStrategy::MpcCorrection => correct_blocked_vmv_c_from_mpc(vmv_c_masked, vmv_c_correction_scalar, setup)?,
         };
@@ -584,9 +577,7 @@ where
             {
                 let _span = tracing::trace_span!("coordinator_v1v2_update", n2).entered();
                 jolt_optimizations::vector_add_scalar_mul_g1_online(&mut v1_pub, &g1_all[..(1 << curr_rounds)], beta);
-                if let Some(v2_mut) = v2.as_mut() {
-                    jolt_optimizations::vector_add_scalar_mul_g2_online(v2_mut, &g2_all[..(1 << curr_rounds)], beta_inv);
-                }
+                let _ = (&g2_all, beta_inv);
             }
 
             let second_msgs: Vec<DorySecondReduceShareMsg> = {
@@ -603,21 +594,10 @@ where
             let (blocked_c_plus, blocked_c_minus) = match blocked_gt_strategy {
                 BlockedGtStrategy::CoordinatorRecompute => {
                     let _span = tracing::trace_span!("second_round_local_recompute", n2).entered();
-                    let v2_ref = v2
-                        .as_ref()
-                        .expect("coordinator recompute strategy requires reconstructed v2");
                     let _ = (combined_c_plus, combined_c_minus);
-                    compute_blocked_second_terms(
-                        blocked_gt_strategy,
-                        &v1_pub,
-                        v2_ref,
-                        n2,
-                        Some(BlockedSecondCorrectionInput {
-                            row_mask_scalars: &row_mask_state.folded_masks,
-                            worker_shared_folded_v2_len: v2_ref.len(),
-                            split_index: n2,
-                        }),
-                    )?
+                    return Err(eyre::eyre!(
+                        "coordinator recompute path is unsupported after removing init-time v2 reconstruction"
+                    ));
                 }
                 BlockedGtStrategy::MpcCorrection => (
                     correct_blocked_second_term_from_mpc(
@@ -686,11 +666,7 @@ where
                 let (v1_l_mut, v1_r_ref) = v1_pub.split_at_mut(n2);
                 jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(v1_l_mut, alpha, v1_r_ref);
                 v1_pub.truncate(n2);
-                if let Some(v2_mut) = v2.as_mut() {
-                    let (v2_l_mut, v2_r_ref) = v2_mut.split_at_mut(n2);
-                    jolt_optimizations::vector_scalar_mul_add_gamma_g2_online(v2_l_mut, alpha_inv, v2_r_ref);
-                    v2_mut.truncate(n2);
-                }
+                let _ = alpha_inv;
 
                 let (s1_l, s1_r) = s1.split_at(n2);
                 let (s2_l, s2_r) = s2.split_at(n2);
@@ -714,9 +690,6 @@ where
         let mut v2_from_workers = G2Projective::zero();
         for s in v2_shares {
             v2_from_workers += s.into_group();
-        }
-        if let Some(v2_recomputed) = v2.as_ref() {
-            debug_assert_eq!(v2_from_workers, v2_recomputed[0]);
         }
 
         #[cfg(feature = "zk")]
