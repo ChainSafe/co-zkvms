@@ -28,17 +28,11 @@ pub struct RLCPolynomial<F: JoltField> {
 
 impl<F: JoltField> RLCPolynomial<F> {
     pub fn new() -> Self {
-        Self {
-            dense_rlc: unsafe_allocate_zero_vec(DoryGlobals::get_T()),
-            one_hot_rlc: vec![],
-        }
+        Self { dense_rlc: unsafe_allocate_zero_vec(DoryGlobals::get_T()), one_hot_rlc: vec![] }
     }
 
     #[tracing::instrument(skip_all)]
-    pub fn linear_combination(
-        polynomials: Vec<Arc<MultilinearPolynomial<F>>>,
-        coefficients: &[F],
-    ) -> Self {
+    pub fn linear_combination(polynomials: Vec<Arc<MultilinearPolynomial<F>>>, coefficients: &[F]) -> Self {
         debug_assert_eq!(polynomials.len(), coefficients.len());
 
         let mut result = RLCPolynomial::<F>::new();
@@ -125,15 +119,10 @@ impl<F: JoltField> RLCPolynomial<F> {
         let mut row_commitments = vec![JoltGroupWrapper(G::zero()); num_rows];
 
         // Compute the row commitments for dense submatrix
-        self.dense_rlc
-            .par_chunks(row_len)
-            .zip(row_commitments.par_iter_mut())
-            .for_each(|(dense_row, commitment)| {
-                let msm_result: G =
-                    VariableBaseMSM::msm_field_elements(&bases[..dense_row.len()], dense_row)
-                        .unwrap();
-                *commitment = JoltGroupWrapper(commitment.0 + msm_result)
-            });
+        self.dense_rlc.par_chunks(row_len).zip(row_commitments.par_iter_mut()).for_each(|(dense_row, commitment)| {
+            let msm_result: G = VariableBaseMSM::msm_field_elements(&bases[..dense_row.len()], dense_row).unwrap();
+            *commitment = JoltGroupWrapper(commitment.0 + msm_result)
+        });
 
         // Compute the row commitments for one-hot polynomials
         for (coeff, poly) in self.one_hot_rlc.iter() {
@@ -153,10 +142,7 @@ impl<F: JoltField> RLCPolynomial<F> {
             };
 
             let current_row_commitments: &[G1Projective] = unsafe {
-                std::slice::from_raw_parts(
-                    row_commitments.as_ptr() as *const G1Projective,
-                    row_commitments.len(),
-                )
+                std::slice::from_raw_parts(row_commitments.as_ptr() as *const G1Projective, row_commitments.len())
             };
 
             let coeff_fr = unsafe { *(&raw const *coeff as *const Fr) };
@@ -184,12 +170,8 @@ impl<F: JoltField> RLCPolynomial<F> {
     /// polynomials comprising the linear combination, and taking the
     /// linear combination of the resulting products.
     #[tracing::instrument(skip_all, name = "RLCPolynomial::vector_matrix_product")]
-    pub fn vector_matrix_product(
-        &self,
-        left_vec: &[JoltFieldWrapper<F>],
-    ) -> Vec<JoltFieldWrapper<F>> {
-        let left_vec: &[F] =
-            unsafe { std::slice::from_raw_parts(left_vec.as_ptr() as *const F, left_vec.len()) };
+    pub fn vector_matrix_product(&self, left_vec: &[JoltFieldWrapper<F>]) -> Vec<JoltFieldWrapper<F>> {
+        let left_vec: &[F] = unsafe { std::slice::from_raw_parts(left_vec.as_ptr() as *const F, left_vec.len()) };
         let num_columns = DoryGlobals::get_num_columns();
 
         // Compute the vector-matrix product for dense submatrix

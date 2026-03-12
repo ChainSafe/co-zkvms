@@ -157,21 +157,18 @@ impl<T: SmallScalar, F: JoltField> CompactPolynomial<T, F> {
             let (evals_left, evals_right) = current.split_at_mut(stride);
             let (evals_right, _) = evals_right.split_at_mut(stride);
 
-            evals_left
-                .par_iter_mut()
-                .zip(evals_right.par_iter())
-                .for_each(|(x, y)| {
-                    //*x = *x + r_val * (*y - *x);
-                    let slope = *y - *x;
-                    if slope.is_zero() {
-                        return;
-                    }
-                    if slope.is_one() {
-                        *x += r_val;
-                    } else {
-                        *x += r_val * slope;
-                    }
-                });
+            evals_left.par_iter_mut().zip(evals_right.par_iter()).for_each(|(x, y)| {
+                //*x = *x + r_val * (*y - *x);
+                let slope = *y - *x;
+                if slope.is_zero() {
+                    return;
+                }
+                if slope.is_one() {
+                    *x += r_val;
+                } else {
+                    *x += r_val * slope;
+                }
+            });
         }
         current[0]
     }
@@ -199,12 +196,9 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                 }
                 BindingOrder::HighToLow => {
                     let (left, right) = self.bound_coeffs.split_at_mut(n);
-                    left.iter_mut()
-                        .zip(right.iter())
-                        .filter(|(a, b)| a != b)
-                        .for_each(|(a, b)| {
-                            *a += r * (*b - *a);
-                        });
+                    left.iter_mut().zip(right.iter()).filter(|(a, b)| a != b).for_each(|(a, b)| {
+                        *a += r * (*b - *a);
+                    });
                 }
             }
         } else {
@@ -221,13 +215,9 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                             match a.cmp(&b) {
                                 Ordering::Equal => a.to_field(),
                                 // a < b: Compute a + r * (b - a)
-                                Ordering::Less => {
-                                    a.to_field::<F>() + b.diff_mul_field::<F>(a, r.into())
-                                }
+                                Ordering::Less => a.to_field::<F>() + b.diff_mul_field::<F>(a, r.into()),
                                 // a > b: Compute a - r * (a - b)
-                                Ordering::Greater => {
-                                    a.to_field::<F>() - a.diff_mul_field::<F>(b, r.into())
-                                }
+                                Ordering::Greater => a.to_field::<F>() - a.diff_mul_field::<F>(b, r.into()),
                             }
                         })
                         .collect();
@@ -241,13 +231,9 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                             match a.cmp(&b) {
                                 Ordering::Equal => a.to_field(),
                                 // a < b: Compute a + r * (b - a)
-                                Ordering::Less => {
-                                    a.to_field::<F>() + b.diff_mul_field::<F>(a, r.into())
-                                }
+                                Ordering::Less => a.to_field::<F>() + b.diff_mul_field::<F>(a, r.into()),
                                 // a > b: Compute a - r * (a - b)
-                                Ordering::Greater => {
-                                    a.to_field::<F>() - a.diff_mul_field::<F>(b, r.into())
-                                }
+                                Ordering::Greater => a.to_field::<F>() - a.diff_mul_field::<F>(b, r.into()),
                             }
                         })
                         .collect();
@@ -269,28 +255,21 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                     }
                     let binding_scratch_space = self.binding_scratch_space.as_mut().unwrap();
 
-                    binding_scratch_space
-                        .par_iter_mut()
-                        .take(n)
-                        .enumerate()
-                        .for_each(|(i, new_coeff)| {
-                            if self.bound_coeffs[2 * i + 1] == self.bound_coeffs[2 * i] {
-                                *new_coeff = self.bound_coeffs[2 * i];
-                            } else {
-                                *new_coeff = self.bound_coeffs[2 * i]
-                                    + r * (self.bound_coeffs[2 * i + 1] - self.bound_coeffs[2 * i]);
-                            }
-                        });
+                    binding_scratch_space.par_iter_mut().take(n).enumerate().for_each(|(i, new_coeff)| {
+                        if self.bound_coeffs[2 * i + 1] == self.bound_coeffs[2 * i] {
+                            *new_coeff = self.bound_coeffs[2 * i];
+                        } else {
+                            *new_coeff = self.bound_coeffs[2 * i]
+                                + r * (self.bound_coeffs[2 * i + 1] - self.bound_coeffs[2 * i]);
+                        }
+                    });
                     std::mem::swap(&mut self.bound_coeffs, binding_scratch_space);
                 }
                 BindingOrder::HighToLow => {
                     let (left, right) = self.bound_coeffs.split_at_mut(n);
-                    left.par_iter_mut()
-                        .zip(right.par_iter())
-                        .filter(|(a, b)| a != b)
-                        .for_each(|(a, b)| {
-                            *a += r * (*b - *a);
-                        });
+                    left.par_iter_mut().zip(right.par_iter()).filter(|(a, b)| a != b).for_each(|(a, b)| {
+                        *a += r * (*b - *a);
+                    });
                 }
             }
         } else {
@@ -304,13 +283,9 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                             match a.cmp(&b) {
                                 Ordering::Equal => a.to_field(),
                                 // a < b: Compute a + r * (b - a)
-                                Ordering::Less => {
-                                    a.to_field::<F>() + b.diff_mul_field::<F>(a, r.into())
-                                }
+                                Ordering::Less => a.to_field::<F>() + b.diff_mul_field::<F>(a, r.into()),
                                 // a > b: Compute a - r * (a - b)
-                                Ordering::Greater => {
-                                    a.to_field::<F>() - a.diff_mul_field::<F>(b, r.into())
-                                }
+                                Ordering::Greater => a.to_field::<F>() - a.diff_mul_field::<F>(b, r.into()),
                             }
                         })
                         .collect();
@@ -324,13 +299,9 @@ impl<T: SmallScalar, F: JoltField> PolynomialBinding<F> for CompactPolynomial<T,
                             match a.cmp(&b) {
                                 Ordering::Equal => a.to_field(),
                                 // a < b: Compute a + r * (b - a)
-                                Ordering::Less => {
-                                    a.to_field::<F>() + b.diff_mul_field::<F>(a, r.into())
-                                }
+                                Ordering::Less => a.to_field::<F>() + b.diff_mul_field::<F>(a, r.into()),
                                 // a > b: Compute a - r * (a - b)
-                                Ordering::Greater => {
-                                    a.to_field::<F>() - a.diff_mul_field::<F>(b, r.into())
-                                }
+                                Ordering::Greater => a.to_field::<F>() - a.diff_mul_field::<F>(b, r.into()),
                             }
                         })
                         .collect();

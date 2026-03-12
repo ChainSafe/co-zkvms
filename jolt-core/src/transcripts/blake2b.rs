@@ -32,9 +32,7 @@ impl Blake2bTranscript {
     fn hasher(&self) -> Blake2b256 {
         let mut packed = [0_u8; 28].to_vec();
         packed.append(&mut self.n_rounds.to_be_bytes().to_vec());
-        Blake2b256::new()
-            .chain_update(self.state)
-            .chain_update(&packed)
+        Blake2b256::new().chain_update(self.state).chain_update(&packed)
     }
 
     // Loads arbitrary byte lengths using ceil(out/32) invocations of 32 byte randoms
@@ -68,10 +66,7 @@ impl Blake2bTranscript {
         #[cfg(test)]
         {
             if let Some(expected_state_history) = &self.expected_state_history {
-                assert!(
-                    new_state == expected_state_history[self.n_rounds as usize],
-                    "Fiat-Shamir transcript mismatch"
-                );
+                assert!(new_state == expected_state_history[self.n_rounds as usize], "Fiat-Shamir transcript mismatch");
             }
             self.state_history.push(new_state);
         }
@@ -216,9 +211,7 @@ impl Transcript for Blake2bTranscript {
     }
 
     fn challenge_vector<F: JoltField>(&mut self, len: usize) -> Vec<F> {
-        (0..len)
-            .map(|_i| self.challenge_scalar())
-            .collect::<Vec<F>>()
+        (0..len).map(|_i| self.challenge_scalar()).collect::<Vec<F>>()
     }
 
     // Compute powers of scalar q : (1, q, q^2, ..., q^(len-1))
@@ -239,9 +232,7 @@ impl Transcript for Blake2bTranscript {
     }
 
     fn challenge_vector_optimized<F: JoltField>(&mut self, len: usize) -> Vec<F::Challenge> {
-        (0..len)
-            .map(|_i| self.challenge_scalar_optimized::<F>())
-            .collect::<Vec<F::Challenge>>()
+        (0..len).map(|_i| self.challenge_scalar_optimized::<F>()).collect::<Vec<F::Challenge>>()
     }
 
     fn challenge_scalar_powers_optimized<F: JoltField>(&mut self, len: usize) -> Vec<F> {
@@ -271,15 +262,9 @@ mod tests {
             let scalar: Fr = transcript.challenge_scalar_128_bits();
 
             let num_bits = scalar.num_bits();
-            assert!(
-                num_bits <= 128,
-                "Scalar at iteration {i} has {num_bits} bits, expected <= 128",
-            );
+            assert!(num_bits <= 128, "Scalar at iteration {i} has {num_bits} bits, expected <= 128",);
 
-            assert!(
-                scalars.insert(scalar),
-                "Duplicate scalar found at iteration {i}",
-            );
+            assert!(scalars.insert(scalar), "Duplicate scalar found at iteration {i}",);
         }
     }
 
@@ -299,10 +284,7 @@ mod tests {
             let result_challenge = field_elem * challenge;
             let result_regular = field_elem * challenge_regular;
 
-            assert_eq!(
-                result_challenge, result_regular,
-                "Multiplication mismatch at index {i}"
-            );
+            assert_eq!(result_challenge, result_regular, "Multiplication mismatch at index {i}");
         }
 
         let field_elem = Fr::rand(&mut rng);
@@ -310,9 +292,6 @@ mod tests {
         let result_ref = field_elem * &challenge;
         //let result_regular = field_elem * challenge.value();
         let result_regular = field_elem * challenge;
-        assert_eq!(
-            result_ref, result_regular,
-            "Reference multiplication mismatch"
-        );
+        assert_eq!(result_ref, result_regular, "Reference multiplication mismatch");
     }
 }

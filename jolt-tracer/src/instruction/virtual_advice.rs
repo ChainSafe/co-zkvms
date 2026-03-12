@@ -22,8 +22,7 @@ pub struct VirtualAdvice {
 
 impl VirtualAdvice {
     pub fn advice_value(&self) -> XlenInt {
-        self.advice
-            .expect("VirtualAdvice advice must be materialized before use")
+        self.advice.expect("VirtualAdvice advice must be materialized before use")
     }
 }
 
@@ -97,11 +96,7 @@ mod tests {
     #[test]
     fn virtual_advice_option_exec() {
         let mut cpu = test_cpu();
-        let instr = VirtualAdvice {
-            operands: FormatJ { rd: 1, imm: 0 },
-            advice: Some(7),
-            ..Default::default()
-        };
+        let instr = VirtualAdvice { operands: FormatJ { rd: 1, imm: 0 }, advice: Some(7), ..Default::default() };
         instr.execute(&mut cpu, &mut ());
         assert_eq!(cpu.x[1], 7);
     }
@@ -109,11 +104,7 @@ mod tests {
     #[test]
     fn virtual_advice_option_exec_panics_on_none() {
         let mut cpu = test_cpu();
-        let instr = VirtualAdvice {
-            operands: FormatJ { rd: 1, imm: 0 },
-            advice: None,
-            ..Default::default()
-        };
+        let instr = VirtualAdvice { operands: FormatJ { rd: 1, imm: 0 }, advice: None, ..Default::default() };
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             instr.execute(&mut cpu, &mut ());
         }));

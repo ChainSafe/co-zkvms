@@ -2,10 +2,10 @@
 //!
 //! Contains dot product operations using daPoint preprocessing tuples.
 
+use crate::preprocessing::daPoint::DaPointsBatch;
 use crate::protocols::rep3::PartyID;
 use crate::protocols::rep3::network::{IoContext, Rep3Network};
 use crate::protocols::rep3_ring::Rep3RingShare;
-use crate::preprocessing::daPoint::DaPointsBatch;
 use crate::protocols::rep3_ring::ring::bit::Bit;
 use crate::protocols::rep3_ring::ring::int_ring::IntRing2k;
 use crate::protocols::rep3_ring::ring::ring_impl::RingElement;
@@ -44,11 +44,7 @@ where
     // Round 1: P0 broadcasts masked bits m[i] = x.a ^ x.b ^ gamma[i].
     let ms: Vec<RingElement<Bit>> = if io.id == PartyID::ID0 {
         let ms: Vec<RingElement<Bit>> = izip!(bits, &batch.gammas)
-            .map(|(x, gamma)| {
-                RingElement(Bit::new(
-                    x.a.0.convert() ^ x.b.0.convert() ^ gamma.convert(),
-                ))
-            })
+            .map(|(x, gamma)| RingElement(Bit::new(x.a.0.convert() ^ x.b.0.convert() ^ gamma.convert())))
             .collect();
         io.network.send_many(PartyID::ID1, &ms)?;
         io.network.send_many(PartyID::ID2, &ms)?;

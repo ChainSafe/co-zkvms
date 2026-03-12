@@ -149,12 +149,7 @@ pub const fn constraint_prod_lc(left: LC, right: LC, result: LC) -> Constraint {
 }
 
 /// Creates: condition * (true_val - false_val) == (result - false_val)
-pub const fn constraint_if_else_lc(
-    condition: LC,
-    true_val: LC,
-    false_val: LC,
-    result: LC,
-) -> Constraint {
+pub const fn constraint_if_else_lc(condition: LC, true_val: LC, false_val: LC, result: LC) -> Constraint {
     Constraint::new(
         condition,
         match true_val.checked_sub(false_val) {
@@ -626,8 +621,7 @@ pub fn eval_bz_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
         N::RightLookupSub => {
             // B: RightLookupOperand - (LeftInstructionInput - RightInstructionInput + 2^XLEN)
             // with full-width integer semantics (matches the +2^XLEN in the uniform constraint)
-            let expected_i128 =
-                (row.left_input as i128) - row.right_input.to_i128() + (1i128 << XLEN);
+            let expected_i128 = (row.left_input as i128) - row.right_input.to_i128() + (1i128 << XLEN);
             S160::from(row.right_lookup) - S160::from(expected_i128)
         }
         N::RightLookupEqProductIfMul => {
@@ -662,14 +656,8 @@ pub fn eval_bz_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
         }
         N::RdWriteEqPCPlusConstIfWritePCtoRD => {
             // B: RdWriteValue - (UnexpandedPC + (4 - 2*IsCompressed)) (i128 arithmetic)
-            let const_term = 4 - if row.flags[CircuitFlags::IsCompressed] {
-                2
-            } else {
-                0
-            };
-            S160::from(
-                row.rd_write_value as i128 - (row.unexpanded_pc as i128 + const_term as i128),
-            )
+            let const_term = 4 - if row.flags[CircuitFlags::IsCompressed] { 2 } else { 0 };
+            S160::from(row.rd_write_value as i128 - (row.unexpanded_pc as i128 + const_term as i128))
         }
         N::ShouldJumpDef => {
             // B: 1 - NextIsNoop (boolean domain)
@@ -687,21 +675,14 @@ pub fn eval_bz_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
         // B: LookupOutput (u64 bit pattern)
         N::ShouldBranchDef => S160::from(row.lookup_output),
         // B: NextUnexpandedPC - (UnexpandedPC + Imm) (i128 arithmetic)
-        N::NextUnexpPCEqPCPlusImmIfShouldBranch => S160::from(
-            row.next_unexpanded_pc as i128 - (row.unexpanded_pc as i128 + row.imm.to_i128()),
-        ),
+        N::NextUnexpPCEqPCPlusImmIfShouldBranch => {
+            S160::from(row.next_unexpanded_pc as i128 - (row.unexpanded_pc as i128 + row.imm.to_i128()))
+        }
         N::NextUnexpPCUpdateOtherwise => {
             // B: NextUnexpandedPC - target, where target = UnexpandedPC + 4 - 4*DoNotUpdateUnexpandedPC - 2*IsCompressed (i128 arithmetic)
-            let const_term =
-                4 - if row.flags[CircuitFlags::DoNotUpdateUnexpandedPC] {
-                    4
-                } else {
-                    0
-                } - if row.flags[CircuitFlags::IsCompressed] {
-                    2
-                } else {
-                    0
-                };
+            let const_term = 4
+                - if row.flags[CircuitFlags::DoNotUpdateUnexpandedPC] { 4 } else { 0 }
+                - if row.flags[CircuitFlags::IsCompressed] { 2 } else { 0 };
             let target = row.unexpanded_pc as i128 + const_term;
             S160::from(row.next_unexpanded_pc as i128 - target)
         }

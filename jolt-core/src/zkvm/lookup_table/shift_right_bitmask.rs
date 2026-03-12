@@ -48,11 +48,7 @@ impl<const XLEN: usize> JoltLookupTable for ShiftRightBitmaskTable<XLEN> {
 
             for i in 0..log_w {
                 let bit = (s >> i) & 1;
-                eq_val *= if bit == 0 {
-                    F::one() - r[log_w - i - 1]
-                } else {
-                    r[log_w - i - 1].into()
-                };
+                eq_val *= if bit == 0 { F::one() - r[log_w - i - 1] } else { r[log_w - i - 1].into() };
             }
 
             dp[s] = F::from_u128(bitmask) * eq_val;

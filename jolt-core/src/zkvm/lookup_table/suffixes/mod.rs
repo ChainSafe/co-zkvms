@@ -173,9 +173,7 @@ impl Suffixes {
             Suffixes::LeftShift => LeftShiftSuffix::suffix_mle(b),
             Suffixes::TwoLsb => TwoLsbSuffix::suffix_mle(b),
             Suffixes::SignExtensionUpperHalf => SignExtensionUpperHalfSuffix::<XLEN>::suffix_mle(b),
-            Suffixes::SignExtensionRightOperand => {
-                SignExtensionRightOperandSuffix::<XLEN>::suffix_mle(b)
-            }
+            Suffixes::SignExtensionRightOperand => SignExtensionRightOperandSuffix::<XLEN>::suffix_mle(b),
             Suffixes::RightShiftW => RightShiftWSuffix::suffix_mle(b),
             Suffixes::RightShiftWHelper => RightShiftWHelperSuffix::suffix_mle(b),
             Suffixes::LeftShiftWHelper => LeftShiftWHelperSuffix::suffix_mle(b),

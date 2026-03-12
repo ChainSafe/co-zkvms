@@ -22,8 +22,7 @@ macro_rules! impl_virtual_xor_rot {
                 flags[CircuitFlags::LeftOperandIsRs1Value as usize] = true;
                 flags[CircuitFlags::RightOperandIsRs2Value as usize] = true;
                 flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
-                flags[CircuitFlags::InlineSequenceInstruction as usize] =
-                    self.inline_sequence_remaining.is_some();
+                flags[CircuitFlags::InlineSequenceInstruction as usize] = self.inline_sequence_remaining.is_some();
                 flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
                     self.inline_sequence_remaining.unwrap_or(0) != 0;
                 flags[CircuitFlags::IsCompressed as usize] = self.is_compressed;
@@ -35,10 +34,7 @@ macro_rules! impl_virtual_xor_rot {
             fn to_instruction_inputs(&self) -> (u64, i128) {
                 match XLEN {
                     #[cfg(test)]
-                    8 => (
-                        self.register_state.rs1 as u8 as u64,
-                        self.register_state.rs2 as u8 as i128,
-                    ),
+                    8 => (self.register_state.rs1 as u8 as u64, self.register_state.rs2 as u8 as i128),
                     64 => (self.register_state.rs1, self.register_state.rs2 as i128),
                     _ => panic!("{XLEN}-bit word size is unsupported"),
                 }

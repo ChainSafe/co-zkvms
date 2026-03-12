@@ -31,11 +31,7 @@ impl<F: JoltField> Rep3BooleanitySumcheck<F> {
         }
         let r_address: Vec<F::Challenge> = transcript.challenge_vector_optimized::<F>(LOG_K_CHUNK);
 
-        Self {
-            gamma: gamma_powers,
-            r_address,
-            log_T,
-        }
+        Self { gamma: gamma_powers, r_address, log_T }
     }
 
     /// Return gamma powers so the worker can use them.
@@ -62,11 +58,7 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3BooleanityS
         F::zero()
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &Rep3OpeningAccumulator<F>,
-        r_prime: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &Rep3OpeningAccumulator<F>, r_prime: &[F::Challenge]) -> F {
         let ra_claims = (0..D).map(|i| {
             accumulator
                 .get_committed_polynomial_opening(
@@ -76,36 +68,18 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3BooleanityS
                 .1
         });
         let r_cycle = accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::LookupOutput,
-                SumcheckId::SpartanOuter,
-            )
+            .get_virtual_polynomial_opening(VirtualPolynomial::LookupOutput, SumcheckId::SpartanOuter)
             .0
             .r
             .clone();
 
         EqPolynomial::<F>::mle(
             r_prime,
-            &self
-                .r_address
-                .iter()
-                .cloned()
-                .rev()
-                .chain(r_cycle.iter().cloned().rev())
-                .collect::<Vec<F::Challenge>>(),
-        ) * self
-            .gamma
-            .iter()
-            .zip(ra_claims)
-            .fold(F::zero(), |acc, (gamma, ra)| {
-                (ra.square() - ra) * gamma + acc
-            })
+            &self.r_address.iter().cloned().rev().chain(r_cycle.iter().cloned().rev()).collect::<Vec<F::Challenge>>(),
+        ) * self.gamma.iter().zip(ra_claims).fold(F::zero(), |acc, (gamma, ra)| (ra.square() - ra) * gamma + acc)
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         let (r_address, r_cycle) = opening_point.split_at(LOG_K_CHUNK);
         let mut r_big_endian: Vec<F::Challenge> = r_address.iter().rev().copied().collect();
         r_big_endian.extend(r_cycle.iter().copied().rev());
@@ -166,18 +140,10 @@ pub(crate) fn extend_degree_3_evals<F: JoltField>(
 fn lagrange_coeffs_consecutive_3<F: JoltField>(x: F) -> [F; 4] {
     // degree=3 nodes {0,1,2,3}. Precompute denominators and compute numerators on the fly.
     // denom(k) = Π_{m!=k} (k - m).
-    let den0 = (F::from(0u64) - F::from(1u64))
-        * (F::from(0u64) - F::from(2u64))
-        * (F::from(0u64) - F::from(3u64));
-    let den1 = (F::from(1u64) - F::from(0u64))
-        * (F::from(1u64) - F::from(2u64))
-        * (F::from(1u64) - F::from(3u64));
-    let den2 = (F::from(2u64) - F::from(0u64))
-        * (F::from(2u64) - F::from(1u64))
-        * (F::from(2u64) - F::from(3u64));
-    let den3 = (F::from(3u64) - F::from(0u64))
-        * (F::from(3u64) - F::from(1u64))
-        * (F::from(3u64) - F::from(2u64));
+    let den0 = (F::from(0u64) - F::from(1u64)) * (F::from(0u64) - F::from(2u64)) * (F::from(0u64) - F::from(3u64));
+    let den1 = (F::from(1u64) - F::from(0u64)) * (F::from(1u64) - F::from(2u64)) * (F::from(1u64) - F::from(3u64));
+    let den2 = (F::from(2u64) - F::from(0u64)) * (F::from(2u64) - F::from(1u64)) * (F::from(2u64) - F::from(3u64));
+    let den3 = (F::from(3u64) - F::from(0u64)) * (F::from(3u64) - F::from(1u64)) * (F::from(3u64) - F::from(2u64));
 
     let num0 = (x - F::from(1u64)) * (x - F::from(2u64)) * (x - F::from(3u64));
     let num1 = (x - F::from(0u64)) * (x - F::from(2u64)) * (x - F::from(3u64));

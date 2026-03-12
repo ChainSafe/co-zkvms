@@ -1,6 +1,6 @@
+use crate::id::PartyID;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use color_eyre::eyre::Context;
-use crate::id::PartyID;
 use mpi::{
     datatype::{Partition, PartitionMut},
     environment::Universe,
@@ -10,8 +10,7 @@ use mpi::{
 };
 
 use crate::{
-    construct_partitioned_buffer_for_scatter, construct_partitioned_mut_buffer_for_gather,
-    deserialize_flattened_bytes,
+    construct_partitioned_buffer_for_scatter, construct_partitioned_mut_buffer_for_gather, deserialize_flattened_bytes,
     mpc_star::{MpcStarNetCoordinator, MpcStarNetWorker},
     Result,
 };
@@ -28,11 +27,7 @@ pub fn initialize_mpi() -> MpiContext {
     let (universe, _) = mpi::initialize_with_threading(mpi::Threading::Funneled).unwrap();
     let communicator = universe.world();
     let rank = communicator.rank() as usize;
-    MpiContext {
-        universe,
-        communicator,
-        rank,
-    }
+    MpiContext { universe, communicator, rank }
 }
 
 impl MpiContext {
@@ -51,11 +46,7 @@ pub struct Rep3CoordinatorMPI<'a> {
 }
 
 impl<'a> Rep3CoordinatorMPI<'a> {
-    pub fn new(
-        log_num_workers_per_party: usize,
-        log_num_public_workers: usize,
-        mpi_ctx: &'a MpiContext,
-    ) -> Self {
+    pub fn new(log_num_workers_per_party: usize, log_num_public_workers: usize, mpi_ctx: &'a MpiContext) -> Self {
         let root_process = mpi_ctx.communicator.process_at_rank(ROOT_RANK as i32);
         let size = mpi_ctx.communicator.size();
         Self {
@@ -75,14 +66,10 @@ impl<'a> MpcStarNetCoordinator for Rep3CoordinatorMPI<'a> {
         default_response: T,
     ) -> Result<Vec<T>> {
         let mut response_bytes = vec![];
-        let mut response_bytes_buf = construct_partitioned_mut_buffer_for_gather!(
-            self.size,
-            default_response,
-            &mut response_bytes
-        );
+        let mut response_bytes_buf =
+            construct_partitioned_mut_buffer_for_gather!(self.size, default_response, &mut response_bytes);
         // Root does not send anything, it only receives.
-        self.root_process
-            .gather_varcount_into_root(&[0u8; 0], &mut response_bytes_buf);
+        self.root_process.gather_varcount_into_root(&[0u8; 0], &mut response_bytes_buf);
 
         let ret = deserialize_flattened_bytes!(response_bytes, default_response, T)
             .context("while deserializing responses")?;
@@ -90,36 +77,27 @@ impl<'a> MpcStarNetCoordinator for Rep3CoordinatorMPI<'a> {
         Ok(ret)
     }
 
-    fn broadcast_request<T: CanonicalSerialize + CanonicalDeserialize + Clone>(
-        &mut self,
-        data: T,
-    ) -> Result<()> {
+    fn broadcast_request<T: CanonicalSerialize + CanonicalDeserialize + Clone>(&mut self, data: T) -> Result<()> {
         let requests_chunked = vec![data; (1 << self.log_num_workers_per_party) * 3];
         let mut request_bytes = vec![];
-        let request_bytes_buf =
-            construct_partitioned_buffer_for_scatter!(requests_chunked, &mut request_bytes);
+        let request_bytes_buf = construct_partitioned_buffer_for_scatter!(requests_chunked, &mut request_bytes);
 
         let counts = request_bytes_buf.counts().to_vec();
         self.root_process.scatter_into_root(&counts, &mut 0i32);
         let mut _recv_buf: Vec<u8> = vec![];
-        self.root_process
-            .scatter_varcount_into_root(&request_bytes_buf, &mut _recv_buf);
+        self.root_process.scatter_varcount_into_root(&request_bytes_buf, &mut _recv_buf);
         self.total_send_bytes += request_bytes.len();
         Ok(())
     }
 
-    fn send_requests<T: CanonicalSerialize + CanonicalDeserialize + Clone>(
-        &mut self,
-        data: Vec<T>,
-    ) -> Result<()> {
+    fn send_requests<T: CanonicalSerialize + CanonicalDeserialize + Clone>(&mut self, data: Vec<T>) -> Result<()> {
         let mut request_bytes = vec![];
         let request_bytes_buf = construct_partitioned_buffer_for_scatter!(data, &mut request_bytes);
 
         let counts = request_bytes_buf.counts().to_vec();
         self.root_process.scatter_into_root(&counts, &mut 0i32);
         let mut _recv_buf: Vec<u8> = vec![];
-        self.root_process
-            .scatter_varcount_into_root(&request_bytes_buf, &mut _recv_buf);
+        self.root_process.scatter_varcount_into_root(&request_bytes_buf, &mut _recv_buf);
         self.total_send_bytes += request_bytes.len();
         Ok(())
     }
@@ -157,11 +135,7 @@ pub struct Rep3WorkerMPI<'a> {
 }
 
 impl<'a> Rep3WorkerMPI<'a> {
-    pub fn new(
-        log_num_public_workers: usize,
-        log_num_workers_per_party: usize,
-        mpi_ctx: &'a MpiContext,
-    ) -> Self {
+    pub fn new(log_num_public_workers: usize, log_num_workers_per_party: usize, mpi_ctx: &'a MpiContext) -> Self {
         let root_process = mpi_ctx.communicator.process_at_rank(ROOT_RANK as i32);
         let size = mpi_ctx.communicator.size();
         let rank = mpi_ctx.rank;
@@ -178,10 +152,7 @@ impl<'a> Rep3WorkerMPI<'a> {
 }
 
 impl<'a> MpcStarNetWorker for Rep3WorkerMPI<'a> {
-    fn send_response<T: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-        data: T,
-    ) -> Result<()> {
+    fn send_response<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: T) -> Result<()> {
         let responses_bytes = serialize_to_vec(&data);
         self.root_process.gather_varcount_into(&responses_bytes);
         self.total_send_bytes += responses_bytes.len();
@@ -221,10 +192,8 @@ impl<'a> MpcStarNetWorker for Rep3WorkerMPI<'a> {
 macro_rules! construct_partitioned_buffer_for_scatter {
     ($items:expr, $flattened_item_bytes: expr) => {{
         let item_bytes = ($items).iter().map(serialize_to_vec).collect::<Vec<_>>();
-        let counts = std::iter::once(&vec![])
-            .chain(item_bytes.iter())
-            .map(|bytes| bytes.len() as Count)
-            .collect::<Vec<_>>();
+        let counts =
+            std::iter::once(&vec![]).chain(item_bytes.iter()).map(|bytes| bytes.len() as Count).collect::<Vec<_>>();
         let displacements: Vec<Count> = counts
             .iter()
             .scan(0, |acc, &x| {
@@ -246,10 +215,7 @@ macro_rules! construct_partitioned_mut_buffer_for_gather {
             .chain(std::iter::repeat(vec![0u8; item_size]))
             .take($size as usize)
             .collect::<Vec<_>>();
-        let counts = item_bytes
-            .iter()
-            .map(|bytes| bytes.len() as Count)
-            .collect::<Vec<_>>();
+        let counts = item_bytes.iter().map(|bytes| bytes.len() as Count).collect::<Vec<_>>();
         let displacements: Vec<Count> = counts
             .iter()
             .scan(0, |acc, &x| {

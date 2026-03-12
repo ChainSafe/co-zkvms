@@ -11,8 +11,8 @@ use super::ori::ORI;
 use super::slli::SLLI;
 use super::virtual_sign_extend_word::VirtualSignExtendWord;
 use super::{
-    format::format_r::FormatR, virtual_shift_right_bitmask::VirtualShiftRightBitmask,
-    virtual_srl::VirtualSRL, Cycle, Instruction, RISCVInstruction, RISCVTrace,
+    format::format_r::FormatR, virtual_shift_right_bitmask::VirtualShiftRightBitmask, virtual_srl::VirtualSRL, Cycle,
+    Instruction, RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -29,8 +29,7 @@ impl SRLW {
         // on 32-bit values and sign-extend their 32-bit results to 64 bits. The shift amount is
         // given by rs2[4:0].
         let shamt = (cpu.x[self.operands.rs2 as usize] & 0x1f) as u32;
-        cpu.x[self.operands.rd as usize] =
-            ((cpu.x[self.operands.rs1 as usize] as u32) >> shamt) as i32 as i64;
+        cpu.x[self.operands.rd as usize] = ((cpu.x[self.operands.rs1 as usize] as u32) >> shamt) as i32 as i64;
     }
 }
 
@@ -57,11 +56,7 @@ impl RISCVTrace for SRLW {
     /// 5. Sign-extend the resulting 32-bit value
     ///
     /// This approach ensures proper 32-bit logical shift semantics on 64-bit system.
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let v_bitmask = allocator.allocate();
         let v_rs1 = allocator.allocate();
 

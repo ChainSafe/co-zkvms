@@ -8,13 +8,7 @@ use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 pub enum NegativeDivisorZeroRemainderPrefix {}
 
 impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorZeroRemainderPrefix {
-    fn prefix_mle<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<C>,
-        c: u32,
-        mut b: LookupBits,
-        j: usize,
-    ) -> F
+    fn prefix_mle<C>(checkpoints: &[PrefixCheckpoint<F>], r_x: Option<C>, c: u32, mut b: LookupBits, j: usize) -> F
     where
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
@@ -44,8 +38,7 @@ impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorZeroRemainderPrefix {
             }
         }
 
-        let negative_divisor_zero_remainder =
-            checkpoints[Prefixes::NegativeDivisorZeroRemainder].unwrap();
+        let negative_divisor_zero_remainder = checkpoints[Prefixes::NegativeDivisorZeroRemainder].unwrap();
 
         if let Some(r_x) = r_x {
             let (remainder, _) = b.uninterleave();
@@ -67,12 +60,7 @@ impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorZeroRemainderPrefix {
         }
     }
 
-    fn update_prefix_checkpoint<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: C,
-        r_y: C,
-        j: usize,
-    ) -> PrefixCheckpoint<F>
+    fn update_prefix_checkpoint<C>(checkpoints: &[PrefixCheckpoint<F>], r_x: C, r_y: C, j: usize) -> PrefixCheckpoint<F>
     where
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
@@ -85,8 +73,7 @@ impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorZeroRemainderPrefix {
             return Some((F::one() - r_x) * r_y).into();
         }
 
-        let mut negative_divisor_zero_remainder =
-            checkpoints[Prefixes::NegativeDivisorZeroRemainder].unwrap();
+        let mut negative_divisor_zero_remainder = checkpoints[Prefixes::NegativeDivisorZeroRemainder].unwrap();
         negative_divisor_zero_remainder *= F::one() - r_x;
         Some(negative_divisor_zero_remainder).into()
     }

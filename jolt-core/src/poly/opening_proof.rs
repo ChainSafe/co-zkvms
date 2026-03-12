@@ -220,8 +220,7 @@ where
         opening_point: Vec<F::Challenge>,
         claims: Vec<F>,
     ) -> Self {
-        let opening_ids =
-            polynomials.iter().map(|poly| OpeningId::Committed(*poly, sumcheck_id)).collect();
+        let opening_ids = polynomials.iter().map(|poly| OpeningId::Committed(*poly, sumcheck_id)).collect();
         let rlc_coeffs = if polynomials.len() == 1 {
             vec![F::one()]
         } else {
@@ -626,11 +625,8 @@ where
         self.opening_ids_by_poly_point.clear();
         self.aliases.clear();
 
-        let seeded_openings: Vec<(OpeningId, OpeningPoint<BIG_ENDIAN, F>, F)> = self
-            .openings
-            .iter()
-            .map(|(id, (point, claim))| (*id, point.clone(), *claim))
-            .collect();
+        let seeded_openings: Vec<(OpeningId, OpeningPoint<BIG_ENDIAN, F>, F)> =
+            self.openings.iter().map(|(id, (point, claim))| (*id, point.clone(), *claim)).collect();
         for (key, point, claim) in seeded_openings {
             self.register_existing_opening(key, point, claim);
         }
@@ -646,10 +642,8 @@ where
         sumcheck: SumcheckId,
     ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
         let key = self.resolve_alias(OpeningId::Virtual(polynomial, sumcheck));
-        let (point, claim) = self
-            .openings
-            .get(&key)
-            .unwrap_or_else(|| panic!("No opening found for {sumcheck:?} {polynomial:?}"));
+        let (point, claim) =
+            self.openings.get(&key).unwrap_or_else(|| panic!("No opening found for {sumcheck:?} {polynomial:?}"));
         (point.clone(), *claim)
     }
 
@@ -659,10 +653,8 @@ where
         sumcheck: SumcheckId,
     ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
         let key = self.resolve_alias(OpeningId::Committed(polynomial, sumcheck));
-        let (point, claim) = self
-            .openings
-            .get(&key)
-            .unwrap_or_else(|| panic!("No opening found for {sumcheck:?} {polynomial:?}"));
+        let (point, claim) =
+            self.openings.get(&key).unwrap_or_else(|| panic!("No opening found for {sumcheck:?} {polynomial:?}"));
         (point.clone(), *claim)
     }
 
@@ -690,8 +682,7 @@ where
         if point.r.is_empty() {
             return;
         }
-        self.opening_ids_by_poly_point
-            .insert((underlying_polynomial_id(key), Self::point_key(point)), key);
+        self.opening_ids_by_poly_point.insert((underlying_polynomial_id(key), Self::point_key(point)), key);
     }
 
     fn find_existing_opening_at_point(
@@ -699,36 +690,23 @@ where
         poly_id: PolynomialId,
         point: &OpeningPoint<BIG_ENDIAN, F>,
     ) -> Option<(OpeningId, F)> {
-        let existing_id = *self
-            .opening_ids_by_poly_point
-            .get(&(poly_id, Self::point_key(point)))?;
+        let existing_id = *self.opening_ids_by_poly_point.get(&(poly_id, Self::point_key(point)))?;
         let (_, existing_claim) = self.openings.get(&existing_id).expect("indexed opening missing");
         Some((existing_id, *existing_claim))
     }
 
     fn point_key(point: &OpeningPoint<BIG_ENDIAN, F>) -> Vec<u8> {
         let mut bytes = Vec::new();
-        point
-            .r
-            .serialize_compressed(&mut bytes)
-            .expect("opening point serialization should succeed");
+        point.r.serialize_compressed(&mut bytes).expect("opening point serialization should succeed");
         bytes
     }
 
-    fn register_existing_opening(
-        &mut self,
-        key: OpeningId,
-        point: OpeningPoint<BIG_ENDIAN, F>,
-        claim: F,
-    ) {
+    fn register_existing_opening(&mut self, key: OpeningId, point: OpeningPoint<BIG_ENDIAN, F>, claim: F) {
         if let Some((existing_id, existing_claim)) =
             self.find_existing_opening_at_point(underlying_polynomial_id(key), &point)
         {
             if existing_id != key {
-                assert_eq!(
-                    claim, existing_claim,
-                    "Inconsistent duplicate opening claims: {key:?} vs {existing_id:?}"
-                );
+                assert_eq!(claim, existing_claim, "Inconsistent duplicate opening claims: {key:?} vs {existing_id:?}");
                 self.aliases.insert(key, existing_id);
             }
             return;
@@ -1007,11 +985,7 @@ where
             })
             .collect();
 
-        self.blindfold_opening_data = Some(BlindfoldOpeningData {
-            opening_ids,
-            constraint_coeffs,
-            joint_claim,
-        });
+        self.blindfold_opening_data = Some(BlindfoldOpeningData { opening_ids, constraint_coeffs, joint_claim });
 
         // Verify the reduced opening proof
         PCS::verify(

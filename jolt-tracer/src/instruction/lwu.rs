@@ -52,11 +52,7 @@ impl RISCVTrace for LWU {
     }
 
     /// Load unsigned word (32-bit) with zero extension to 64-bit.    
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         match xlen {
             Xlen::Bit32 => panic!("LWU is invalid in 32b mode"),
             Xlen::Bit64 => self.inline_sequence_64(allocator, xlen),
@@ -65,11 +61,7 @@ impl RISCVTrace for LWU {
 }
 
 impl LWU {
-    fn inline_sequence_64(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence_64(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let v_address = allocator.allocate();
         let v_dword_address = allocator.allocate();
         let v_dword = allocator.allocate();

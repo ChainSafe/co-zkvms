@@ -24,9 +24,7 @@ impl MULHSU {
     fn exec(&self, cpu: &mut Cpu, _: &mut <MULHSU as RISCVInstruction>::RAMAccess) {
         cpu.x[self.operands.rd as usize] = match cpu.xlen {
             Xlen::Bit32 => cpu.sign_extend(
-                cpu.x[self.operands.rs1 as usize]
-                    .wrapping_mul(cpu.x[self.operands.rs2 as usize] as u32 as i64)
-                    >> 32,
+                cpu.x[self.operands.rs1 as usize].wrapping_mul(cpu.x[self.operands.rs2 as usize] as u32 as i64) >> 32,
             ),
             Xlen::Bit64 => {
                 ((cpu.x[self.operands.rs1 as usize] as u128)
@@ -46,11 +44,7 @@ impl RISCVTrace for MULHSU {
         }
     }
 
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let v_sx = allocator.allocate();
         let v_sx_0 = allocator.allocate();
         let v_rs1 = allocator.allocate();

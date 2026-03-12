@@ -36,9 +36,7 @@ impl AMOXORW {
 
         // XOR the values and store back to memory
         let new_value = (original_value as u32) ^ xor_value;
-        cpu.mmu
-            .store_word(address, new_value)
-            .expect("MMU store error");
+        cpu.mmu.store_word(address, new_value).expect("MMU store error");
 
         // Return the original value
         cpu.x[self.operands.rd as usize] = original_value;
@@ -81,11 +79,7 @@ impl RISCVTrace for AMOXORW {
     /// - Commutative: order of XOR operations doesn't matter
     /// - Self-canceling: applying same XOR twice restores original
     /// - Useful for temporary locks that auto-release on second application
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let v_rs2 = allocator.allocate();
         let v_rd = allocator.allocate();
 

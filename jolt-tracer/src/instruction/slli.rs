@@ -24,9 +24,8 @@ impl SLLI {
             Xlen::Bit32 => 0x1f,
             Xlen::Bit64 => 0x3f,
         };
-        cpu.x[self.operands.rd as usize] = cpu.sign_extend(
-            cpu.x[self.operands.rs1 as usize].wrapping_shl(self.operands.imm as u32 & mask),
-        );
+        cpu.x[self.operands.rd as usize] =
+            cpu.sign_extend(cpu.x[self.operands.rs1 as usize].wrapping_shl(self.operands.imm as u32 & mask));
     }
 }
 
@@ -50,11 +49,7 @@ impl RISCVTrace for SLLI {
     ///
     /// The shift amount is masked to 5 bits on RV32 (0-31) or 6 bits on RV64 (0-63),
     /// ensuring the shift stays within valid bounds for the architecture.
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         // Determine word size based on immediate value and instruction encoding
         // For SLLI: RV32 uses 5-bit immediates (0-31), RV64 uses 6-bit immediates (0-63)
         let mask = match xlen {

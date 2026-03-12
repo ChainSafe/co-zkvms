@@ -56,11 +56,7 @@ impl RISCVTrace for SW {
     }
 
     /// Store word (32-bit) to aligned memory.    
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         match xlen {
             Xlen::Bit32 => self.inline_sequence_32(allocator),
             #[cfg(feature = "rv64")]

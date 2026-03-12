@@ -9,10 +9,9 @@ use crate::{
 };
 
 use super::{
-    add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice,
-    virtual_assert_eq::VirtualAssertEQ,
-    virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
-    virtual_move::VirtualMove, Cycle, Instruction, RISCVInstruction, RISCVTrace,
+    add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice, virtual_assert_eq::VirtualAssertEQ,
+    virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder, virtual_move::VirtualMove, Cycle,
+    Instruction, RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -38,17 +37,15 @@ impl RISCVTrace for REMU {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let mut inline_sequence = self.inline_sequence(&cpu.vr_allocator, cpu.xlen);
         if let Instruction::VirtualAdvice(instr) = &mut inline_sequence[0] {
-            instr.advice = Some(
-                if cpu.unsigned_data(cpu.x[self.operands.rs2 as usize]) == 0 {
-                    match cpu.xlen {
-                        Xlen::Bit32 => u32::MAX as u64,
-                        Xlen::Bit64 => u64::MAX,
-                    }
-                } else {
-                    cpu.unsigned_data(cpu.x[self.operands.rs1 as usize])
-                        / cpu.unsigned_data(cpu.x[self.operands.rs2 as usize])
-                } as XlenInt,
-            );
+            instr.advice = Some(if cpu.unsigned_data(cpu.x[self.operands.rs2 as usize]) == 0 {
+                match cpu.xlen {
+                    Xlen::Bit32 => u32::MAX as u64,
+                    Xlen::Bit64 => u64::MAX,
+                }
+            } else {
+                cpu.unsigned_data(cpu.x[self.operands.rs1 as usize])
+                    / cpu.unsigned_data(cpu.x[self.operands.rs2 as usize])
+            } as XlenInt);
         } else {
             panic!("Expected Advice instruction");
         }
@@ -84,11 +81,7 @@ impl RISCVTrace for REMU {
     /// Note: No overflow check needed since we work modulo the word size for remainder.
     /// The VirtualAssertValidUnsignedRemainder handles the div-by-zero case by
     /// allowing remainder == dividend when divisor == 0.
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let a0 = self.operands.rs1; // dividend
         let a1 = self.operands.rs2; // divisor
         let a2 = allocator.allocate(); // quotient from oracle

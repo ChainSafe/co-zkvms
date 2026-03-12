@@ -1,6 +1,4 @@
-use ark_serialize::{
-    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
-};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate};
 
 #[derive(Clone, Debug)]
 pub enum MaybeShared<T> {
@@ -50,12 +48,8 @@ where
 
     fn serialized_size(&self, compress: Compress) -> usize {
         match self {
-            MaybeShared::Public(inner) => {
-                (0_u8).serialized_size(compress) + inner.serialized_size(compress)
-            }
-            MaybeShared::Shared(inner) => {
-                (1_u8).serialized_size(compress) + inner.serialized_size(compress)
-            }
+            MaybeShared::Public(inner) => (0_u8).serialized_size(compress) + inner.serialized_size(compress),
+            MaybeShared::Shared(inner) => (1_u8).serialized_size(compress) + inner.serialized_size(compress),
         }
     }
 }
@@ -71,11 +65,7 @@ where
     ) -> Result<Self, SerializationError> {
         let discriminant = u8::deserialize_with_mode(&mut reader, compress, validate)?;
         let res = match discriminant {
-            0 => MaybeShared::Public(Option::<U>::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-            )?),
+            0 => MaybeShared::Public(Option::<U>::deserialize_with_mode(&mut reader, compress, validate)?),
             1 => MaybeShared::Shared(U::deserialize_with_mode(&mut reader, compress, validate)?),
             _ => Err(SerializationError::InvalidData)?,
         };

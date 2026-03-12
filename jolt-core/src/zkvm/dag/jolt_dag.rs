@@ -568,9 +568,7 @@ impl JoltDAG {
         instances
             .iter()
             .zip(batching_coefficients.iter())
-            .map(|(instance, coeff)| {
-                instance.input_claim().mul_pow_2(max_num_rounds - instance.num_rounds()) * coeff
-            })
+            .map(|(instance, coeff)| instance.input_claim().mul_pow_2(max_num_rounds - instance.num_rounds()) * coeff)
             .sum()
     }
 

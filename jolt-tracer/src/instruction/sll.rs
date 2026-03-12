@@ -7,8 +7,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 
 use super::{
-    format::format_r::FormatR, mul::MUL, virtual_pow2::VirtualPow2, Cycle, Instruction,
-    RISCVInstruction, RISCVTrace,
+    format::format_r::FormatR, mul::MUL, virtual_pow2::VirtualPow2, Cycle, Instruction, RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -26,8 +25,7 @@ impl SLL {
             Xlen::Bit64 => 0x3f,
         };
         cpu.x[self.operands.rd as usize] = cpu.sign_extend(
-            cpu.x[self.operands.rs1 as usize]
-                .wrapping_shl(cpu.x[self.operands.rs2 as usize] as u32 & mask),
+            cpu.x[self.operands.rs1 as usize].wrapping_shl(cpu.x[self.operands.rs2 as usize] as u32 & mask),
         );
     }
 }
@@ -42,11 +40,7 @@ impl RISCVTrace for SLL {
     }
 
     /// SLL shifts left by multiplying by 2^shift_amount.
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let v_pow2 = allocator.allocate();
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);

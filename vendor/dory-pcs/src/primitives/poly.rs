@@ -109,10 +109,7 @@ pub trait Polynomial<F: Field> {
 /// - Start with [1-r₀, r₀]
 /// - For each variable rᵢ, split each value v into [v*(1-rᵢ), v*rᵢ]
 pub(crate) fn multilinear_lagrange_basis<F: Field>(output: &mut [F], point: &[F]) {
-    assert!(
-        output.len() <= (1 << point.len()),
-        "Output length must be at most 2^point.len()"
-    );
+    assert!(output.len() <= (1 << point.len()), "Output length must be at most 2^point.len()");
 
     if point.is_empty() || output.is_empty() {
         output.fill(F::one());
@@ -161,11 +158,7 @@ pub(crate) fn multilinear_lagrange_basis<F: Field>(output: &mut [F], point: &[F]
 /// polynomial_evaluation(point) = L^T × M × R
 ///
 /// Splits variables between rows and columns based on sigma and nu.
-pub fn compute_left_right_vectors<F: Field>(
-    point: &[F],
-    nu: usize,
-    sigma: usize,
-) -> (Vec<F>, Vec<F>) {
+pub fn compute_left_right_vectors<F: Field>(point: &[F], nu: usize, sigma: usize) -> (Vec<F>, Vec<F>) {
     let mut left_vec = vec![F::zero(); 1 << nu];
     let mut right_vec = vec![F::zero(); 1 << sigma];
     let point_dim = point.len();

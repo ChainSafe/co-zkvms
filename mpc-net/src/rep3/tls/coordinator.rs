@@ -44,8 +44,8 @@ impl TlsCoordinatorClient {
             .next()
             .ok_or_else(|| eyre::eyre!("could not resolve address {addr}"))?;
 
-        let tcp = TcpStream::connect(socket_addr)
-            .with_context(|| format!("connecting to coordinator proxy at {addr}"))?;
+        let tcp =
+            TcpStream::connect(socket_addr).with_context(|| format!("connecting to coordinator proxy at {addr}"))?;
         tcp.set_nodelay(true)?;
 
         // Accept any server cert — the coordinator's ephemeral cert is verified
@@ -56,32 +56,24 @@ impl TlsCoordinatorClient {
             .with_no_client_auth();
 
         let server_name = ServerName::try_from("enclave.local").expect("valid static server name");
-        let tls_conn = rustls::ClientConnection::new(Arc::new(config), server_name)
-            .context("creating TLS client connection")?;
+        let tls_conn =
+            rustls::ClientConnection::new(Arc::new(config), server_name).context("creating TLS client connection")?;
         let mut stream = rustls::StreamOwned::new(tls_conn, tcp);
 
         // Read attestation document (length-prefixed)
         let mut len_buf = [0u8; 4];
-        stream
-            .read_exact(&mut len_buf)
-            .context("reading attestation doc length")?;
+        stream.read_exact(&mut len_buf).context("reading attestation doc length")?;
         let doc_len = u32::from_be_bytes(len_buf) as usize;
         if doc_len > 0 {
             let mut _doc = vec![0u8; doc_len];
-            stream
-                .read_exact(&mut _doc)
-                .context("reading attestation document")?;
+            stream.read_exact(&mut _doc).context("reading attestation document")?;
             // TODO: verify attestation document against policy
             // verify_attestation(&doc, &stream.conn.peer_certificates(), &policy)?;
         }
 
         // Send identification
-        stream
-            .write_all(&(party_id as u32).to_be_bytes())
-            .context("sending party_id")?;
-        stream
-            .write_all(&(worker_id as u32).to_be_bytes())
-            .context("sending worker_id")?;
+        stream.write_all(&(party_id as u32).to_be_bytes()).context("sending party_id")?;
+        stream.write_all(&(worker_id as u32).to_be_bytes()).context("sending worker_id")?;
         stream.flush().context("flushing identification")?;
 
         Ok(Self { stream })
@@ -124,9 +116,7 @@ impl TlsCoordinatorClient {
                 self.stream.read_exact(&mut buf)?;
                 Ok(Some(buf))
             }
-            Err(e)
-                if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut =>
-            {
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut => {
                 self.stream.sock.set_read_timeout(None)?;
                 Ok(None)
             }

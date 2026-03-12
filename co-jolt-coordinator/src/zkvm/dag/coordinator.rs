@@ -519,8 +519,7 @@ impl Rep3JoltDag {
             .map(|(coeff, opening)| *coeff * *opening)
             .sum();
         assert_eq!(
-            expected_stage5_joint_claim,
-            stage5_data.joint_claim,
+            expected_stage5_joint_claim, stage5_data.joint_claim,
             "DAG stage5 BlindFold linear relation must match the stored joint claim",
         );
         let extra_witness = ExtraConstraintWitness {

@@ -7,23 +7,21 @@ use crate::protocols::rep3::IoResult;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
 use num_traits::{One, Zero};
 use rand::{
-    distributions::{Distribution, Standard},
     Rng,
+    distributions::{Distribution, Standard},
 };
 use serde::{Deserialize, Serialize};
 use std::{
     iter::Sum,
     mem::ManuallyDrop,
     ops::{
-        Add, AddAssign, BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Mul,
-        MulAssign, Neg, Not, Shl, ShlAssign, Shr, ShrAssign, Sub, SubAssign,
+        Add, AddAssign, BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Mul, MulAssign, Neg, Not, Shl,
+        ShlAssign, Shr, ShrAssign, Sub, SubAssign,
     },
 };
 
 /// The RingElement type is a wrapper for all datatypes implementing the [`IntRing2k`] trait to explicitly allow wrapping arithmetic opearations.
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, PartialOrd, Eq, Ord, Hash,
-)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, PartialOrd, Eq, Ord, Hash)]
 #[serde(bound = "")]
 #[repr(transparent)]
 pub struct RingElement<T: IntRing2k + std::fmt::Display>(pub T);
@@ -330,11 +328,7 @@ impl<T: IntRing2k> Shl<usize> for RingElement<T> {
     type Output = Self;
 
     fn shl(self, rhs: usize) -> Self::Output {
-        if rhs >= T::K {
-            RingElement(T::zero())
-        } else {
-            RingElement(self.0 << rhs)
-        }
+        if rhs >= T::K { RingElement(T::zero()) } else { RingElement(self.0 << rhs) }
     }
 }
 
@@ -348,11 +342,7 @@ impl<T: IntRing2k> Shr<usize> for RingElement<T> {
     type Output = Self;
 
     fn shr(self, rhs: usize) -> Self::Output {
-        if rhs >= T::K {
-            RingElement(T::zero())
-        } else {
-            RingElement(self.0 >> rhs)
-        }
+        if rhs >= T::K { RingElement(T::zero()) } else { RingElement(self.0 >> rhs) }
     }
 }
 
@@ -381,9 +371,7 @@ impl<T: IntRing2k> Valid for RingElement<T> {
         Ok(())
     }
 
-    fn batch_check<'a>(
-        _batch: impl Iterator<Item = &'a Self> + Send,
-    ) -> Result<(), ark_serialize::SerializationError>
+    fn batch_check<'a>(_batch: impl Iterator<Item = &'a Self> + Send) -> Result<(), ark_serialize::SerializationError>
     where
         Self: 'a,
     {

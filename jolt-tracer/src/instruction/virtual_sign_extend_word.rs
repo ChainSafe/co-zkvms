@@ -19,9 +19,7 @@ impl VirtualSignExtendWord {
     fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualSignExtendWord as RISCVInstruction>::RAMAccess) {
         match cpu.xlen {
             Xlen::Bit32 => panic!("VirtualSignExtend is not supported for 32-bit mode"),
-            Xlen::Bit64 => {
-                cpu.x[self.operands.rd as usize] = (cpu.x[self.operands.rs1 as usize] << 32) >> 32
-            }
+            Xlen::Bit64 => cpu.x[self.operands.rd as usize] = (cpu.x[self.operands.rs1 as usize] << 32) >> 32,
         }
     }
 }

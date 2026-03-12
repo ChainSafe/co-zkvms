@@ -20,10 +20,8 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<JALR> {
     ) -> eyre::Result<()> {
         steps.iter().zip(out).for_each(|(step, out)| {
             let (l, r) = Rep3LookupQuery::<XLEN>::to_instruction_inputs(*step);
-            let result: Rep3RingShare<XlenInt> = downcast(
-                l.as_arithmetic_or_trivial::<u64>(io_ctx.id)
-                    + r.as_arithmetic_or_trivial::<u64>(io_ctx.id),
-            );
+            let result: Rep3RingShare<XlenInt> =
+                downcast(l.as_arithmetic_or_trivial::<u64>(io_ctx.id) + r.as_arithmetic_or_trivial::<u64>(io_ctx.id));
             *out = FutureRep3Ring::cast_to_field(result);
         });
         Ok(())

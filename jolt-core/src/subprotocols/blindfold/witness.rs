@@ -28,19 +28,11 @@ impl<F: JoltField> RoundWitness<F> {
     pub fn new(coeffs: Vec<F>, challenge: F) -> Self {
         // Compute claimed_sum from coefficients: 2*c0 + c1 + c2 + ...
         let claimed_sum = F::from_u64(2) * coeffs[0] + coeffs[1..].iter().copied().sum::<F>();
-        Self {
-            coeffs,
-            challenge,
-            claimed_sum,
-        }
+        Self { coeffs, challenge, claimed_sum }
     }
 
     pub fn with_claimed_sum(coeffs: Vec<F>, challenge: F, claimed_sum: F) -> Self {
-        Self {
-            coeffs,
-            challenge,
-            claimed_sum,
-        }
+        Self { coeffs, challenge, claimed_sum }
     }
 
     /// Evaluate the polynomial at a point using Horner's method
@@ -66,33 +58,15 @@ pub struct StageWitness<F> {
 
 impl<F: JoltField> StageWitness<F> {
     pub fn new(rounds: Vec<RoundWitness<F>>) -> Self {
-        Self {
-            rounds,
-            final_output: None,
-            initial_input: None,
-        }
+        Self { rounds, final_output: None, initial_input: None }
     }
 
-    pub fn with_final_output(
-        rounds: Vec<RoundWitness<F>>,
-        final_output: FinalOutputWitness<F>,
-    ) -> Self {
-        Self {
-            rounds,
-            final_output: Some(final_output),
-            initial_input: None,
-        }
+    pub fn with_final_output(rounds: Vec<RoundWitness<F>>, final_output: FinalOutputWitness<F>) -> Self {
+        Self { rounds, final_output: Some(final_output), initial_input: None }
     }
 
-    pub fn with_initial_input(
-        rounds: Vec<RoundWitness<F>>,
-        initial_input: FinalOutputWitness<F>,
-    ) -> Self {
-        Self {
-            rounds,
-            final_output: None,
-            initial_input: Some(initial_input),
-        }
+    pub fn with_initial_input(rounds: Vec<RoundWitness<F>>, initial_input: FinalOutputWitness<F>) -> Self {
+        Self { rounds, final_output: None, initial_input: Some(initial_input) }
     }
 
     pub fn with_both(
@@ -100,11 +74,7 @@ impl<F: JoltField> StageWitness<F> {
         initial_input: FinalOutputWitness<F>,
         final_output: FinalOutputWitness<F>,
     ) -> Self {
-        Self {
-            rounds,
-            final_output: Some(final_output),
-            initial_input: Some(initial_input),
-        }
+        Self { rounds, final_output: Some(final_output), initial_input: Some(initial_input) }
     }
 }
 
@@ -112,15 +82,9 @@ impl<F: JoltField> StageWitness<F> {
 #[derive(Clone, Debug)]
 pub enum FinalOutputWitness<F> {
     /// Simple linear: final_claim = Σⱼ αⱼ · yⱼ
-    Linear {
-        batching_coefficients: Vec<F>,
-        evaluations: Vec<F>,
-    },
+    Linear { batching_coefficients: Vec<F>, evaluations: Vec<F> },
     /// General sum-of-products constraint
-    General {
-        challenge_values: Vec<F>,
-        opening_values: Vec<F>,
-    },
+    General { challenge_values: Vec<F>, opening_values: Vec<F> },
 }
 
 /// Witness data for extra constraints appended after all stages.
@@ -139,17 +103,11 @@ pub struct ExtraConstraintWitness<F> {
 impl<F: JoltField> FinalOutputWitness<F> {
     pub fn linear(batching_coefficients: Vec<F>, evaluations: Vec<F>) -> Self {
         debug_assert_eq!(batching_coefficients.len(), evaluations.len());
-        Self::Linear {
-            batching_coefficients,
-            evaluations,
-        }
+        Self::Linear { batching_coefficients, evaluations }
     }
 
     pub fn general(challenge_values: Vec<F>, opening_values: Vec<F>) -> Self {
-        Self::General {
-            challenge_values,
-            opening_values,
-        }
+        Self::General { challenge_values, opening_values }
     }
 }
 
@@ -181,12 +139,7 @@ impl<F: JoltField> BlindFoldWitness<F> {
 
     #[cfg(test)]
     pub fn with_multiple_claims(initial_claims: Vec<F>, stages: Vec<StageWitness<F>>) -> Self {
-        Self {
-            initial_claims,
-            stages,
-            extra_constraints: Vec::new(),
-            output_claims_values: Vec::new(),
-        }
+        Self { initial_claims, stages, extra_constraints: Vec::new(), output_claims_values: Vec::new() }
     }
 
     /// Create a new BlindFold witness with extra constraints appended after all stages.
@@ -195,12 +148,7 @@ impl<F: JoltField> BlindFoldWitness<F> {
         stages: Vec<StageWitness<F>>,
         extra_constraints: Vec<ExtraConstraintWitness<F>>,
     ) -> Self {
-        Self {
-            initial_claims,
-            stages,
-            extra_constraints,
-            output_claims_values: Vec::new(),
-        }
+        Self { initial_claims, stages, extra_constraints, output_claims_values: Vec::new() }
     }
 
     /// Create a new BlindFold witness with extra constraints and output claims.
@@ -210,12 +158,7 @@ impl<F: JoltField> BlindFoldWitness<F> {
         extra_constraints: Vec<ExtraConstraintWitness<F>>,
         output_claims_values: Vec<F>,
     ) -> Self {
-        Self {
-            initial_claims,
-            stages,
-            extra_constraints,
-            output_claims_values,
-        }
+        Self { initial_claims, stages, extra_constraints, output_claims_values }
     }
 
     /// Assign the witness to the Z vector for R1CS satisfaction checking
@@ -253,8 +196,7 @@ impl<F: JoltField> BlindFoldWitness<F> {
 
         // Pre-mark openings that live in the OC region so ConstraintVars steps
         // don't allocate duplicate noncoeff slots.
-        let mut assigned_openings: HashSet<OpeningId> =
-            r1cs.output_claims_opening_ids.iter().copied().collect();
+        let mut assigned_openings: HashSet<OpeningId> = r1cs.output_claims_opening_ids.iter().copied().collect();
 
         for step in &layout {
             match step {
@@ -263,48 +205,35 @@ impl<F: JoltField> BlindFoldWitness<F> {
                     z[noncoeff_idx] = self.initial_claims[*chain_idx];
                     noncoeff_idx += 1;
                 }
-                LayoutStep::ConstraintVars {
-                    constraint,
-                    new_opening_count,
-                    aux_var_count,
-                    kind,
-                    stage_idx,
-                } => {
+                LayoutStep::ConstraintVars { constraint, new_opening_count, aux_var_count, kind, stage_idx } => {
                     let witness_data = match kind {
-                        ConstraintKind::InitialInput => self.stages[*stage_idx]
-                            .initial_input
-                            .as_ref()
-                            .and_then(|w| match w {
-                                FinalOutputWitness::General {
-                                    opening_values,
-                                    challenge_values,
-                                } => Some((opening_values.as_slice(), challenge_values.as_slice())),
+                        ConstraintKind::InitialInput => {
+                            self.stages[*stage_idx].initial_input.as_ref().and_then(|w| match w {
+                                FinalOutputWitness::General { opening_values, challenge_values } => {
+                                    Some((opening_values.as_slice(), challenge_values.as_slice()))
+                                }
                                 _ => None,
-                            }),
-                        ConstraintKind::FinalOutput => self.stages[*stage_idx]
-                            .final_output
-                            .as_ref()
-                            .and_then(|w| match w {
-                                FinalOutputWitness::General {
-                                    opening_values,
-                                    challenge_values,
-                                } => Some((opening_values.as_slice(), challenge_values.as_slice())),
+                            })
+                        }
+                        ConstraintKind::FinalOutput => {
+                            self.stages[*stage_idx].final_output.as_ref().and_then(|w| match w {
+                                FinalOutputWitness::General { opening_values, challenge_values } => {
+                                    Some((opening_values.as_slice(), challenge_values.as_slice()))
+                                }
                                 _ => None,
-                            }),
+                            })
+                        }
                     };
 
                     if let Some((opening_values, challenge_values)) = witness_data {
-                        for (opening_id, val) in
-                            constraint.required_openings.iter().zip(opening_values)
-                        {
+                        for (opening_id, val) in constraint.required_openings.iter().zip(opening_values) {
                             if assigned_openings.insert(*opening_id) {
                                 z[noncoeff_idx] = *val;
                                 noncoeff_idx += 1;
                             }
                         }
 
-                        let aux_values =
-                            Self::compute_aux_vars(constraint, opening_values, challenge_values);
+                        let aux_values = Self::compute_aux_vars(constraint, opening_values, challenge_values);
                         debug_assert_eq!(aux_values.len(), *aux_var_count);
                         for val in aux_values {
                             z[noncoeff_idx] = val;
@@ -314,12 +243,7 @@ impl<F: JoltField> BlindFoldWitness<F> {
                         noncoeff_idx += new_opening_count + aux_var_count;
                     }
                 }
-                LayoutStep::CoeffRow {
-                    round_idx,
-                    num_coeffs,
-                    stage_idx,
-                    round_in_stage,
-                } => {
+                LayoutStep::CoeffRow { round_idx, num_coeffs, stage_idx, round_in_stage } => {
                     let round_witness = &self.stages[*stage_idx].rounds[*round_in_stage];
                     assert_eq!(round_witness.coeffs.len(), *num_coeffs);
 
@@ -327,19 +251,13 @@ impl<F: JoltField> BlindFoldWitness<F> {
                         z[witness_start + round_idx * hyrax_C + k] = *coeff;
                     }
                 }
-                LayoutStep::NextClaim {
-                    stage_idx,
-                    round_in_stage,
-                } => {
+                LayoutStep::NextClaim { stage_idx, round_in_stage } => {
                     let round_witness = &self.stages[*stage_idx].rounds[*round_in_stage];
                     let next_claim = round_witness.evaluate(round_witness.challenge);
                     z[noncoeff_idx] = next_claim;
                     noncoeff_idx += 1;
                 }
-                LayoutStep::LinearFinalOutput {
-                    num_evaluations,
-                    stage_idx,
-                } => {
+                LayoutStep::LinearFinalOutput { num_evaluations, stage_idx } => {
                     let fw = self.stages[*stage_idx]
                         .final_output
                         .as_ref()
@@ -358,18 +276,9 @@ impl<F: JoltField> BlindFoldWitness<F> {
                 LayoutStep::PlaceholderVars { num_vars } => {
                     noncoeff_idx += num_vars;
                 }
-                LayoutStep::ExtraConstraintVars {
-                    constraint,
-                    new_opening_count,
-                    aux_var_count,
-                    extra_idx,
-                } => {
+                LayoutStep::ExtraConstraintVars { constraint, new_opening_count, aux_var_count, extra_idx } => {
                     if let Some(witness) = self.extra_constraints.get(*extra_idx) {
-                        for (opening_id, val) in constraint
-                            .required_openings
-                            .iter()
-                            .zip(&witness.opening_values)
-                        {
+                        for (opening_id, val) in constraint.required_openings.iter().zip(&witness.opening_values) {
                             if assigned_openings.insert(*opening_id) {
                                 z[noncoeff_idx] = *val;
                                 noncoeff_idx += 1;
@@ -379,11 +288,8 @@ impl<F: JoltField> BlindFoldWitness<F> {
                         z[noncoeff_idx] = witness.output_value;
                         noncoeff_idx += 1;
 
-                        let aux_values = Self::compute_aux_vars(
-                            constraint,
-                            &witness.opening_values,
-                            &witness.challenge_values,
-                        );
+                        let aux_values =
+                            Self::compute_aux_vars(constraint, &witness.opening_values, &witness.challenge_values);
                         debug_assert_eq!(aux_values.len(), *aux_var_count);
                         for val in aux_values {
                             z[noncoeff_idx] = val;
@@ -459,11 +365,7 @@ impl<F: JoltField> BlindFoldWitness<F> {
     /// - No factors: 1 aux var (coeff * 1)
     /// - Single factor: 1 aux var (coeff * factor)
     /// - Multiple factors: (n-1) aux vars for chain multiplication + 1 for coeff*product
-    fn compute_aux_vars(
-        constraint: &OutputClaimConstraint,
-        opening_values: &[F],
-        challenge_values: &[F],
-    ) -> Vec<F> {
+    fn compute_aux_vars(constraint: &OutputClaimConstraint, opening_values: &[F], challenge_values: &[F]) -> Vec<F> {
         let mut visitor = WitnessAuxVisitor::new(constraint, opening_values, challenge_values);
         let mut aux_vars = Vec::new();
         constraint.visit(&mut visitor, &mut aux_vars);
@@ -479,23 +381,9 @@ struct WitnessAuxVisitor<'a, F> {
 }
 
 impl<'a, F: JoltField> WitnessAuxVisitor<'a, F> {
-    fn new(
-        constraint: &OutputClaimConstraint,
-        opening_values: &'a [F],
-        challenge_values: &'a [F],
-    ) -> Self {
-        let opening_map = constraint
-            .required_openings
-            .iter()
-            .enumerate()
-            .map(|(i, id)| (*id, i))
-            .collect();
-        Self {
-            opening_map,
-            opening_values,
-            challenge_values,
-            current_product: F::zero(),
-        }
+    fn new(constraint: &OutputClaimConstraint, opening_values: &'a [F], challenge_values: &'a [F]) -> Self {
+        let opening_map = constraint.required_openings.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+        Self { opening_map, opening_values, challenge_values, current_product: F::zero() }
     }
 }
 
@@ -550,29 +438,12 @@ mod tests {
 
         let configs = [StageConfig::new(2, 3)];
 
-        let round1 = RoundWitness::new(
-            vec![
-                F::from_u64(40),
-                F::from_u64(5),
-                F::from_u64(10),
-                F::from_u64(5),
-            ],
-            F::from_u64(3),
-        );
-        let round2 = RoundWitness::new(
-            vec![
-                F::from_u64(135),
-                F::from_u64(5),
-                F::from_u64(3),
-                F::from_u64(2),
-            ],
-            F::from_u64(5),
-        );
+        let round1 =
+            RoundWitness::new(vec![F::from_u64(40), F::from_u64(5), F::from_u64(10), F::from_u64(5)], F::from_u64(3));
+        let round2 =
+            RoundWitness::new(vec![F::from_u64(135), F::from_u64(5), F::from_u64(3), F::from_u64(2)], F::from_u64(5));
 
-        let witness = BlindFoldWitness::new(
-            F::from_u64(100),
-            vec![StageWitness::new(vec![round1, round2])],
-        );
+        let witness = BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round1, round2])]);
 
         let baked = BakedPublicInputs::from_witness(&witness, &configs);
         let builder = VerifierR1CSBuilder::<F>::new(&configs, &baked);
@@ -591,12 +462,7 @@ mod tests {
         let challenges = vec![vec![F::from_u64(3)]];
         let configs = [StageConfig::new(1, 3)];
 
-        let witness = BlindFoldWitness::from_compressed_polys(
-            initial_claim,
-            &configs,
-            &compressed_coeffs,
-            &challenges,
-        );
+        let witness = BlindFoldWitness::from_compressed_polys(initial_claim, &configs, &compressed_coeffs, &challenges);
 
         assert_eq!(witness.stages[0].rounds[0].coeffs[0], F::from_u64(40));
         assert_eq!(witness.stages[0].rounds[0].coeffs[1], F::from_u64(5));

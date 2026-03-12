@@ -26,11 +26,7 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for ReadRafSumche
         self.input_claim()
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &Rep3OpeningAccumulator<F>,
-        r: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &Rep3OpeningAccumulator<F>, r: &[F::Challenge]) -> F {
         // Mirrors vanilla ReadRafSumcheck::expected_output_claim.
         let log_K = self.log_K();
         let d = self.d();
@@ -42,17 +38,13 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for ReadRafSumche
         // Replicate get_r_cycle_verif from vanilla using Rep3OpeningAccumulator.
         let reg_count_bits = (REGISTER_COUNT as usize).ilog2() as usize;
 
-        let (r_cycle_1, _) = accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
-        let (r_rs1ra, _) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::Rs1Ra,
-            SumcheckId::RegistersReadWriteChecking,
-        );
+        let (r_cycle_1, _) =
+            accumulator.get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
+        let (r_rs1ra, _) = accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Ra, SumcheckId::RegistersReadWriteChecking);
         let (_, r_cycle_2) = r_rs1ra.split_at(reg_count_bits);
-        let (r_rdwa, _) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RdWa,
-            SumcheckId::RegistersValEvaluation,
-        );
+        let (r_rdwa, _) =
+            accumulator.get_virtual_polynomial_opening(VirtualPolynomial::RdWa, SumcheckId::RegistersValEvaluation);
         let (_, r_cycle_3) = r_rdwa.split_at(reg_count_bits);
 
         let r_cycles = [r_cycle_1.r, r_cycle_2.r, r_cycle_3.r];
@@ -72,10 +64,7 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for ReadRafSumche
         let ra_claims: Vec<F> = (0..d)
             .map(|i| {
                 accumulator
-                    .get_committed_polynomial_opening(
-                        CommittedPolynomial::BytecodeRa(i),
-                        SumcheckId::BytecodeReadRaf,
-                    )
+                    .get_committed_polynomial_opening(CommittedPolynomial::BytecodeRa(i), SumcheckId::BytecodeReadRaf)
                     .1
             })
             .collect();
@@ -95,10 +84,7 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for ReadRafSumche
         ra_claims.iter().fold(val, |running, &ra| running * ra)
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         self.normalize_opening_point(opening_point)
     }
 
@@ -134,10 +120,7 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for ReadRafSumche
     }
 
     #[cfg(feature = "zk")]
-    fn input_constraint_challenge_values(
-        &self,
-        _accumulator: &Rep3OpeningAccumulator<F>,
-    ) -> Vec<F> {
+    fn input_constraint_challenge_values(&self, _accumulator: &Rep3OpeningAccumulator<F>) -> Vec<F> {
         self.blindfold_input_challenge_values()
     }
 }

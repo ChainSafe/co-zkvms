@@ -25,12 +25,11 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAssertVa
         let rem_lt_div = rep3_ring::arithmetic::lt_many(&remainders, &divisors, io_ctx)?;
         let rem_is_zero_u64: Vec<_> = rem_is_zero.iter().map(|b| bit_to_ring64(*b)).collect();
         let rem_lt_div_u64: Vec<_> = rem_lt_div.iter().map(|b| bit_to_ring64(*b)).collect();
-        rep3_ring::binary::or_many(&rem_is_zero_u64, &rem_lt_div_u64, io_ctx)?
-            .into_iter()
-            .zip(out)
-            .for_each(|(z, out)| {
+        rep3_ring::binary::or_many(&rem_is_zero_u64, &rem_lt_div_u64, io_ctx)?.into_iter().zip(out).for_each(
+            |(z, out)| {
                 *out = FutureRep3Ring::cast_to_field_b2a(downcast(z));
-            });
+            },
+        );
         Ok(())
     }
 }

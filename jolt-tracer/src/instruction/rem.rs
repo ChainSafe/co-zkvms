@@ -14,9 +14,9 @@ use crate::{
 };
 
 use super::{
-    add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice,
-    virtual_assert_eq::VirtualAssertEQ, virtual_change_divisor::VirtualChangeDivisor,
-    virtual_move::VirtualMove, Cycle, Instruction, RISCVInstruction, RISCVTrace,
+    add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice, virtual_assert_eq::VirtualAssertEQ,
+    virtual_change_divisor::VirtualChangeDivisor, virtual_move::VirtualMove, Cycle, Instruction, RISCVInstruction,
+    RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -36,9 +36,8 @@ impl REM {
         } else if dividend == cpu.most_negative() && divisor == -1 {
             cpu.x[self.operands.rd as usize] = 0;
         } else {
-            cpu.x[self.operands.rd as usize] = cpu.sign_extend(
-                cpu.x[self.operands.rs1 as usize].wrapping_rem(cpu.x[self.operands.rs2 as usize]),
-            );
+            cpu.x[self.operands.rd as usize] =
+                cpu.sign_extend(cpu.x[self.operands.rs1 as usize].wrapping_rem(cpu.x[self.operands.rs2 as usize]));
         }
     }
 }
@@ -107,11 +106,7 @@ impl RISCVTrace for REM {
     ///
     /// Note: Unlike DIV, we don't check for multiplication overflow since
     /// remainder only cares about the value modulo the word size.
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let a0 = self.operands.rs1; // dividend
         let a1 = self.operands.rs2; // divisor
         let a2 = allocator.allocate(); // quotient from oracle

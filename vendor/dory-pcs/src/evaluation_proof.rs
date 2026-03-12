@@ -98,18 +98,12 @@ where
     Mo: Mode,
 {
     if point.len() != nu + sigma {
-        return Err(DoryError::InvalidPointDimension {
-            expected: nu + sigma,
-            actual: point.len(),
-        });
+        return Err(DoryError::InvalidPointDimension { expected: nu + sigma, actual: point.len() });
     }
 
     // Validate matrix dimensions: nu must be ≤ sigma (rows ≤ columns)
     if nu > sigma {
-        return Err(DoryError::InvalidSize {
-            expected: sigma,
-            actual: nu,
-        });
+        return Err(DoryError::InvalidSize { expected: sigma, actual: nu });
     }
 
     let (row_commitments, commit_blind) = match row_commitments {
@@ -129,8 +123,7 @@ where
     }
 
     // Sample VMV blinds (zero in Transparent, random in ZK)
-    let (r_c, r_d2, r_e1, r_e2): (F, F, F, F) =
-        (Mo::sample(), Mo::sample(), Mo::sample(), Mo::sample());
+    let (r_c, r_d2, r_e1, r_e2): (F, F, F, F) = (Mo::sample(), Mo::sample(), Mo::sample(), Mo::sample());
 
     let g2_fin = &setup.g2_vec[0];
 
@@ -139,11 +132,7 @@ where
     let c = Mo::mask(E::pair(&t_vec_v, g2_fin), &setup.ht, &r_c);
 
     // D₂ = e(⟨Γ₁[sigma], v_vec⟩, Γ2,fin) + r_d2·HT
-    let d2 = Mo::mask(
-        E::pair(&M1::msm(&setup.g1_vec[..1 << sigma], &v_vec), g2_fin),
-        &setup.ht,
-        &r_d2,
-    );
+    let d2 = Mo::mask(E::pair(&M1::msm(&setup.g1_vec[..1 << sigma], &v_vec), g2_fin), &setup.ht, &r_d2);
 
     // E₁ = ⟨row_commitments, left_vec⟩ + r_e1·H₁
     let e1 = Mo::mask(M1::msm(&row_commitments, &left_vec), &setup.h1, &r_e1);
@@ -225,11 +214,7 @@ where
     let gamma = transcript.challenge_scalar(b"gamma");
 
     #[cfg(feature = "zk")]
-    let scalar_product_proof = if Mo::BLINDING {
-        Some(prover_state.scalar_product_proof(transcript))
-    } else {
-        None
-    };
+    let scalar_product_proof = if Mo::BLINDING { Some(prover_state.scalar_product_proof(transcript)) } else { None };
 
     let final_message = prover_state.compute_final_message::<M1, M2>(&gamma);
 
@@ -316,10 +301,7 @@ where
     let sigma = proof.sigma;
 
     if point.len() != nu + sigma {
-        return Err(DoryError::InvalidPointDimension {
-            expected: nu + sigma,
-            actual: point.len(),
-        });
+        return Err(DoryError::InvalidPointDimension { expected: nu + sigma, actual: point.len() });
     }
 
     let vmv_message = &proof.vmv_message;
@@ -336,13 +318,7 @@ where
             match (&proof.sigma1_proof, &proof.sigma2_proof) {
                 (Some(s1), Some(s2)) => {
                     verify_sigma1_proof::<E, T>(pe2, yc, s1, &setup, transcript)?;
-                    verify_sigma2_proof::<E, T>(
-                        &vmv_message.e1,
-                        &vmv_message.d2,
-                        s2,
-                        &setup,
-                        transcript,
-                    )?;
+                    verify_sigma2_proof::<E, T>(&vmv_message.e1, &vmv_message.d2, s2, &setup, transcript)?;
                 }
                 _ => return Err(DoryError::InvalidProof),
             }
@@ -360,9 +336,7 @@ where
 
     // Bounds check: reject proofs with mismatched message counts or that exceed setup capacity.
     let max_rounds = setup.max_log_n / 2;
-    if num_rounds > max_rounds
-        || proof.first_messages.len() != num_rounds
-        || proof.second_messages.len() != num_rounds
+    if num_rounds > max_rounds || proof.first_messages.len() != num_rounds || proof.second_messages.len() != num_rounds
     {
         return Err(DoryError::InvalidProof);
     }
@@ -419,12 +393,9 @@ where
     #[cfg(feature = "zk")]
     let zk_data = if is_zk {
         if let Some(ref sp) = proof.scalar_product_proof {
-            for (l, v) in [
-                (b"sigma_p1" as &[u8], &sp.p1),
-                (b"sigma_p2", &sp.p2),
-                (b"sigma_q", &sp.q),
-                (b"sigma_r", &sp.r),
-            ] {
+            for (l, v) in
+                [(b"sigma_p1" as &[u8], &sp.p1), (b"sigma_p2", &sp.p2), (b"sigma_q", &sp.q), (b"sigma_r", &sp.r)]
+            {
                 transcript.append_serde(l, v);
             }
             let c = transcript.challenge_scalar(b"sigma_c");

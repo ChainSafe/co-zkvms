@@ -129,12 +129,7 @@ impl<F: JoltField> Rep3RLCPolynomial<F> {
 
     pub fn get_num_vars(&self) -> usize {
         let dense_num_vars = self.dense_rlc.len().next_power_of_two().trailing_zeros() as usize;
-        let one_hot_num_vars = self
-            .one_hot_rlc
-            .iter()
-            .map(|(_, poly)| poly.get_num_vars())
-            .max()
-            .unwrap_or(0);
+        let one_hot_num_vars = self.one_hot_rlc.iter().map(|(_, poly)| poly.get_num_vars()).max().unwrap_or(0);
         dense_num_vars.max(one_hot_num_vars)
     }
 
@@ -235,14 +230,17 @@ impl<F: JoltField> Rep3RLCPolynomial<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::SeedableRng;
-    use rand_chacha::ChaCha12Rng;
     use ark_std::UniformRand;
     use ark_std::Zero;
     use jolt_core::ark_bn254::{Fr, G1Affine, G1Projective};
     use jolt_core::poly::dense_mlpoly::DensePolynomial;
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha12Rng;
 
-    fn share_poly_rep3<F: JoltField>(coeffs: &[F], rng: &mut (impl rand::Rng + rand::CryptoRng)) -> [Vec<Rep3PrimeFieldShare<F>>; 3] {
+    fn share_poly_rep3<F: JoltField>(
+        coeffs: &[F],
+        rng: &mut (impl rand::Rng + rand::CryptoRng),
+    ) -> [Vec<Rep3PrimeFieldShare<F>>; 3] {
         let mut party_coeffs: [Vec<Rep3PrimeFieldShare<F>>; 3] =
             std::array::from_fn(|_| Vec::with_capacity(coeffs.len()));
 

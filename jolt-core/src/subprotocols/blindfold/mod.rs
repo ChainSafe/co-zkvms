@@ -25,19 +25,14 @@ pub use folding::{compute_cross_term, sample_random_satisfying_pair};
 pub use output_constraint::{
     InputClaimConstraint, OutputClaimConstraint, ProductTerm, SumOfProductsVisitor, ValueSource,
 };
-pub use protocol::{
-    BlindFoldProof, BlindFoldProver, BlindFoldVerifier, BlindFoldVerifierInput,
-    BlindFoldVerifyError,
-};
+pub use protocol::{BlindFoldProof, BlindFoldProver, BlindFoldVerifier, BlindFoldVerifierInput, BlindFoldVerifyError};
 pub use r1cs::{SparseR1CSMatrix, VerifierR1CS, VerifierR1CSBuilder};
 pub use relaxed_r1cs::{RelaxedR1CSInstance, RelaxedR1CSWitness};
 pub use spartan::{
-    compute_L_w_at_ry, BlindFoldInnerSumcheckProver, BlindFoldSpartanParams,
-    BlindFoldSpartanProver, BlindFoldSpartanVerifier, SpartanFinalClaims,
+    compute_L_w_at_ry, BlindFoldInnerSumcheckProver, BlindFoldSpartanParams, BlindFoldSpartanProver,
+    BlindFoldSpartanVerifier, SpartanFinalClaims,
 };
-pub use witness::{
-    BlindFoldWitness, ExtraConstraintWitness, FinalOutputWitness, RoundWitness, StageWitness,
-};
+pub use witness::{BlindFoldWitness, ExtraConstraintWitness, FinalOutputWitness, RoundWitness, StageWitness};
 
 use crate::curve::JoltCurve;
 use crate::field::JoltField;
@@ -112,11 +107,7 @@ pub struct BlindFoldAccumulator<F: JoltField, C: JoltCurve> {
 
 impl<F: JoltField, C: JoltCurve> BlindFoldAccumulator<F, C> {
     pub fn new() -> Self {
-        Self {
-            stage_data: Vec::new(),
-            uniskip_data: Vec::new(),
-            opening_proof_data: None,
-        }
+        Self { stage_data: Vec::new(), uniskip_data: Vec::new(), opening_proof_data: None }
     }
 
     pub fn push_stage_data(&mut self, data: ZkStageData<F, C>) {
@@ -140,9 +131,7 @@ impl<F: JoltField, C: JoltCurve> BlindFoldAccumulator<F, C> {
     }
 
     pub fn take_opening_proof_data(&mut self) -> OpeningProofData<F> {
-        self.opening_proof_data
-            .take()
-            .expect("opening_proof_data must be set before prove_blindfold")
+        self.opening_proof_data.take().expect("opening_proof_data must be set before prove_blindfold")
     }
 }
 
@@ -172,10 +161,7 @@ pub struct BakedPublicInputs<F> {
 impl<F: JoltField> BakedPublicInputs<F> {
     /// Build baked public inputs from a witness and its stage configs.
     /// Extracts challenges, initial claims, batching coefficients, and constraint challenges.
-    pub(crate) fn from_witness(
-        witness: &witness::BlindFoldWitness<F>,
-        stage_configs: &[StageConfig],
-    ) -> Self {
+    pub(crate) fn from_witness(witness: &witness::BlindFoldWitness<F>, stage_configs: &[StageConfig]) -> Self {
         let mut challenges = Vec::new();
         for stage in &witness.stages {
             for round in &stage.rounds {
@@ -191,26 +177,18 @@ impl<F: JoltField> BakedPublicInputs<F> {
             let config = &stage_configs[stage_idx];
 
             if config.initial_input.is_some() {
-                if let Some(witness::FinalOutputWitness::General {
-                    challenge_values, ..
-                }) = &stage.initial_input
-                {
+                if let Some(witness::FinalOutputWitness::General { challenge_values, .. }) = &stage.initial_input {
                     input_constraint_challenges.extend_from_slice(challenge_values);
                 }
             }
 
             if let Some(ref fout) = config.final_output {
                 if fout.constraint.is_some() {
-                    if let Some(witness::FinalOutputWitness::General {
-                        challenge_values, ..
-                    }) = &stage.final_output
-                    {
+                    if let Some(witness::FinalOutputWitness::General { challenge_values, .. }) = &stage.final_output {
                         output_constraint_challenges.extend_from_slice(challenge_values);
                     }
-                } else if let Some(witness::FinalOutputWitness::Linear {
-                    batching_coefficients: coeffs,
-                    ..
-                }) = &stage.final_output
+                } else if let Some(witness::FinalOutputWitness::Linear { batching_coefficients: coeffs, .. }) =
+                    &stage.final_output
                 {
                     batching_coefficients.extend_from_slice(coeffs);
                 }
@@ -300,28 +278,13 @@ pub fn compute_hyrax_params(
     output_claims_rows: usize,
 ) -> HyraxParams {
     let total_rounds: usize = stage_configs.iter().map(|s| s.num_rounds).sum();
-    let max_coeffs = stage_configs
-        .iter()
-        .map(|c| c.poly_degree + 1)
-        .max()
-        .unwrap_or(1);
+    let max_coeffs = stage_configs.iter().map(|c| c.poly_degree + 1).max().unwrap_or(1);
     let C = max_coeffs.next_power_of_two();
-    let R_coeff = if total_rounds == 0 {
-        1
-    } else {
-        total_rounds.next_power_of_two()
-    };
+    let R_coeff = if total_rounds == 0 { 1 } else { total_rounds.next_power_of_two() };
     let regular_noncoeff_rows = noncoeff_count.div_ceil(C);
     let R_prime = (R_coeff + output_claims_rows + regular_noncoeff_rows).next_power_of_two();
 
-    HyraxParams {
-        C,
-        R_coeff,
-        R_prime,
-        noncoeff_count,
-        total_rounds,
-        output_claims_rows,
-    }
+    HyraxParams { C, R_coeff, R_prime, noncoeff_count, total_rounds, output_claims_rows }
 }
 
 /// Pedersen generator count for BlindFold R1CS.
@@ -353,31 +316,19 @@ pub struct ClaimBindingConfig {
 
 impl ClaimBindingConfig {
     pub fn new(num_evaluations: usize) -> Self {
-        Self {
-            num_evaluations,
-            constraint: None,
-            exact_num_witness_vars: None,
-        }
+        Self { num_evaluations, constraint: None, exact_num_witness_vars: None }
     }
 
     /// Create a final output config with a general sum-of-products constraint.
     pub fn with_constraint(constraint: OutputClaimConstraint) -> Self {
         let num_evaluations = constraint.required_openings.len();
-        Self {
-            num_evaluations,
-            constraint: Some(constraint),
-            exact_num_witness_vars: None,
-        }
+        Self { num_evaluations, constraint: Some(constraint), exact_num_witness_vars: None }
     }
 
     /// Create a verifier-only config that allocates exactly the specified number of witness variables.
     /// Used by verifier to match prover's R1CS structure.
     pub fn verifier_placeholder(num_witness_vars: usize) -> Self {
-        Self {
-            num_evaluations: 0,
-            constraint: None,
-            exact_num_witness_vars: Some(num_witness_vars),
-        }
+        Self { num_evaluations: 0, constraint: None, exact_num_witness_vars: Some(num_witness_vars) }
     }
 }
 
@@ -485,10 +436,7 @@ impl StageConfig {
     /// Whether this chain-starting stage has an initial_input constraint,
     /// meaning its initial claim should be a witness variable (not a baked constant).
     pub fn has_initial_claim_var(&self) -> bool {
-        self.initial_input
-            .as_ref()
-            .and_then(|ii| ii.constraint.as_ref())
-            .is_some()
+        self.initial_input.as_ref().and_then(|ii| ii.constraint.as_ref()).is_some()
     }
 }
 
@@ -557,15 +505,11 @@ impl<F: JoltField> LinearCombination<F> {
     /// For non-relaxed instances (u=1), this evaluates to `value`.
     /// For relaxed instances, this evaluates to `value * u`.
     pub fn constant(value: F) -> Self {
-        Self {
-            terms: vec![Term::new(Variable::U, value)],
-        }
+        Self { terms: vec![Term::new(Variable::U, value)] }
     }
 
     pub fn variable(var: Variable) -> Self {
-        Self {
-            terms: vec![Term::one(var)],
-        }
+        Self { terms: vec![Term::one(var)] }
     }
 
     pub fn add_term(mut self, var: Variable, coeff: F) -> Self {
@@ -585,10 +529,7 @@ impl<F: JoltField> LinearCombination<F> {
 
     /// Evaluate the linear combination given the witness vector Z
     pub fn evaluate(&self, z: &[F]) -> F {
-        self.terms
-            .iter()
-            .map(|term| term.coeff * z[term.var.index()])
-            .sum()
+        self.terms.iter().map(|term| term.coeff * z[term.var.index()]).sum()
     }
 }
 

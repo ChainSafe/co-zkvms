@@ -30,10 +30,7 @@ pub trait SumcheckInstance<F: JoltField, T: Transcript> {
         r: &[F::Challenge],
     ) -> F;
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F>;
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F>;
 
     fn cache_openings_verifier(
         &self,
@@ -99,17 +96,10 @@ impl SingleSumcheck {
         let input_claim = sumcheck_instance.input_claim();
         transcript.append_scalar(&input_claim); // Append input claim
 
-        let (output_claim, r) = proof.verify(
-            input_claim,
-            sumcheck_instance.num_rounds(),
-            sumcheck_instance.degree(),
-            transcript,
-        )?;
+        let (output_claim, r) =
+            proof.verify(input_claim, sumcheck_instance.num_rounds(), sumcheck_instance.degree(), transcript)?;
 
-        if !proof.is_zk()
-            && output_claim
-                != sumcheck_instance.expected_output_claim(opening_accumulator.clone(), &r)
-        {
+        if !proof.is_zk() && output_claim != sumcheck_instance.expected_output_claim(opening_accumulator.clone(), &r) {
             return Err(ProofVerifyError::SumcheckVerificationError);
         }
 
@@ -136,16 +126,8 @@ impl BatchedSumcheck {
         opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         transcript: &mut ProofTranscript,
     ) -> Result<(Vec<F>, Vec<F::Challenge>, Vec<OpeningId>), ProofVerifyError> {
-        let max_degree = sumcheck_instances
-            .iter()
-            .map(|sumcheck| sumcheck.degree())
-            .max()
-            .unwrap();
-        let max_num_rounds = sumcheck_instances
-            .iter()
-            .map(|sumcheck| sumcheck.num_rounds())
-            .max()
-            .unwrap();
+        let max_degree = sumcheck_instances.iter().map(|sumcheck| sumcheck.degree()).max().unwrap();
+        let max_num_rounds = sumcheck_instances.iter().map(|sumcheck| sumcheck.num_rounds()).max().unwrap();
 
         let is_zk = proof.is_zk();
         let batching_coeffs: Vec<F> = transcript.challenge_vector(sumcheck_instances.len());
@@ -163,8 +145,7 @@ impl BatchedSumcheck {
             })
             .sum();
 
-        let (output_claim, r_sumcheck) =
-            proof.verify(claim, max_num_rounds, max_degree, transcript)?;
+        let (output_claim, r_sumcheck) = proof.verify(claim, max_num_rounds, max_degree, transcript)?;
 
         if is_zk {
             if let Some(opening_accumulator) = &opening_accumulator {
@@ -229,10 +210,7 @@ pub struct ClearSumcheckProof<F: JoltField, ProofTranscript: Transcript> {
 
 impl<F: JoltField, ProofTranscript: Transcript> ClearSumcheckProof<F, ProofTranscript> {
     pub fn new(compressed_polys: Vec<CompressedUniPoly<F>>) -> ClearSumcheckProof<F, ProofTranscript> {
-        ClearSumcheckProof {
-            compressed_polys,
-            _marker: PhantomData,
-        }
+        ClearSumcheckProof { compressed_polys, _marker: PhantomData }
     }
 
     /// Verify this sumcheck proof.
@@ -249,10 +227,7 @@ impl<F: JoltField, ProofTranscript: Transcript> ClearSumcheckProof<F, ProofTrans
         assert_eq!(self.compressed_polys.len(), num_rounds);
         for i in 0..self.compressed_polys.len() {
             if self.compressed_polys[i].degree() > degree_bound {
-                return Err(ProofVerifyError::InvalidInputLength(
-                    degree_bound,
-                    self.compressed_polys[i].degree(),
-                ));
+                return Err(ProofVerifyError::InvalidInputLength(degree_bound, self.compressed_polys[i].degree()));
             }
 
             self.compressed_polys[i].append_to_transcript(transcript);
@@ -283,12 +258,9 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> CanonicalSerialize
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.round_commitments
-            .serialize_with_mode(&mut writer, compress)?;
-        self.poly_degrees
-            .serialize_with_mode(&mut writer, compress)?;
-        self.output_claims_commitments
-            .serialize_with_mode(writer, compress)
+        self.round_commitments.serialize_with_mode(&mut writer, compress)?;
+        self.poly_degrees.serialize_with_mode(&mut writer, compress)?;
+        self.output_claims_commitments.serialize_with_mode(writer, compress)
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
@@ -298,9 +270,7 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> CanonicalSerialize
     }
 }
 
-impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> Valid
-    for ZkSumcheckProof<F, C, ProofTranscript>
-{
+impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> Valid for ZkSumcheckProof<F, C, ProofTranscript> {
     fn check(&self) -> Result<(), SerializationError> {
         self.round_commitments.check()?;
         self.poly_degrees.check()?;
@@ -316,34 +286,16 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> CanonicalDeseriali
         compress: Compress,
         validate: Validate,
     ) -> Result<Self, SerializationError> {
-        let round_commitments =
-            Vec::<C::G1>::deserialize_with_mode(&mut reader, compress, validate)?;
+        let round_commitments = Vec::<C::G1>::deserialize_with_mode(&mut reader, compress, validate)?;
         let poly_degrees = Vec::<usize>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let output_claims_commitments =
-            Vec::<C::G1>::deserialize_with_mode(reader, compress, validate)?;
-        Ok(Self {
-            round_commitments,
-            poly_degrees,
-            output_claims_commitments,
-            _marker: PhantomData,
-        })
+        let output_claims_commitments = Vec::<C::G1>::deserialize_with_mode(reader, compress, validate)?;
+        Ok(Self { round_commitments, poly_degrees, output_claims_commitments, _marker: PhantomData })
     }
 }
 
-impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>
-    ZkSumcheckProof<F, C, ProofTranscript>
-{
-    pub fn new(
-        round_commitments: Vec<C::G1>,
-        poly_degrees: Vec<usize>,
-        output_claims_commitments: Vec<C::G1>,
-    ) -> Self {
-        Self {
-            round_commitments,
-            poly_degrees,
-            output_claims_commitments,
-            _marker: PhantomData,
-        }
+impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> ZkSumcheckProof<F, C, ProofTranscript> {
+    pub fn new(round_commitments: Vec<C::G1>, poly_degrees: Vec<usize>, output_claims_commitments: Vec<C::G1>) -> Self {
+        Self { round_commitments, poly_degrees, output_claims_commitments, _marker: PhantomData }
     }
 
     pub fn verify_transcript_only(
@@ -353,16 +305,10 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>
         transcript: &mut ProofTranscript,
     ) -> Result<Vec<F::Challenge>, ProofVerifyError> {
         if self.round_commitments.len() != num_rounds {
-            return Err(ProofVerifyError::InvalidInputLength(
-                num_rounds,
-                self.round_commitments.len(),
-            ));
+            return Err(ProofVerifyError::InvalidInputLength(num_rounds, self.round_commitments.len()));
         }
         if self.poly_degrees.len() != num_rounds {
-            return Err(ProofVerifyError::InvalidInputLength(
-                num_rounds,
-                self.poly_degrees.len(),
-            ));
+            return Err(ProofVerifyError::InvalidInputLength(num_rounds, self.poly_degrees.len()));
         }
         for &degree in &self.poly_degrees {
             if degree > degree_bound {
@@ -415,9 +361,7 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> CanonicalSerialize
     }
 }
 
-impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> Valid
-    for SumcheckInstanceProof<F, C, ProofTranscript>
-{
+impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> Valid for SumcheckInstanceProof<F, C, ProofTranscript> {
     fn check(&self) -> Result<(), SerializationError> {
         match self {
             Self::Clear(proof) => proof.check(),
@@ -436,20 +380,14 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> CanonicalDeseriali
     ) -> Result<Self, SerializationError> {
         let variant = u8::deserialize_with_mode(&mut reader, compress, validate)?;
         match variant {
-            0 => Ok(Self::Clear(ClearSumcheckProof::deserialize_with_mode(
-                reader, compress, validate,
-            )?)),
-            1 => Ok(Self::Zk(ZkSumcheckProof::deserialize_with_mode(
-                reader, compress, validate,
-            )?)),
+            0 => Ok(Self::Clear(ClearSumcheckProof::deserialize_with_mode(reader, compress, validate)?)),
+            1 => Ok(Self::Zk(ZkSumcheckProof::deserialize_with_mode(reader, compress, validate)?)),
             _ => Err(SerializationError::InvalidData),
         }
     }
 }
 
-impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>
-    SumcheckInstanceProof<F, C, ProofTranscript>
-{
+impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript> SumcheckInstanceProof<F, C, ProofTranscript> {
     pub fn new(compressed_polys: Vec<CompressedUniPoly<F>>) -> Self {
         Self::Clear(ClearSumcheckProof::new(compressed_polys))
     }
@@ -463,11 +401,7 @@ impl<F: JoltField, C: JoltCurve, ProofTranscript: Transcript>
         poly_degrees: Vec<usize>,
         output_claims_commitments: Vec<C::G1>,
     ) -> Self {
-        Self::Zk(ZkSumcheckProof::new(
-            round_commitments,
-            poly_degrees,
-            output_claims_commitments,
-        ))
+        Self::Zk(ZkSumcheckProof::new(round_commitments, poly_degrees, output_claims_commitments))
     }
 
     pub fn verify(
@@ -509,10 +443,7 @@ pub fn process_eq_sumcheck_round<F: JoltField, ProofTranscript: Transcript>(
     let scalar_times_w_i = eq_poly.current_scalar * eq_poly.w[eq_poly.current_index - 1];
 
     let cubic_poly = UniPoly::from_linear_times_quadratic_with_hint(
-        [
-            eq_poly.current_scalar - scalar_times_w_i,
-            scalar_times_w_i + scalar_times_w_i - eq_poly.current_scalar,
-        ],
+        [eq_poly.current_scalar - scalar_times_w_i, scalar_times_w_i + scalar_times_w_i - eq_poly.current_scalar],
         quadratic_evals.0,
         quadratic_evals.1,
         *claim,
@@ -538,9 +469,7 @@ mod tests {
     use crate::curve::Bn254Curve;
     use crate::field::JoltField;
     use crate::poly::commitment::pedersen::PedersenGenerators;
-    use crate::poly::opening_proof::{
-        OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
-    };
+    use crate::poly::opening_proof::{OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN};
     use crate::transcripts::{KeccakTranscript, Transcript};
     use crate::zkvm::witness::VirtualPolynomial;
     use ark_bn254::Fr;
@@ -573,10 +502,7 @@ mod tests {
             _r: &[<Fr as JoltField>::Challenge],
         ) -> Fr {
             let accumulator = opening_accumulator.unwrap();
-            let claim = accumulator
-                .borrow()
-                .get_virtual_polynomial_opening(self.poly, self.sumcheck_id)
-                .1;
+            let claim = accumulator.borrow().get_virtual_polynomial_opening(self.poly, self.sumcheck_id).1;
             claim
         }
 
@@ -608,12 +534,11 @@ mod tests {
         let commitment_0 = gens.commit(&[Fr::from(3_u64), Fr::from(5_u64)], &Fr::from(7_u64));
         let commitment_1 = gens.commit(&[Fr::from(11_u64)], &Fr::from(13_u64));
 
-        let proof =
-            ZkSumcheckProof::<Fr, Bn254Curve, KeccakTranscript>::new(
-                vec![commitment_0, commitment_1],
-                vec![1, 0],
-                vec![],
-            );
+        let proof = ZkSumcheckProof::<Fr, Bn254Curve, KeccakTranscript>::new(
+            vec![commitment_0, commitment_1],
+            vec![1, 0],
+            vec![],
+        );
 
         let mut expected = KeccakTranscript::new(b"zk_sumcheck_rounds");
         expected.append_message(b"sumcheck_commitment");
@@ -625,9 +550,7 @@ mod tests {
 
         let mut verifier = KeccakTranscript::new(b"zk_sumcheck_rounds");
         verifier.compare_to(expected);
-        let challenges = proof
-            .verify_transcript_only(2, 1, &mut verifier)
-            .expect("transcript replay should succeed");
+        let challenges = proof.verify_transcript_only(2, 1, &mut verifier).expect("transcript replay should succeed");
         assert_eq!(challenges.len(), 2);
     }
 

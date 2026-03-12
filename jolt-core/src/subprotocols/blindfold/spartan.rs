@@ -13,8 +13,7 @@ use crate::poly::dense_mlpoly::DensePolynomial;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::BindingOrder;
 use crate::poly::opening_proof::{
-    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, VerifierOpeningAccumulator,
-    BIG_ENDIAN,
+    OpeningAccumulator, OpeningPoint, ProverOpeningAccumulator, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
 use crate::poly::unipoly::UniPoly;
 use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint};
@@ -70,10 +69,7 @@ impl<F: JoltField> SumcheckInstanceParams<F> for BlindFoldSpartanParams<F> {
         InputClaimConstraint::default()
     }
 
-    fn input_constraint_challenge_values(
-        &self,
-        _accumulator: &dyn OpeningAccumulator<F>,
-    ) -> Vec<F> {
+    fn input_constraint_challenge_values(&self, _accumulator: &dyn OpeningAccumulator<F>) -> Vec<F> {
         Vec::new()
     }
 
@@ -111,13 +107,7 @@ impl<F: JoltField> allocative::Allocative for BlindFoldSpartanProver<'_, F> {
 
 impl<'a, F: JoltField> BlindFoldSpartanProver<'a, F> {
     #[tracing::instrument(skip_all, name = "BlindFoldSpartanProver::new")]
-    pub fn new(
-        r1cs: &'a VerifierR1CS<F>,
-        u: F,
-        z: Vec<F>,
-        e: Vec<F>,
-        tau: Vec<F::Challenge>,
-    ) -> Self {
+    pub fn new(r1cs: &'a VerifierR1CS<F>, u: F, z: Vec<F>, e: Vec<F>, tau: Vec<F::Challenge>) -> Self {
         let num_constraints = r1cs.num_constraints;
         let padded_size = num_constraints.next_power_of_two();
 
@@ -248,11 +238,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BlindFoldSpar
         self.eq_tau.bind_parallel(r_j, BindingOrder::HighToLow);
     }
 
-    fn cache_openings(
-        &self,
-        _accumulator: &mut ProverOpeningAccumulator<F>,
-        _sumcheck_challenges: &[F::Challenge],
-    ) {
+    fn cache_openings(&self, _accumulator: &mut ProverOpeningAccumulator<F>, _sumcheck_challenges: &[F::Challenge]) {
         // The opening proofs for W and E contributions are handled by BlindFold
         // after verifying the final claim. We cache the final values here.
         //
@@ -369,22 +355,13 @@ impl<'a, F: JoltField> BlindFoldSpartanVerifier<'a, F> {
     }
 
     /// Expected outer sumcheck claim: eq(τ, r) · [Az(r)·Bz(r) - u·Cz(r) - E(r)]
-    pub fn expected_claim(
-        &self,
-        sumcheck_challenges: &[F::Challenge],
-        az_r: F,
-        bz_r: F,
-        cz_r: F,
-        e_r: F,
-    ) -> F {
+    pub fn expected_claim(&self, sumcheck_challenges: &[F::Challenge], az_r: F, bz_r: F, cz_r: F, e_r: F) -> F {
         let eq_tau_r = self.eq_tau_at_r(sumcheck_challenges);
         eq_tau_r * (az_r * bz_r - self.params.u * cz_r - e_r)
     }
 }
 
-impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
-    for BlindFoldSpartanVerifier<'_, F>
-{
+impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T> for BlindFoldSpartanVerifier<'_, F> {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F> {
         &self.params
     }
@@ -396,16 +373,10 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceVerifier<F, T>
     ) -> F {
         // The BlindFold verifier handles the final claim verification
         // after receiving witness and error contributions
-        unreachable!(
-            "BlindFold Spartan verifier uses expected_claim() with explicit witness contributions"
-        )
+        unreachable!("BlindFold Spartan verifier uses expected_claim() with explicit witness contributions")
     }
 
-    fn cache_openings(
-        &self,
-        _accumulator: &mut VerifierOpeningAccumulator<F>,
-        _sumcheck_challenges: &[F::Challenge],
-    ) {
+    fn cache_openings(&self, _accumulator: &mut VerifierOpeningAccumulator<F>, _sumcheck_challenges: &[F::Challenge]) {
         // Opening verification is handled by BlindFold after sumcheck
     }
 }
@@ -425,22 +396,11 @@ pub struct BlindFoldInnerSumcheckProver<F: JoltField> {
 
 impl<F: JoltField> BlindFoldInnerSumcheckProver<F> {
     #[tracing::instrument(skip_all, name = "BlindFoldInnerSumcheckProver::new")]
-    pub fn new(
-        r1cs: &VerifierR1CS<F>,
-        rx: &[F::Challenge],
-        w_padded: Vec<F>,
-        ra: F,
-        rb: F,
-        rc: F,
-    ) -> Self {
+    pub fn new(r1cs: &VerifierR1CS<F>, rx: &[F::Challenge], w_padded: Vec<F>, ra: F, rb: F, rc: F) -> Self {
         let w_padded_len = w_padded.len();
         let num_vars = w_padded_len.log_2();
         let l_w = build_L_w(r1cs, rx, ra, rb, rc, w_padded_len);
-        Self {
-            l_w: DensePolynomial::new(l_w),
-            w: DensePolynomial::new(w_padded),
-            num_vars,
-        }
+        Self { l_w: DensePolynomial::new(l_w), w: DensePolynomial::new(w_padded), num_vars }
     }
 
     pub fn num_vars(&self) -> usize {
@@ -572,15 +532,8 @@ mod tests {
 
         let configs = [StageConfig::new(2, 3)];
 
-        let round1 = RoundWitness::new(
-            vec![
-                F::from_u64(20),
-                F::from_u64(5),
-                F::from_u64(7),
-                F::from_u64(3),
-            ],
-            F::from_u64(2),
-        );
+        let round1 =
+            RoundWitness::new(vec![F::from_u64(20), F::from_u64(5), F::from_u64(7), F::from_u64(3)], F::from_u64(2));
         let next1 = round1.evaluate(F::from_u64(2));
 
         let c0_2 = F::from_u64(85);
@@ -590,8 +543,7 @@ mod tests {
         let round2 = RoundWitness::new(vec![c0_2, c1_2, c2_2, c3_2], F::from_u64(3));
 
         let initial_claim = F::from_u64(55);
-        let blindfold_witness =
-            BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round1, round2])]);
+        let blindfold_witness = BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round1, round2])]);
 
         let baked = BakedPublicInputs {
             challenges: vec![F::from_u64(2), F::from_u64(3)],
@@ -607,8 +559,7 @@ mod tests {
         let e = vec![F::zero(); r1cs.num_constraints];
 
         let mut transcript = KeccakTranscript::new(b"test_spartan");
-        let tau: Vec<_> = transcript
-            .challenge_vector_optimized::<F>(r1cs.num_constraints.next_power_of_two().log_2());
+        let tau: Vec<_> = transcript.challenge_vector_optimized::<F>(r1cs.num_constraints.next_power_of_two().log_2());
 
         let mut prover = BlindFoldSpartanProver::new(&r1cs, F::one(), z.clone(), e, tau.clone());
 
@@ -629,18 +580,13 @@ mod tests {
 
         let final_claims = prover.final_claims();
         let expected_final = final_claims.eq_tau_r
-            * (final_claims.az_r * final_claims.bz_r
-                - F::one() * final_claims.cz_r
-                - final_claims.e_r);
+            * (final_claims.az_r * final_claims.bz_r - F::one() * final_claims.cz_r - final_claims.e_r);
         assert_eq!(claim, expected_final, "Final claim mismatch");
 
         let verifier = BlindFoldSpartanVerifier::new(&r1cs, tau.clone(), F::one());
 
         let verifier_eq_tau_r = verifier.eq_tau_at_r(&challenges);
-        assert_eq!(
-            final_claims.eq_tau_r, verifier_eq_tau_r,
-            "eq(tau, r) mismatch"
-        );
+        assert_eq!(final_claims.eq_tau_r, verifier_eq_tau_r, "eq(tau, r) mismatch");
 
         let (w_az, w_bz, w_cz) = prover.witness_contributions(&challenges);
         let (pub_az, pub_bz, pub_cz) = verifier.public_contributions(&challenges);
@@ -664,15 +610,8 @@ mod tests {
         type F = Fr;
 
         let configs = [StageConfig::new(1, 3)];
-        let round = RoundWitness::new(
-            vec![
-                F::from_u64(40),
-                F::from_u64(5),
-                F::from_u64(10),
-                F::from_u64(5),
-            ],
-            F::from_u64(3),
-        );
+        let round =
+            RoundWitness::new(vec![F::from_u64(40), F::from_u64(5), F::from_u64(10), F::from_u64(5)], F::from_u64(3));
         let initial_claim = F::from_u64(100);
 
         let baked = BakedPublicInputs {
@@ -683,8 +622,7 @@ mod tests {
         let builder = VerifierR1CSBuilder::<F>::new(&configs, &baked);
         let r1cs = builder.build();
 
-        let blindfold_witness =
-            BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round])]);
+        let blindfold_witness = BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round])]);
         let z = blindfold_witness.assign(&r1cs);
 
         // For relaxed R1CS with u != 1, compute E = Az ∘ Bz - u·Cz
@@ -696,18 +634,14 @@ mod tests {
         let bz = r1cs.b.mul_vector(&z_relaxed);
         let cz = r1cs.c.mul_vector(&z_relaxed);
 
-        let e: Vec<F> = (0..r1cs.num_constraints)
-            .map(|i| az[i] * bz[i] - u * cz[i])
-            .collect();
+        let e: Vec<F> = (0..r1cs.num_constraints).map(|i| az[i] * bz[i] - u * cz[i]).collect();
 
         // Create transcript and derive τ
         let mut transcript = KeccakTranscript::new(b"test_spartan_relaxed");
-        let tau: Vec<_> = transcript
-            .challenge_vector_optimized::<F>(r1cs.num_constraints.next_power_of_two().log_2());
+        let tau: Vec<_> = transcript.challenge_vector_optimized::<F>(r1cs.num_constraints.next_power_of_two().log_2());
 
         // Create Spartan prover with relaxed instance
-        let mut prover =
-            BlindFoldSpartanProver::new(&r1cs, u, z_relaxed.clone(), e.clone(), tau.clone());
+        let mut prover = BlindFoldSpartanProver::new(&r1cs, u, z_relaxed.clone(), e.clone(), tau.clone());
 
         // Run sumcheck
         let num_rounds = prover.num_vars();
@@ -728,13 +662,10 @@ mod tests {
 
         // Final claim should be 0 (relaxed R1CS is satisfied)
         let final_claims = prover.final_claims();
-        let expected_final = final_claims.eq_tau_r
-            * (final_claims.az_r * final_claims.bz_r - u * final_claims.cz_r - final_claims.e_r);
+        let expected_final =
+            final_claims.eq_tau_r * (final_claims.az_r * final_claims.bz_r - u * final_claims.cz_r - final_claims.e_r);
 
         // Since (Az)∘(Bz) = u·(Cz) + E by construction, the expression should be 0
-        assert_eq!(
-            expected_final, claim,
-            "Relaxed R1CS final claim should be 0"
-        );
+        assert_eq!(expected_final, claim, "Relaxed R1CS final claim should be 0");
     }
 }

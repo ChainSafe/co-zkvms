@@ -6,8 +6,8 @@ use num::Integer;
 use crate::field::{ChallengeFieldOps, FieldChallengeOps, JoltField};
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::poly::prefix_suffix::{
-    CachedPolynomial, Prefix, PrefixCheckpoints, PrefixPolynomial, PrefixRegistry,
-    PrefixSuffixPolynomial, SuffixPolynomial,
+    CachedPolynomial, Prefix, PrefixCheckpoints, PrefixPolynomial, PrefixRegistry, PrefixSuffixPolynomial,
+    SuffixPolynomial,
 };
 use crate::utils::lookup_bits::LookupBits;
 use crate::utils::math::Math;
@@ -24,11 +24,7 @@ pub struct IdentityPolynomial<F: JoltField> {
 
 impl<F: JoltField> IdentityPolynomial<F> {
     pub fn new(num_vars: usize) -> Self {
-        IdentityPolynomial {
-            num_vars,
-            num_bound_vars: 0,
-            bound_value: F::zero(),
-        }
+        IdentityPolynomial { num_vars, num_bound_vars: 0, bound_value: F::zero() }
     }
 }
 
@@ -71,9 +67,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for IdentityPolynomial<F> {
     {
         let len = r.len();
         debug_assert_eq!(len, self.num_vars);
-        (0..len)
-            .map(|i| r[i].into().mul_u128(1 << (len - 1 - i)))
-            .sum()
+        (0..len).map(|i| r[i].into().mul_u128(1 << (len - 1 - i))).sum()
     }
 
     fn batch_evaluate<C>(_polys: &[&Self], _r: &[C]) -> Vec<F>
@@ -120,11 +114,8 @@ impl<F: JoltField> PrefixSuffixPolynomial<F, 2> for IdentityPolynomial<F> {
         registry: &mut PrefixRegistry<F>,
     ) -> [Option<Arc<RwLock<CachedPolynomial<F>>>>; 2] {
         if registry[Prefix::Identity].is_none() {
-            registry[Prefix::Identity] = Some(Arc::new(RwLock::new(self.prefix_polynomial(
-                &registry.checkpoints,
-                chunk_len,
-                phase,
-            ))));
+            registry[Prefix::Identity] =
+                Some(Arc::new(RwLock::new(self.prefix_polynomial(&registry.checkpoints, chunk_len, phase))));
         }
         [registry[Prefix::Identity].clone(), None]
     }
@@ -140,9 +131,8 @@ impl<F: JoltField> PrefixPolynomial<F> for IdentityPolynomial<F> {
         debug_assert!(chunk_len.is_even());
         let bound_value = checkpoints[Prefix::Identity].unwrap_or(F::zero());
 
-        let evals: Vec<F> = (0..chunk_len.pow2())
-            .map(|i| bound_value.mul_u128(1 << chunk_len) + F::from_u64(i as u64))
-            .collect();
+        let evals: Vec<F> =
+            (0..chunk_len.pow2()).map(|i| bound_value.mul_u128(1 << chunk_len) + F::from_u64(i as u64)).collect();
 
         CachedPolynomial::new(MultilinearPolynomial::from(evals), (chunk_len - 1).pow2())
     }
@@ -191,12 +181,7 @@ pub struct OperandPolynomial<F: JoltField> {
 impl<F: JoltField> OperandPolynomial<F> {
     pub fn new(num_vars: usize, side: OperandSide) -> Self {
         debug_assert!(num_vars.is_even(), "num_vars must be divisible by 2");
-        OperandPolynomial {
-            num_vars,
-            num_bound_vars: 0,
-            bound_value: F::zero(),
-            side,
-        }
+        OperandPolynomial { num_vars, num_bound_vars: 0, bound_value: F::zero(), side }
     }
 }
 
@@ -207,11 +192,7 @@ impl<F: JoltField> PolynomialBinding<F> for OperandPolynomial<F> {
 
     fn bind(&mut self, r: F::Challenge, order: BindingOrder) {
         debug_assert!(self.num_bound_vars < self.num_vars);
-        debug_assert_eq!(
-            order,
-            BindingOrder::HighToLow,
-            "OperandPolynomial only supports high-to-low binding"
-        );
+        debug_assert_eq!(order, BindingOrder::HighToLow, "OperandPolynomial only supports high-to-low binding");
 
         if (self.num_bound_vars.is_even() && self.side == OperandSide::Left)
             || (self.num_bound_vars.is_odd() && self.side == OperandSide::Right)
@@ -244,16 +225,10 @@ impl<F: JoltField> PolynomialEvaluation<F> for OperandPolynomial<F> {
         debug_assert!(len.is_even());
 
         match self.side {
-            OperandSide::Left => (0..len / 2)
-                .map(|i| r[2 * i].into().mul_u128(1 << (self.num_vars / 2 - 1 - i)))
-                .sum(),
-            OperandSide::Right => (0..len / 2)
-                .map(|i| {
-                    r[2 * i + 1]
-                        .into()
-                        .mul_u128(1 << (self.num_vars / 2 - 1 - i))
-                })
-                .sum(),
+            OperandSide::Left => (0..len / 2).map(|i| r[2 * i].into().mul_u128(1 << (self.num_vars / 2 - 1 - i))).sum(),
+            OperandSide::Right => {
+                (0..len / 2).map(|i| r[2 * i + 1].into().mul_u128(1 << (self.num_vars / 2 - 1 - i))).sum()
+            }
         }
     }
 
@@ -266,11 +241,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for OperandPolynomial<F> {
     }
 
     fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F> {
-        debug_assert_eq!(
-            order,
-            BindingOrder::HighToLow,
-            "OperandPolynomial only supports high-to-low binding"
-        );
+        debug_assert_eq!(order, BindingOrder::HighToLow, "OperandPolynomial only supports high-to-low binding");
 
         let mut evals = vec![F::zero(); degree];
         let (left, right) = uninterleave_bits(index as u128);
@@ -334,18 +305,22 @@ impl<F: JoltField> PrefixSuffixPolynomial<F, 2> for OperandPolynomial<F> {
             OperandSide::Left => {
                 if prefix_registry[Prefix::LeftOperand].is_none() {
                     let lo_poly = OperandPolynomial::new(self.num_vars, OperandSide::Left);
-                    prefix_registry[Prefix::LeftOperand] = Some(Arc::new(RwLock::new(
-                        lo_poly.prefix_polynomial(&prefix_registry.checkpoints, chunk_len, phase),
-                    )));
+                    prefix_registry[Prefix::LeftOperand] = Some(Arc::new(RwLock::new(lo_poly.prefix_polynomial(
+                        &prefix_registry.checkpoints,
+                        chunk_len,
+                        phase,
+                    ))));
                 }
                 [prefix_registry[Prefix::LeftOperand].clone(), None]
             }
             OperandSide::Right => {
                 if prefix_registry[Prefix::RightOperand].is_none() {
                     let ro_poly = OperandPolynomial::new(self.num_vars, OperandSide::Right);
-                    prefix_registry[Prefix::RightOperand] = Some(Arc::new(RwLock::new(
-                        ro_poly.prefix_polynomial(&prefix_registry.checkpoints, chunk_len, phase),
-                    )));
+                    prefix_registry[Prefix::RightOperand] = Some(Arc::new(RwLock::new(ro_poly.prefix_polynomial(
+                        &prefix_registry.checkpoints,
+                        chunk_len,
+                        phase,
+                    ))));
                 }
                 [prefix_registry[Prefix::RightOperand].clone(), None]
             }
@@ -409,11 +384,7 @@ impl<F: JoltField> UnmapRamAddressPolynomial<F> {
     pub fn new(num_vars: usize, start_address: u64) -> Self {
         let word_size = common::constants::RAM_WORD_SIZE;
         assert!(start_address > word_size);
-        UnmapRamAddressPolynomial {
-            start_address,
-            word_size,
-            int_poly: IdentityPolynomial::new(num_vars),
-        }
+        UnmapRamAddressPolynomial { start_address, word_size, int_poly: IdentityPolynomial::new(num_vars) }
     }
 }
 
@@ -432,8 +403,7 @@ impl<F: JoltField> PolynomialBinding<F> for UnmapRamAddressPolynomial<F> {
     }
 
     fn final_sumcheck_claim(&self) -> F {
-        self.int_poly.final_sumcheck_claim().mul_u64(self.word_size)
-            + F::from_u64(self.start_address - self.word_size)
+        self.int_poly.final_sumcheck_claim().mul_u64(self.word_size) + F::from_u64(self.start_address - self.word_size)
     }
 }
 
@@ -443,8 +413,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for UnmapRamAddressPolynomial<F> {
         C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
     {
-        self.int_poly.evaluate(r).mul_u64(self.word_size)
-            + F::from_u64(self.start_address - self.word_size)
+        self.int_poly.evaluate(r).mul_u64(self.word_size) + F::from_u64(self.start_address - self.word_size)
     }
 
     fn batch_evaluate<C>(_polys: &[&Self], _r: &[C]) -> Vec<F>
@@ -458,10 +427,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for UnmapRamAddressPolynomial<F> {
     fn sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder) -> Vec<F> {
         let evals = self.int_poly.sumcheck_evals(index, degree, order);
         let ws = self.word_size;
-        evals
-            .into_iter()
-            .map(|l| l.mul_u64(ws) + F::from_u64(self.start_address - ws))
-            .collect()
+        evals.into_iter().map(|l| l.mul_u64(ws) + F::from_u64(self.start_address - ws)).collect()
     }
 }
 
@@ -487,10 +453,8 @@ mod tests {
             MultilinearPolynomial::from((0..(1 << NUM_VARS)).map(|i| i as u32).collect::<Vec<_>>());
 
         for j in 0..reference_poly.len() / 2 {
-            let identity_poly_evals =
-                identity_poly.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
-            let reference_poly_evals =
-                reference_poly.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+            let identity_poly_evals = identity_poly.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+            let reference_poly_evals = reference_poly.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
             assert_eq!(identity_poly_evals, reference_poly_evals);
         }
 
@@ -499,26 +463,18 @@ mod tests {
             identity_poly.bind(r, BindingOrder::LowToHigh);
             reference_poly.bind(r, BindingOrder::LowToHigh);
             for j in 0..reference_poly.len() / 2 {
-                let identity_poly_evals =
-                    identity_poly.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
-                let reference_poly_evals =
-                    reference_poly.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+                let identity_poly_evals = identity_poly.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
+                let reference_poly_evals = reference_poly.sumcheck_evals(j, DEGREE, BindingOrder::LowToHigh);
                 assert_eq!(identity_poly_evals, reference_poly_evals);
             }
         }
 
-        assert_eq!(
-            identity_poly.final_sumcheck_claim(),
-            reference_poly.final_sumcheck_claim()
-        );
+        assert_eq!(identity_poly.final_sumcheck_claim(), reference_poly.final_sumcheck_claim());
     }
 
     #[test]
     fn identity_poly_prefix_suffix_decomposition() {
-        prefix_suffix_decomposition_test::<8, 2, 2, _>(
-            IdentityPolynomial::new(8),
-            Prefix::Identity,
-        );
+        prefix_suffix_decomposition_test::<8, 2, 2, _>(IdentityPolynomial::new(8), Prefix::Identity);
     }
 
     #[test]
@@ -677,16 +633,8 @@ mod tests {
         let mut unmap_poly = UnmapRamAddressPolynomial::<Fr>::new(NUM_VARS, START_ADDRESS);
 
         let K = 1 << NUM_VARS;
-        let unmap_evals: Vec<Fr> = (0..K)
-            .map(|k| {
-                Fr::from(
-                    (k as u64)
-                        .wrapping_sub(1)
-                        .wrapping_mul(8)
-                        .wrapping_add(START_ADDRESS),
-                )
-            })
-            .collect();
+        let unmap_evals: Vec<Fr> =
+            (0..K).map(|k| Fr::from((k as u64).wrapping_sub(1).wrapping_mul(8).wrapping_add(START_ADDRESS))).collect();
         let mut reference_poly = MultilinearPolynomial::from(unmap_evals.clone());
 
         for round in 0..NUM_VARS {
@@ -696,10 +644,7 @@ mod tests {
                 let unmap_evals = unmap_poly.sumcheck_evals(i, 3, BindingOrder::LowToHigh);
                 let reference_evals = reference_poly.sumcheck_evals(i, 3, BindingOrder::LowToHigh);
 
-                assert_eq!(
-                    unmap_evals, reference_evals,
-                    "Round {round}, index {i}: sumcheck_evals mismatch",
-                );
+                assert_eq!(unmap_evals, reference_evals, "Round {round}, index {i}: sumcheck_evals mismatch",);
             }
 
             let r = <Fr as JoltField>::Challenge::from(0x12345678 + round as u128);

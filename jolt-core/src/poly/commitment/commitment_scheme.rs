@@ -14,14 +14,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     type Field: JoltField + Sized;
     type ProverSetup: Clone + Sync + Send + Debug + CanonicalSerialize + CanonicalDeserialize;
     type VerifierSetup: Clone + Sync + Send + Debug + CanonicalSerialize + CanonicalDeserialize;
-    type Commitment: Default
-        + Debug
-        + Sync
-        + Send
-        + PartialEq
-        + CanonicalSerialize
-        + CanonicalDeserialize
-        + Clone;
+    type Commitment: Default + Debug + Sync + Send + PartialEq + CanonicalSerialize + CanonicalDeserialize + Clone;
     type Proof: Sync + Send + CanonicalSerialize + CanonicalDeserialize + Clone + Debug;
     type BatchedProof: Sync + Send + CanonicalSerialize + CanonicalDeserialize;
     /// A hint that helps the prover compute an opening proof. Typically some byproduct of
@@ -58,10 +51,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
     ///
     /// # Returns
     /// A vector of commitments, one for each input polynomial
-    fn batch_commit<U>(
-        polys: &[U],
-        gens: &Self::ProverSetup,
-    ) -> Vec<(Self::Commitment, Self::OpeningProofHint)>
+    fn batch_commit<U>(polys: &[U], gens: &Self::ProverSetup) -> Vec<(Self::Commitment, Self::OpeningProofHint)>
     where
         U: Borrow<MultilinearPolynomial<Self::Field>> + Sync;
 
@@ -76,10 +66,7 @@ pub trait CommitmentScheme: Clone + Sync + Send + 'static {
 
     /// Homomorphically combines multiple opening proof hints into a single hint, computed as a
     /// linear combination with the given coefficients.
-    fn combine_hints(
-        _hints: Vec<Self::OpeningProofHint>,
-        _coeffs: &[Self::Field],
-    ) -> Self::OpeningProofHint {
+    fn combine_hints(_hints: Vec<Self::OpeningProofHint>, _coeffs: &[Self::Field]) -> Self::OpeningProofHint {
         unimplemented!()
     }
 
@@ -147,11 +134,7 @@ pub trait StreamingCommitmentScheme: CommitmentScheme {
 
     fn process_chunk<T: SmallScalar>(setup: &Self::ProverSetup, chunk: &[T]) -> Self::ChunkState;
 
-    fn process_chunk_onehot(
-        setup: &Self::ProverSetup,
-        onehot_k: usize,
-        chunk: &[Option<usize>],
-    ) -> Self::ChunkState;
+    fn process_chunk_onehot(setup: &Self::ProverSetup, onehot_k: usize, chunk: &[Option<usize>]) -> Self::ChunkState;
 
     fn aggregate_chunks(
         setup: &Self::ProverSetup,

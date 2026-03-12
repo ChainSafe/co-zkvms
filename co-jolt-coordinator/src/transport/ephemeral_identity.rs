@@ -14,19 +14,13 @@ pub struct EphemeralIdentity {
 
 impl EphemeralIdentity {
     pub fn generate() -> eyre::Result<Self> {
-        let CertifiedKey { cert, key_pair } =
-            rcgen::generate_simple_self_signed(vec!["enclave.local".into()])
-                .context("generating ephemeral ECDSA P-256 certificate")?;
+        let CertifiedKey { cert, key_pair } = rcgen::generate_simple_self_signed(vec!["enclave.local".into()])
+            .context("generating ephemeral ECDSA P-256 certificate")?;
 
         let public_key_bytes = key_pair.public_key_raw().to_vec();
         let cert_der = CertificateDer::from(cert.der().to_vec());
-        let key_der =
-            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_pair.serialize_der())).clone_key();
+        let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_pair.serialize_der())).clone_key();
 
-        Ok(Self {
-            cert_der,
-            key_der,
-            public_key_bytes,
-        })
+        Ok(Self { cert_der, key_der, public_key_bytes })
     }
 }

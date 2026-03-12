@@ -12,9 +12,7 @@
 #![allow(missing_docs)]
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use dory_pcs::backends::arkworks::{
-    ArkFr, ArkworksPolynomial, Blake2bTranscript, G1Routines, G2Routines, BN254,
-};
+use dory_pcs::backends::arkworks::{ArkFr, ArkworksPolynomial, Blake2bTranscript, G1Routines, G2Routines, BN254};
 use dory_pcs::mode::Transparent;
 use dory_pcs::primitives::arithmetic::Field;
 use dory_pcs::primitives::poly::Polynomial;
@@ -23,12 +21,8 @@ use dory_pcs::{prove, setup, verify};
 #[cfg(feature = "cache")]
 use dory_pcs::backends::arkworks::init_cache;
 
-fn setup_benchmark_data() -> (
-    ArkworksPolynomial,
-    Vec<ArkFr>,
-    dory_pcs::setup::ProverSetup<BN254>,
-    dory_pcs::setup::VerifierSetup<BN254>,
-) {
+fn setup_benchmark_data(
+) -> (ArkworksPolynomial, Vec<ArkFr>, dory_pcs::setup::ProverSetup<BN254>, dory_pcs::setup::VerifierSetup<BN254>) {
     let max_log_n = 26;
 
     let (prover_setup, verifier_setup) = setup::<BN254>(max_log_n);
@@ -59,12 +53,8 @@ fn bench_commitment(c: &mut Criterion) {
 
     c.bench_function("commitment_2^26_coefficients", |b| {
         b.iter(|| {
-            poly.commit::<BN254, Transparent, G1Routines>(
-                black_box(nu),
-                black_box(sigma),
-                black_box(&prover_setup),
-            )
-            .unwrap()
+            poly.commit::<BN254, Transparent, G1Routines>(black_box(nu), black_box(sigma), black_box(&prover_setup))
+                .unwrap()
         })
     });
 }
@@ -74,9 +64,7 @@ fn bench_prove(c: &mut Criterion) {
     let nu = 13;
     let sigma = 13;
 
-    let (_, tier_1, commit_blind) = poly
-        .commit::<BN254, Transparent, G1Routines>(nu, sigma, &prover_setup)
-        .unwrap();
+    let (_, tier_1, commit_blind) = poly.commit::<BN254, Transparent, G1Routines>(nu, sigma, &prover_setup).unwrap();
 
     c.bench_function("prove_2^26_coefficients", |b| {
         b.iter(|| {
@@ -101,9 +89,8 @@ fn bench_verify(c: &mut Criterion) {
     let nu = 13;
     let sigma = 13;
 
-    let (tier_2, tier_1, commit_blind) = poly
-        .commit::<BN254, Transparent, G1Routines>(nu, sigma, &prover_setup)
-        .unwrap();
+    let (tier_2, tier_1, commit_blind) =
+        poly.commit::<BN254, Transparent, G1Routines>(nu, sigma, &prover_setup).unwrap();
 
     let mut prover_transcript = Blake2bTranscript::new(b"dory-bench");
     let (proof, _) = prove::<_, BN254, G1Routines, G2Routines, _, _, Transparent>(
@@ -160,9 +147,8 @@ fn bench_end_to_end(c: &mut Criterion) {
             let poly = ArkworksPolynomial::new(coefficients);
 
             // Commit
-            let (tier_2, tier_1, commit_blind) = poly
-                .commit::<BN254, Transparent, G1Routines>(nu, sigma, &prover_setup)
-                .unwrap();
+            let (tier_2, tier_1, commit_blind) =
+                poly.commit::<BN254, Transparent, G1Routines>(nu, sigma, &prover_setup).unwrap();
 
             // Evaluate
             let point: Vec<ArkFr> = (0..num_vars).map(|_| ArkFr::random()).collect();
@@ -197,11 +183,5 @@ fn bench_end_to_end(c: &mut Criterion) {
     });
 }
 
-criterion_group!(
-    benches,
-    bench_commitment,
-    bench_prove,
-    bench_verify,
-    bench_end_to_end
-);
+criterion_group!(benches, bench_commitment, bench_prove, bench_verify, bench_end_to_end);
 criterion_main!(benches);

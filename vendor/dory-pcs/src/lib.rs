@@ -108,9 +108,7 @@ pub mod backends;
 
 pub use error::DoryError;
 pub use evaluation_proof::create_evaluation_proof;
-pub use messages::{
-    FirstReduceMessage, ScalarProductMessage, ScalarProductProof, SecondReduceMessage, VMVMessage,
-};
+pub use messages::{FirstReduceMessage, ScalarProductMessage, ScalarProductProof, SecondReduceMessage, VMVMessage};
 #[cfg(feature = "zk")]
 pub use messages::{Sigma1Proof, Sigma2Proof};
 #[cfg(feature = "zk")]
@@ -169,10 +167,7 @@ where
         }
 
         // Setup not found on disk - generate new setup
-        tracing::info!(
-            "Setup not found on disk, generating new setup for max_log_n={}",
-            max_log_n
-        );
+        tracing::info!("Setup not found on disk, generating new setup for max_log_n={}", max_log_n);
         let prover_setup = ProverSetup::new(max_log_n);
         let verifier_setup = prover_setup.to_verifier_setup();
 

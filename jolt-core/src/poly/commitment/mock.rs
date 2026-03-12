@@ -56,17 +56,11 @@ where
         (MockCommitment::default(), ())
     }
 
-    fn batch_commit<P>(
-        polys: &[P],
-        gens: &Self::ProverSetup,
-    ) -> Vec<(Self::Commitment, Self::OpeningProofHint)>
+    fn batch_commit<P>(polys: &[P], gens: &Self::ProverSetup) -> Vec<(Self::Commitment, Self::OpeningProofHint)>
     where
         P: Borrow<MultilinearPolynomial<Self::Field>>,
     {
-        polys
-            .iter()
-            .map(|poly| (Self::commit(poly.borrow(), gens).0, ()))
-            .collect()
+        polys.iter().map(|poly| (Self::commit(poly.borrow(), gens).0, ())).collect()
     }
 
     fn combine_commitments<C: Borrow<Self::Commitment>>(
@@ -76,11 +70,7 @@ where
         MockCommitment::default()
     }
 
-    fn combine_hints(
-        _hints: Vec<Self::OpeningProofHint>,
-        _coeffs: &[Self::Field],
-    ) -> Self::OpeningProofHint {
-    }
+    fn combine_hints(_hints: Vec<Self::OpeningProofHint>, _coeffs: &[Self::Field]) -> Self::OpeningProofHint {}
 
     fn prove<ProofTranscript: Transcript>(
         _setup: &Self::ProverSetup,
@@ -89,12 +79,7 @@ where
         _: Option<Self::OpeningProofHint>,
         _transcript: &mut ProofTranscript,
     ) -> (Self::Proof, Option<Self::Field>) {
-        (
-            MockProof {
-            opening_point: opening_point.to_owned(),
-            },
-            None,
-        )
+        (MockProof { opening_point: opening_point.to_owned() }, None)
     }
 
     fn verify<ProofTranscript: Transcript>(

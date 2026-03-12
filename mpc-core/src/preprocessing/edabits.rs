@@ -932,7 +932,7 @@ pub use super::pool::PreprocessingPool;
 #[cfg(all(test, feature = "test-utils"))]
 mod tests {
     use super::*;
-    use crate::protocols::rep3_ring::casts::{r2f_preproc_many, r2f_b2a_preproc, r2f_b2a_preproc_many};
+    use crate::protocols::rep3_ring::casts::{r2f_b2a_preproc, r2f_b2a_preproc_many, r2f_preproc_many};
     use crate::protocols::rep3_ring::conversion::b2a_preproc_many;
 
     use crate::protocols::rep3::{combine_field_element, combine_field_elements, share_field_element};
@@ -1319,7 +1319,8 @@ mod tests {
                 move |(x_sh, bit_sh): (Vec<Rep3RingShare<u64>>, Vec<Rep3RingShare<RingBit>>), mut io_ctx| {
                     let pool_dir =
                         std::env::temp_dir().join(format!("mpc-core-test-preproc-batched-{}", io_ctx.party_idx()));
-                    let mut pool = preprocess_pool::<Fr, _>(&pool_dir, [0, 0, 0, NUM_U64, 0], NUM_DABITS, 0, 0, &mut io_ctx)?;
+                    let mut pool =
+                        preprocess_pool::<Fr, _>(&pool_dir, [0, 0, 0, NUM_U64, 0], NUM_DABITS, 0, 0, &mut io_ctx)?;
 
                     // B2A via edaBits
                     let batch = pool.take_edabits::<u64>(NUM_U64)?;
@@ -1327,7 +1328,11 @@ mod tests {
 
                     // Bit inject via daBits
                     let dbatch = pool.take_dabits(NUM_DABITS)?;
-                    let inj = crate::protocols::rep3_ring::conversion::bit_inject_field_preproc_many::<Fr, _>(&bit_sh, &dbatch, io_ctx.main())?;
+                    let inj = crate::protocols::rep3_ring::conversion::bit_inject_field_preproc_many::<Fr, _>(
+                        &bit_sh,
+                        &dbatch,
+                        io_ctx.main(),
+                    )?;
 
                     Ok((b2a, inj))
                 },
@@ -1389,7 +1394,8 @@ mod tests {
                     let pool_dir = base_dir_for_workers.join(format!("party_{}", usize::from(party_id)));
                     std::fs::create_dir_all(&pool_dir)?;
 
-                    let mut pool = preprocess_pool::<Fr, _>(&pool_dir, [0, 0, 0, NUM_U64, 0], NUM_DABITS, 0, 0, &mut io_ctx)?;
+                    let mut pool =
+                        preprocess_pool::<Fr, _>(&pool_dir, [0, 0, 0, NUM_U64, 0], NUM_DABITS, 0, 0, &mut io_ctx)?;
 
                     // Load back from disk and consume from the loaded pool.
                     let mut loaded = PreprocessingPool::<Fr>::load(&pool_dir, party_id)?;
@@ -1400,7 +1406,11 @@ mod tests {
                     let b2a = r2f_b2a_preproc_many::<u64, Fr, _>(&x_sh, &batch, io_ctx.main())?;
 
                     let dbatch = loaded.take_dabits(NUM_DABITS)?;
-                    let inj = crate::protocols::rep3_ring::conversion::bit_inject_field_preproc_many::<Fr, _>(&bit_sh, &dbatch, io_ctx.main())?;
+                    let inj = crate::protocols::rep3_ring::conversion::bit_inject_field_preproc_many::<Fr, _>(
+                        &bit_sh,
+                        &dbatch,
+                        io_ctx.main(),
+                    )?;
 
                     Ok((b2a, inj))
                 },
@@ -1505,12 +1515,22 @@ mod tests {
                 move |(init_x, init_b, ext_x, ext_b): Input, mut io_ctx| {
                     // Phase 1: create initial pool and consume everything.
                     let pool_dir = std::env::temp_dir().join(format!("mpc-core-test-extend-{}", io_ctx.party_idx()));
-                    let mut pool =
-                        preprocess_pool::<Fr, _>(&pool_dir, [0, 0, 0, INITIAL_U64, 0], INITIAL_DABITS, 0, 0, &mut io_ctx)?;
+                    let mut pool = preprocess_pool::<Fr, _>(
+                        &pool_dir,
+                        [0, 0, 0, INITIAL_U64, 0],
+                        INITIAL_DABITS,
+                        0,
+                        0,
+                        &mut io_ctx,
+                    )?;
                     let batch = pool.take_edabits::<u64>(INITIAL_U64)?;
                     let _ = r2f_b2a_preproc_many::<u64, Fr, _>(&init_x, &batch, io_ctx.main())?;
                     let dbatch = pool.take_dabits(INITIAL_DABITS)?;
-                    let _ = crate::protocols::rep3_ring::conversion::bit_inject_field_preproc_many::<Fr, _>(&init_b, &dbatch, io_ctx.main())?;
+                    let _ = crate::protocols::rep3_ring::conversion::bit_inject_field_preproc_many::<Fr, _>(
+                        &init_b,
+                        &dbatch,
+                        io_ctx.main(),
+                    )?;
 
                     // Phase 2: extend pool to cover extra items.
                     let deficit_counts = [0, 0, 0, EXTRA_U64, 0];
@@ -1520,7 +1540,11 @@ mod tests {
                     let batch2 = pool.take_edabits::<u64>(EXTRA_U64)?;
                     let b2a = r2f_b2a_preproc_many::<u64, Fr, _>(&ext_x, &batch2, io_ctx.main())?;
                     let dbatch2 = pool.take_dabits(EXTRA_DABITS)?;
-                    let inj = crate::protocols::rep3_ring::conversion::bit_inject_field_preproc_many::<Fr, _>(&ext_b, &dbatch2, io_ctx.main())?;
+                    let inj = crate::protocols::rep3_ring::conversion::bit_inject_field_preproc_many::<Fr, _>(
+                        &ext_b,
+                        &dbatch2,
+                        io_ctx.main(),
+                    )?;
 
                     Ok((b2a, inj))
                 },

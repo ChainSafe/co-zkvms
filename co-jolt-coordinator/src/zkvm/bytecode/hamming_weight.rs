@@ -22,11 +22,7 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for HammingWeight
         self.input_claim()
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &Rep3OpeningAccumulator<F>,
-        _r: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &Rep3OpeningAccumulator<F>, _r: &[F::Challenge]) -> F {
         self.gamma_powers()
             .iter()
             .enumerate()
@@ -42,10 +38,7 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for HammingWeight
             .sum::<F>()
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         self.normalize_opening_point(opening_point)
     }
 
@@ -87,10 +80,7 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for HammingWeight
     }
 
     #[cfg(feature = "zk")]
-    fn input_constraint_challenge_values(
-        &self,
-        _accumulator: &Rep3OpeningAccumulator<F>,
-    ) -> Vec<F> {
+    fn input_constraint_challenge_values(&self, _accumulator: &Rep3OpeningAccumulator<F>) -> Vec<F> {
         self.gamma_powers().to_vec()
     }
 }

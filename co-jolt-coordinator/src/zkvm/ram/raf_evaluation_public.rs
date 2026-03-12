@@ -22,24 +22,16 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for RafEvaluation
         self.input_claim()
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &Rep3OpeningAccumulator<F>,
-        r: &[F::Challenge],
-    ) -> F {
-        let unmap_eval =
-            UnmapRamAddressPolynomial::<F>::new(self.log_K(), self.start_address()).evaluate(r);
+    fn expected_output_claim(&self, accumulator: &Rep3OpeningAccumulator<F>, r: &[F::Challenge]) -> F {
+        let unmap_eval = UnmapRamAddressPolynomial::<F>::new(self.log_K(), self.start_address()).evaluate(r);
 
-        let (_, ra_claim) = accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation);
+        let (_, ra_claim) =
+            accumulator.get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation);
 
         unmap_eval * ra_claim
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         self.normalize_opening_point(opening_point)
     }
 
@@ -50,11 +42,9 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for RafEvaluation
         r_address: OpeningPoint<BIG_ENDIAN, F>,
         claims: Vec<F>,
     ) {
-        let r_cycle = accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::RamAddress, SumcheckId::SpartanOuter)
-            .0;
-        let ra_opening_point =
-            OpeningPoint::new([r_address.r.as_slice(), r_cycle.r.as_slice()].concat());
+        let r_cycle =
+            accumulator.get_virtual_polynomial_opening(VirtualPolynomial::RamAddress, SumcheckId::SpartanOuter).0;
+        let ra_opening_point = OpeningPoint::new([r_address.r.as_slice(), r_cycle.r.as_slice()].concat());
 
         accumulator.append_virtual(
             transcript,

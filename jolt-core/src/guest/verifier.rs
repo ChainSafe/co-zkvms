@@ -13,12 +13,8 @@ pub fn preprocess(
     memory_config.program_size = Some(program_size);
     let memory_layout = MemoryLayout::new(&memory_config);
 
-    let prover_preprocessing = JoltRV64IMAC::prover_preprocess(
-        bytecode.to_vec(),
-        memory_layout,
-        memory_init.to_vec(),
-        max_trace_length,
-    );
+    let prover_preprocessing =
+        JoltRV64IMAC::prover_preprocess(bytecode.to_vec(), memory_layout, memory_init.to_vec(), max_trace_length);
 
     JoltVerifierPreprocessing::from(&prover_preprocessing)
 }

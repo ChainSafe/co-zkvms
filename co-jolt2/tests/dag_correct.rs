@@ -26,8 +26,8 @@ use jolt_core::zkvm::dag::state_manager::StateManager as VanillaStateManager;
 use jolt_core::zkvm::dag::state_manager::{ProofData, ProofKeys};
 use jolt_core::zkvm::witness::DTH_ROOT_OF_K;
 use jolt_core::zkvm::{JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing, JoltVerifierPreprocessing};
-use tracer::JoltDevice;
 use tracer::instruction::Cycle;
+use tracer::JoltDevice;
 
 type F = Fr;
 type PCS = DoryCommitmentScheme;
@@ -46,10 +46,7 @@ fn dag_test_lock() -> MutexGuard<'static, ()> {
 }
 
 fn use_sha2_fixture() -> bool {
-    matches!(
-        std::env::var("TEST_SHA2").ok().as_deref().or(std::env::var("SHA2_CHAIN").ok().as_deref()),
-        Some("1")
-    )
+    matches!(std::env::var("TEST_SHA2").ok().as_deref().or(std::env::var("SHA2_CHAIN").ok().as_deref()), Some("1"))
 }
 
 fn build_program() -> Program {
@@ -75,7 +72,9 @@ fn build_inputs() -> Vec<u8> {
     }
 }
 
-fn build_public_fixture(trace_file: &str) -> (
+fn build_public_fixture(
+    trace_file: &str,
+) -> (
     [(Vec<Rep3Cycle>, co_jolt2::host::memory::Rep3Memory, co_jolt2::host::jolt_device::Rep3ProgramIOInput); 3],
     JoltProverPreprocessing<F, PCS>,
     JoltVerifierPreprocessing<F, PCS>,

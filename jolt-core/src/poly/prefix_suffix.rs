@@ -40,9 +40,7 @@ impl<F: JoltField> PrefixRegistry<F> {
 
     pub fn update_checkpoints(&mut self) {
         Prefix::iter().for_each(|p| {
-            self.checkpoints[p] = self[p]
-                .as_ref()
-                .map(|p| p.read().unwrap().final_sumcheck_claim());
+            self.checkpoints[p] = self[p].as_ref().map(|p| p.read().unwrap().final_sumcheck_claim());
             self[p] = None;
         });
     }
@@ -132,21 +130,11 @@ impl<F: JoltField> PolynomialBinding<F> for CachedPolynomial<F> {
 
 impl<F: JoltField> CachedPolynomial<F> {
     pub fn new(inner: MultilinearPolynomial<F>, cache_capacity: usize) -> Self {
-        Self {
-            inner,
-            sumcheck_evals_cache: vec![OnceCell::new(); cache_capacity],
-            bound_this_round: false,
-        }
+        Self { inner, sumcheck_evals_cache: vec![OnceCell::new(); cache_capacity], bound_this_round: false }
     }
 
     /// Returns evaluation at 0 and 2
-    pub fn cached_sumcheck_evals(
-        &self,
-        index: usize,
-        degree: usize,
-        order: BindingOrder,
-        use_cache: bool,
-    ) -> (F, F) {
+    pub fn cached_sumcheck_evals(&self, index: usize, degree: usize, order: BindingOrder, use_cache: bool) -> (F, F) {
         assert!(degree == 2);
         if use_cache {
             *self.sumcheck_evals_cache[index].get_or_init(|| {
@@ -213,10 +201,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
         chunk_len: usize,
         total_len: usize,
     ) -> Self {
-        assert!(
-            total_len.is_multiple_of(chunk_len),
-            "total_len must be a multiple of chunk_len"
-        );
+        assert!(total_len.is_multiple_of(chunk_len), "total_len must be a multiple of chunk_len");
         Self {
             poly,
             P: std::array::from_fn(|_| None),
@@ -252,9 +237,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
     /// https://eprint.iacr.org/2025/611.pdf
     #[tracing::instrument(skip_all, name = "PrefixSuffix::init_P")]
     pub fn init_P(&mut self, prefix_registry: &mut PrefixRegistry<F>) {
-        self.P = self
-            .poly
-            .prefixes(self.chunk_len, self.phase, prefix_registry);
+        self.P = self.poly.prefixes(self.chunk_len, self.phase, prefix_registry);
     }
 
     /// Q array is defined as Q[x] = \sum_{y \in {0, 1}^m} u(x || y) * suffix(y)
@@ -301,8 +284,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
                 },
             );
 
-        let mut reduced_Q: [Vec<F>; ORDER] =
-            std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
+        let mut reduced_Q: [Vec<F>; ORDER] = std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
         for (q, reduced_q) in new_Q.iter().zip(reduced_Q.iter_mut()) {
             for (q_coeff, reduced_q_coeff) in q.iter().zip(reduced_q.iter_mut()) {
                 *reduced_q_coeff = F::from_barrett_reduce(*q_coeff);
@@ -392,8 +374,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
             );
 
         // Reduce to field for left
-        let mut reduced_left: [Vec<F>; ORDER] =
-            std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
+        let mut reduced_left: [Vec<F>; ORDER] = std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
         for (q, reduced_q) in new_left.iter().zip(reduced_left.iter_mut()) {
             for (q_coeff, reduced_q_coeff) in q.iter().zip(reduced_q.iter_mut()) {
                 *reduced_q_coeff = F::from_barrett_reduce(*q_coeff);
@@ -401,18 +382,15 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
         }
 
         // Reduce to field for right
-        let mut reduced_right: [Vec<F>; ORDER] =
-            std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
+        let mut reduced_right: [Vec<F>; ORDER] = std::array::from_fn(|_| unsafe_allocate_zero_vec(poly_len));
         for (q, reduced_q) in new_right.iter().zip(reduced_right.iter_mut()) {
             for (q_coeff, reduced_q_coeff) in q.iter().zip(reduced_q.iter_mut()) {
                 *reduced_q_coeff = F::from_barrett_reduce(*q_coeff);
             }
         }
 
-        left.Q =
-            std::array::from_fn(|i| DensePolynomial::new(std::mem::take(&mut reduced_left[i])));
-        right.Q =
-            std::array::from_fn(|i| DensePolynomial::new(std::mem::take(&mut reduced_right[i])));
+        left.Q = std::array::from_fn(|i| DensePolynomial::new(std::mem::take(&mut reduced_left[i])));
+        right.Q = std::array::from_fn(|i| DensePolynomial::new(std::mem::take(&mut reduced_right[i])));
     }
 
     /// Returns evaluation at 0 and at 2 at index
@@ -427,8 +405,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
                     // one for registry and one for self
                     let use_cache = Arc::strong_count(p) > 2;
                     let p = p.read().unwrap();
-                    let p_evals =
-                        p.cached_sumcheck_evals(index, 2, BindingOrder::HighToLow, use_cache);
+                    let p_evals = p.cached_sumcheck_evals(index, 2, BindingOrder::HighToLow, use_cache);
                     drop(p);
                     p_evals
                 } else {
@@ -444,13 +421,7 @@ impl<F: JoltField, const ORDER: usize> PrefixSuffixDecomposition<F, ORDER> {
                 )
             })
             .reduce(
-                || {
-                    (
-                        F::Unreduced::<9>::zero(),
-                        F::Unreduced::<9>::zero(),
-                        F::Unreduced::<9>::zero(),
-                    )
-                },
+                || (F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero(), F::Unreduced::<9>::zero()),
                 |running, new| (running.0 + new.0, running.1 + new.1, running.2 + new.2),
             );
         let eval_0 = F::from_montgomery_reduce(eval_0);
@@ -522,12 +493,7 @@ pub mod tests {
         const NUM_VARS: usize,
         const PREFIX_LEN: usize,
         const ORDER: usize,
-        P: PolynomialEvaluation<Fr>
-            + PrefixSuffixPolynomial<Fr, ORDER>
-            + Clone
-            + Send
-            + Sync
-            + 'static,
+        P: PolynomialEvaluation<Fr> + PrefixSuffixPolynomial<Fr, ORDER> + Clone + Send + Sync + 'static,
     >(
         poly: P,
         prefix_registry_index: Prefix,
@@ -538,20 +504,12 @@ pub mod tests {
         let mut prefix_registry = PrefixRegistry::new();
         let mut ps = PrefixSuffixDecomposition::new(Box::new(poly.clone()), PREFIX_LEN, NUM_VARS);
 
-        let indices = (0..(1 << NUM_VARS))
-            .map(|i| LookupBits::new(i, NUM_VARS))
-            .enumerate()
-            .collect::<Vec<_>>();
+        let indices = (0..(1 << NUM_VARS)).map(|i| LookupBits::new(i, NUM_VARS)).enumerate().collect::<Vec<_>>();
 
         let mut rr = vec![];
         for phase in 0..(NUM_VARS / PREFIX_LEN) {
             ps.init_P(&mut prefix_registry);
-            ps.init_Q(
-                &(0..(1 << (NUM_VARS - PREFIX_LEN * phase)))
-                    .map(|_| Fr::ONE)
-                    .collect::<Vec<_>>(),
-                &indices,
-            );
+            ps.init_Q(&(0..(1 << (NUM_VARS - PREFIX_LEN * phase))).map(|_| Fr::ONE).collect::<Vec<_>>(), &indices);
 
             for round in (0..PREFIX_LEN).rev() {
                 for b in 0..round.pow2() {
@@ -561,12 +519,13 @@ pub mod tests {
                         .iter()
                         .cloned()
                         .chain(std::iter::once(Fr::ZERO))
-                        .chain(
-                            std::iter::repeat_n(b, round)
-                                .enumerate()
-                                .rev()
-                                .map(|(i, b)| if (b >> i) & 1 == 1 { Fr::ONE } else { Fr::ZERO }),
-                        )
+                        .chain(std::iter::repeat_n(b, round).enumerate().rev().map(|(i, b)| {
+                            if (b >> i) & 1 == 1 {
+                                Fr::ONE
+                            } else {
+                                Fr::ZERO
+                            }
+                        }))
                         .collect::<Vec<Fr>>();
                     let suffix_len = SUFFIX_LEN - phase * PREFIX_LEN;
                     let direct_eval: Fr = (0..(1 << suffix_len))
@@ -589,12 +548,13 @@ pub mod tests {
                         .iter()
                         .cloned()
                         .chain(std::iter::once(Fr::ONE + Fr::ONE))
-                        .chain(
-                            std::iter::repeat_n(b, round)
-                                .enumerate()
-                                .rev()
-                                .map(|(i, b)| if (b >> i) & 1 == 1 { Fr::ONE } else { Fr::ZERO }),
-                        )
+                        .chain(std::iter::repeat_n(b, round).enumerate().rev().map(|(i, b)| {
+                            if (b >> i) & 1 == 1 {
+                                Fr::ONE
+                            } else {
+                                Fr::ZERO
+                            }
+                        }))
                         .collect::<Vec<Fr>>();
                     let direct_eval: Fr = (0..(1 << suffix_len))
                         .map(|i| {
@@ -619,9 +579,6 @@ pub mod tests {
 
             prefix_registry.update_checkpoints();
         }
-        assert_eq!(
-            prefix_registry.checkpoints[prefix_registry_index],
-            Some(poly.evaluate(&rr))
-        )
+        assert_eq!(prefix_registry.checkpoints[prefix_registry_index], Some(poly.evaluate(&rr)))
     }
 }

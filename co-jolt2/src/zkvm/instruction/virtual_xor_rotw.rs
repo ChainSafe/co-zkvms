@@ -21,10 +21,8 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualXORROTW1
                 RingElement(xored.a.0.rotate_right(N_ROT)),
                 RingElement(xored.b.0.rotate_right(N_ROT)),
             );
-            let rotated_xlen = Rep3RingShare::new_ring(
-                RingElement(rotated.a.0 as XlenInt),
-                RingElement(rotated.b.0 as XlenInt),
-            );
+            let rotated_xlen =
+                Rep3RingShare::new_ring(RingElement(rotated.a.0 as XlenInt), RingElement(rotated.b.0 as XlenInt));
             *out = FutureRep3Ring::cast_to_field_b2a(rotated_xlen);
         });
         Ok(())
@@ -52,10 +50,8 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualXORROTW1
                 RingElement(xored.a.0.rotate_right(N_ROT)),
                 RingElement(xored.b.0.rotate_right(N_ROT)),
             );
-            let rotated_xlen = Rep3RingShare::new_ring(
-                RingElement(rotated.a.0 as XlenInt),
-                RingElement(rotated.b.0 as XlenInt),
-            );
+            let rotated_xlen =
+                Rep3RingShare::new_ring(RingElement(rotated.a.0 as XlenInt), RingElement(rotated.b.0 as XlenInt));
             *out = FutureRep3Ring::cast_to_field_b2a(rotated_xlen);
         });
         Ok(())
@@ -83,10 +79,8 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualXORROTW8
                 RingElement(xored.a.0.rotate_right(N_ROT)),
                 RingElement(xored.b.0.rotate_right(N_ROT)),
             );
-            let rotated_xlen = Rep3RingShare::new_ring(
-                RingElement(rotated.a.0 as XlenInt),
-                RingElement(rotated.b.0 as XlenInt),
-            );
+            let rotated_xlen =
+                Rep3RingShare::new_ring(RingElement(rotated.a.0 as XlenInt), RingElement(rotated.b.0 as XlenInt));
             *out = FutureRep3Ring::cast_to_field_b2a(rotated_xlen);
         });
         Ok(())
@@ -114,10 +108,8 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualXORROTW7
                 RingElement(xored.a.0.rotate_right(N_ROT)),
                 RingElement(xored.b.0.rotate_right(N_ROT)),
             );
-            let rotated_xlen = Rep3RingShare::new_ring(
-                RingElement(rotated.a.0 as XlenInt),
-                RingElement(rotated.b.0 as XlenInt),
-            );
+            let rotated_xlen =
+                Rep3RingShare::new_ring(RingElement(rotated.a.0 as XlenInt), RingElement(rotated.b.0 as XlenInt));
             *out = FutureRep3Ring::cast_to_field_b2a(rotated_xlen);
         });
         Ok(())

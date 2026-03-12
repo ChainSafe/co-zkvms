@@ -12,12 +12,7 @@ use crate::poly::opening_proof::Rep3OpeningAccumulator;
 
 pub use jolt_core::zkvm::dag::state_manager::{ProofData, ProofKeys, Proofs};
 
-pub struct StateManager<
-    'a,
-    F: JoltField,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<Field = F>,
-> {
+pub struct StateManager<'a, F: JoltField, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>> {
     pub transcript: ProofTranscript,
     pub proofs: BTreeMap<ProofKeys, ProofData<F, Bn254Curve, PCS, ProofTranscript>>,
     pub commitments: Vec<PCS::Commitment>,
@@ -72,12 +67,9 @@ where
     }
 
     pub fn fiat_shamir_preamble(&mut self, trace_length: usize) {
-        self.transcript
-            .append_u64(self.program_io.memory_layout.max_input_size);
-        self.transcript
-            .append_u64(self.program_io.memory_layout.max_output_size);
-        self.transcript
-            .append_u64(self.program_io.memory_layout.memory_size);
+        self.transcript.append_u64(self.program_io.memory_layout.max_input_size);
+        self.transcript.append_u64(self.program_io.memory_layout.max_output_size);
+        self.transcript.append_u64(self.program_io.memory_layout.memory_size);
         self.transcript.append_bytes(&self.program_io.inputs);
         self.transcript.append_bytes(&self.program_io.outputs);
         self.transcript.append_u64(self.program_io.panic as u64);

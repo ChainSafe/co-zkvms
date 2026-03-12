@@ -29,31 +29,19 @@ pub enum ProofKeys {
     UntrustedAdviceProof,
 }
 
-pub enum ProofData<
-    F: JoltField,
-    C: JoltCurve,
-    PCS: CommitmentScheme<Field = F>,
-    ProofTranscript: Transcript,
-> {
+pub enum ProofData<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, ProofTranscript: Transcript> {
     SumcheckProof(SumcheckInstanceProof<F, C, ProofTranscript>),
     ReducedOpeningProof(ReducedOpeningProof<F, C, PCS, ProofTranscript>),
     OpeningProof(PCS::Proof),
 }
 
-pub type Proofs<F, C, PCS, ProofTranscript> =
-    BTreeMap<ProofKeys, ProofData<F, C, PCS, ProofTranscript>>;
+pub type Proofs<F, C, PCS, ProofTranscript> = BTreeMap<ProofKeys, ProofData<F, C, PCS, ProofTranscript>>;
 
 // ---------------------------------------------------------------------------
 // Vanilla verifier StateManager
 // ---------------------------------------------------------------------------
 
-pub struct StateManager<
-    'a,
-    F: JoltField,
-    C: JoltCurve,
-    ProofTranscript: Transcript,
-    PCS: CommitmentScheme<Field = F>,
-> {
+pub struct StateManager<'a, F: JoltField, C: JoltCurve, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>> {
     pub transcript: Rc<RefCell<ProofTranscript>>,
     pub proofs: Rc<RefCell<Proofs<F, C, PCS, ProofTranscript>>>,
     pub commitments: Rc<RefCell<Vec<PCS::Commitment>>>,
@@ -88,11 +76,8 @@ where
         #[cfg(not(feature = "zk"))]
         let zk_mode = false;
 
-        let mut accumulator = if zk_mode {
-            VerifierOpeningAccumulator::new_zk()
-        } else {
-            VerifierOpeningAccumulator::new()
-        };
+        let mut accumulator =
+            if zk_mode { VerifierOpeningAccumulator::new_zk() } else { VerifierOpeningAccumulator::new() };
         // Seed any serialized openings that are present. In the full BlindFold path this can
         // legitimately be empty, but mixed clear/ZK staging still relies on these values.
         accumulator.prime_openings(proof.opening_claims.0.clone());
@@ -147,8 +132,6 @@ where
         polynomial: VirtualPolynomial,
         sumcheck: SumcheckId,
     ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
-        self.accumulator
-            .borrow()
-            .get_virtual_polynomial_opening(polynomial, sumcheck)
+        self.accumulator.borrow().get_virtual_polynomial_opening(polynomial, sumcheck)
     }
 }

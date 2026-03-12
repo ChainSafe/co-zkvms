@@ -10,10 +10,10 @@ use crate::{
 };
 
 use super::{
-    add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice,
-    virtual_assert_eq::VirtualAssertEQ, virtual_assert_valid_div0::VirtualAssertValidDiv0,
-    virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
-    virtual_move::VirtualMove, Cycle, Instruction, RISCVInstruction, RISCVTrace,
+    add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice, virtual_assert_eq::VirtualAssertEQ,
+    virtual_assert_valid_div0::VirtualAssertValidDiv0,
+    virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder, virtual_move::VirtualMove, Cycle,
+    Instruction, RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -31,8 +31,7 @@ impl DIVU {
         if divisor == 0 {
             cpu.x[self.operands.rd as usize] = -1;
         } else {
-            cpu.x[self.operands.rd as usize] =
-                cpu.sign_extend(dividend.wrapping_div(divisor) as i64)
+            cpu.x[self.operands.rd as usize] = cpu.sign_extend(dividend.wrapping_div(divisor) as i64)
         }
     }
 }
@@ -84,11 +83,7 @@ impl RISCVTrace for DIVU {
     ///
     /// Special case per RISC-V spec:
     /// - Division by zero: returns all 1s (u32::MAX or u64::MAX)
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let a0 = self.operands.rs1; // dividend
         let a1 = self.operands.rs2; // divisor
         let a2 = allocator.allocate(); // quotient (from oracle)

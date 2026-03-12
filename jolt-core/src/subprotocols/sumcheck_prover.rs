@@ -7,9 +7,7 @@ use crate::{
     poly::opening_proof::ProverOpeningAccumulator,
 };
 
-pub trait SumcheckInstanceProver<F: JoltField, T: Transcript>:
-    Send + Sync + MaybeAllocative
-{
+pub trait SumcheckInstanceProver<F: JoltField, T: Transcript>: Send + Sync + MaybeAllocative {
     fn get_params(&self) -> &dyn SumcheckInstanceParams<F>;
     /// Returns the maximum degree of the sumcheck polynomial.
     fn degree(&self) -> usize {
@@ -53,11 +51,7 @@ pub trait SumcheckInstanceProver<F: JoltField, T: Transcript>:
 
     /// Caches polynomial opening claims needed after the sumcheck protocol completes.
     /// These openings will later be proven using either an opening proof or another sumcheck.
-    fn cache_openings(
-        &self,
-        accumulator: &mut ProverOpeningAccumulator<F>,
-        sumcheck_challenges: &[F::Challenge],
-    );
+    fn cache_openings(&self, accumulator: &mut ProverOpeningAccumulator<F>, sumcheck_challenges: &[F::Challenge]);
 
     #[cfg(feature = "allocative")]
     fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder);

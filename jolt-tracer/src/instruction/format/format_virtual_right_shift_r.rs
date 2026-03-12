@@ -2,9 +2,7 @@ use crate::emulator::cpu::Cpu;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
-use super::{
-    normalize_register_value, InstructionFormat, InstructionRegisterState, NormalizedOperands,
-};
+use super::{normalize_register_value, InstructionFormat, InstructionRegisterState, NormalizedOperands};
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatVirtualRightShiftR {
@@ -27,11 +25,7 @@ impl InstructionRegisterState for RegisterStateVirtualRightShift {
         let shift = rng.next_u32() % 64;
         let ones: u64 = (1 << shift) - 1;
         let rs2 = ones.wrapping_shl(64 - shift);
-        Self {
-            rd: (rng.next_u64(), rng.next_u64()),
-            rs1: rng.next_u64(),
-            rs2,
-        }
+        Self { rd: (rng.next_u64(), rng.next_u64()), rs1: rng.next_u64(), rs2 }
     }
 
     fn rs1_value(&self) -> u64 {
@@ -78,21 +72,12 @@ impl InstructionFormat for FormatVirtualRightShiftR {
 
 impl From<NormalizedOperands> for FormatVirtualRightShiftR {
     fn from(operands: NormalizedOperands) -> Self {
-        Self {
-            rd: operands.rd,
-            rs1: operands.rs1,
-            rs2: operands.rs2,
-        }
+        Self { rd: operands.rd, rs1: operands.rs1, rs2: operands.rs2 }
     }
 }
 
 impl From<FormatVirtualRightShiftR> for NormalizedOperands {
     fn from(format: FormatVirtualRightShiftR) -> Self {
-        Self {
-            rd: format.rd,
-            rs1: format.rs1,
-            rs2: format.rs2,
-            imm: 0,
-        }
+        Self { rd: format.rd, rs1: format.rs1, rs2: format.rs2, imm: 0 }
     }
 }

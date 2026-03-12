@@ -16,9 +16,7 @@ use crate::protocols::rep3::IoResult;
 const MASK34: u64 = (1u64 << 34) - 1;
 
 /// 34-bit unsigned integer (Z_{2^34}).
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
-)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[repr(transparent)]
 pub struct U34(u64);
 
@@ -197,11 +195,7 @@ impl Shl<usize> for U34 {
     type Output = Self;
     #[inline(always)]
     fn shl(self, rhs: usize) -> Self {
-        if rhs >= 34 {
-            Self(0)
-        } else {
-            Self((self.0 << rhs) & MASK34)
-        }
+        if rhs >= 34 { Self(0) } else { Self((self.0 << rhs) & MASK34) }
     }
 }
 

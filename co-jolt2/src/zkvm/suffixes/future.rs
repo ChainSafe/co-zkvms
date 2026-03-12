@@ -163,8 +163,8 @@ impl<F: JoltField> SuffixFutureBatch<F> {
         io_ctx: &mut IoContextPool<N>,
         pool: &mut PreprocessingPool<F>,
     ) -> eyre::Result<Vec<Rep3Value<F>>> {
-        use mpc_core::protocols::rep3_ring::conversion;
         use mpc_core::protocols::rep3_ring::casts;
+        use mpc_core::protocols::rep3_ring::conversion;
 
         let mut out = vec![Rep3Value::zero_share(); self.len];
 

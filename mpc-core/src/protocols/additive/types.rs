@@ -1,5 +1,5 @@
-use ark_ff::Zero;
 use crate::field::PrimeField;
+use ark_ff::Zero;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 
@@ -7,18 +7,7 @@ use crate::protocols::rep3::PartyID;
 // use crate::serde_compat::{ark_de, ark_se};
 
 /// This type represents a replicated shared value. Since a replicated share of a field element contains additive shares of two parties, this type contains two field elements.
-#[derive(
-    Debug,
-    Copy,
-    Clone,
-    PartialEq,
-    Eq,
-    Hash,
-    CanonicalSerialize,
-    CanonicalDeserialize,
-    Serialize,
-    Deserialize,
-)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, CanonicalSerialize, CanonicalDeserialize, Serialize, Deserialize)]
 #[repr(transparent)]
 pub struct AdditivePrimeFieldShare<F: PrimeField>(pub(crate) F);
 
@@ -70,14 +59,8 @@ impl<F: PrimeField> AdditivePrimeFieldShare<F> {
     /// This function is unsafe because it assumes that the size and alignment of `AdditivePrimeFieldShare<F>` and `F` are the same.
     #[inline]
     pub fn into_fe_vec(mut v: Vec<AdditivePrimeFieldShare<F>>) -> Vec<F> {
-        debug_assert_eq!(
-            std::mem::size_of::<AdditivePrimeFieldShare<F>>(),
-            std::mem::size_of::<F>()
-        );
-        debug_assert_eq!(
-            std::mem::align_of::<AdditivePrimeFieldShare<F>>(),
-            std::mem::align_of::<F>()
-        );
+        debug_assert_eq!(std::mem::size_of::<AdditivePrimeFieldShare<F>>(), std::mem::size_of::<F>());
+        debug_assert_eq!(std::mem::align_of::<AdditivePrimeFieldShare<F>>(), std::mem::align_of::<F>());
         let ptr = v.as_mut_ptr() as *mut F;
         let len = v.len();
         let cap = v.capacity();
@@ -92,14 +75,8 @@ impl<F: PrimeField> AdditivePrimeFieldShare<F> {
     /// This function is unsafe because it assumes that the size and alignment of `AdditivePrimeFieldShare<F>` and `F` are the same.
     #[inline]
     pub fn from_fe_vec(mut v: Vec<F>) -> Vec<AdditivePrimeFieldShare<F>> {
-        debug_assert_eq!(
-            std::mem::size_of::<AdditivePrimeFieldShare<F>>(),
-            std::mem::size_of::<F>()
-        );
-        debug_assert_eq!(
-            std::mem::align_of::<AdditivePrimeFieldShare<F>>(),
-            std::mem::align_of::<F>()
-        );
+        debug_assert_eq!(std::mem::size_of::<AdditivePrimeFieldShare<F>>(), std::mem::size_of::<F>());
+        debug_assert_eq!(std::mem::align_of::<AdditivePrimeFieldShare<F>>(), std::mem::align_of::<F>());
         let ptr = v.as_mut_ptr() as *mut AdditivePrimeFieldShare<F>;
         let len = v.len();
         let cap = v.capacity();
@@ -122,31 +99,19 @@ impl<F: PrimeField> AdditivePrimeFieldShare<F> {
     /// Multiplies the share by a public field element.
     #[inline(always)]
     pub fn mul_public_0_optimized(self, other: F) -> Self {
-        if other.is_zero() {
-            Self::zero()
-        } else {
-            self * other
-        }
+        if other.is_zero() { Self::zero() } else { self * other }
     }
 
     /// Multiplies the share by a public field element.
     #[inline(always)]
     pub fn mul_public_1_optimized(self, other: F) -> Self {
-        if other.is_one() {
-            self
-        } else {
-            self * other
-        }
+        if other.is_one() { self } else { self * other }
     }
 
     /// Multiplies the share by a public field element.
     #[inline(always)]
     pub fn mul_public_01_optimized(self, other: F) -> Self {
-        if other.is_zero() {
-            Self::zero()
-        } else {
-            self.mul_public_1_optimized(other)
-        }
+        if other.is_zero() { Self::zero() } else { self.mul_public_1_optimized(other) }
     }
 }
 
@@ -171,9 +136,7 @@ impl<F: PrimeField> std::ops::AddAssign<AdditivePrimeFieldShare<F>> for Additive
     }
 }
 
-impl<F: PrimeField> std::ops::AddAssign<&AdditivePrimeFieldShare<F>>
-    for AdditivePrimeFieldShare<F>
-{
+impl<F: PrimeField> std::ops::AddAssign<&AdditivePrimeFieldShare<F>> for AdditivePrimeFieldShare<F> {
     fn add_assign(&mut self, rhs: &AdditivePrimeFieldShare<F>) {
         self.0 += rhs.0;
     }

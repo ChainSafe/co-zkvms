@@ -10,13 +10,7 @@ use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 pub enum OverflowBitsZeroPrefix<const XLEN: usize> {}
 
 impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for OverflowBitsZeroPrefix<XLEN> {
-    fn prefix_mle<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<C>,
-        c: u32,
-        mut b: LookupBits,
-        j: usize,
-    ) -> F
+    fn prefix_mle<C>(checkpoints: &[PrefixCheckpoint<F>], r_x: Option<C>, c: u32, mut b: LookupBits, j: usize) -> F
     where
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
@@ -43,12 +37,7 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for OverflowBitsZeroP
         result
     }
 
-    fn update_prefix_checkpoint<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: C,
-        r_y: C,
-        j: usize,
-    ) -> PrefixCheckpoint<F>
+    fn update_prefix_checkpoint<C>(checkpoints: &[PrefixCheckpoint<F>], r_x: C, r_y: C, j: usize) -> PrefixCheckpoint<F>
     where
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
@@ -56,9 +45,7 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for OverflowBitsZeroP
         if j >= 128 - XLEN {
             return checkpoints[Prefixes::OverflowBitsZero].into();
         }
-        let updated = checkpoints[Prefixes::OverflowBitsZero].unwrap_or(F::one())
-            * (F::one() - r_x)
-            * (F::one() - r_y);
+        let updated = checkpoints[Prefixes::OverflowBitsZero].unwrap_or(F::one()) * (F::one() - r_x) * (F::one() - r_y);
 
         Some(updated).into()
     }

@@ -8,13 +8,7 @@ use crate::{
 pub enum LeftShiftHelperPrefix {}
 
 impl<F: JoltField> SparseDensePrefix<F> for LeftShiftHelperPrefix {
-    fn prefix_mle<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<C>,
-        c: u32,
-        mut b: LookupBits,
-        _: usize,
-    ) -> F
+    fn prefix_mle<C>(checkpoints: &[PrefixCheckpoint<F>], r_x: Option<C>, c: u32, mut b: LookupBits, _: usize) -> F
     where
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,

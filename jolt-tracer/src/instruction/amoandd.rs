@@ -35,9 +35,7 @@ impl AMOANDD {
 
         // AND the values and store back to memory
         let new_value = (original_value as u64) & and_value;
-        cpu.mmu
-            .store_doubleword(address, new_value)
-            .expect("MMU store error");
+        cpu.mmu.store_doubleword(address, new_value).expect("MMU store error");
 
         // Return the original value
         cpu.x[self.operands.rd as usize] = original_value;
@@ -69,11 +67,7 @@ impl RISCVTrace for AMOANDD {
     /// 2. Compute new_value = original & rs2
     /// 3. Store new_value back to memory[rs1]
     /// 4. Return original value in rd
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let v_rs2 = allocator.allocate();
         let v_rd = allocator.allocate();
 

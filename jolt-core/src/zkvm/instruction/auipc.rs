@@ -17,10 +17,8 @@ impl InstructionFlags for AUIPC {
         flags[CircuitFlags::RightOperandIsImm as usize] = true;
         flags[CircuitFlags::AddOperands as usize] = true;
         flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
-        flags[CircuitFlags::InlineSequenceInstruction as usize] =
-            self.inline_sequence_remaining.is_some();
-        flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
-            self.inline_sequence_remaining.unwrap_or(0) != 0;
+        flags[CircuitFlags::InlineSequenceInstruction as usize] = self.inline_sequence_remaining.is_some();
+        flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] = self.inline_sequence_remaining.unwrap_or(0) != 0;
         flags[CircuitFlags::IsCompressed as usize] = self.is_compressed;
         flags
     }
@@ -39,18 +37,9 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<AUIPC> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
         match XLEN {
             #[cfg(test)]
-            8 => (
-                self.instruction.address as u8 as u64,
-                self.instruction.operands.imm as u8 as u64 as i128,
-            ),
-            32 => (
-                self.instruction.address as u32 as u64,
-                self.instruction.operands.imm as u32 as u64 as i128,
-            ),
-            64 => (
-                self.instruction.address,
-                self.instruction.operands.imm as i128,
-            ),
+            8 => (self.instruction.address as u8 as u64, self.instruction.operands.imm as u8 as u64 as i128),
+            32 => (self.instruction.address as u32 as u64, self.instruction.operands.imm as u32 as u64 as i128),
+            64 => (self.instruction.address, self.instruction.operands.imm as i128),
             _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }

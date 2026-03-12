@@ -54,18 +54,10 @@ where
     pub fn new(output_path: impl AsRef<Path>, config: TraceWriterConfig) -> std::io::Result<Self> {
         let (sender, receiver) = sync_channel::<Vec<T>>(config.channel_depth);
 
-        let writer_handle = Self::spawn_writer_thread(
-            output_path.as_ref().to_path_buf(),
-            receiver,
-            config.write_buffer_size,
-        );
+        let writer_handle =
+            Self::spawn_writer_thread(output_path.as_ref().to_path_buf(), receiver, config.write_buffer_size);
 
-        Ok(Self {
-            sender: Some(sender),
-            writer_handle: Some(writer_handle),
-            config,
-            _phantom: PhantomData,
-        })
+        Ok(Self { sender: Some(sender), writer_handle: Some(writer_handle), config, _phantom: PhantomData })
     }
 
     /// Create a new TraceWriter with default configuration
@@ -101,10 +93,7 @@ where
             if sender.send(batch).is_ok() {
                 let elapsed = start.elapsed().as_millis();
                 if elapsed > self.config.slow_batch_threshold_ms {
-                    eprintln!(
-                        "Slow batch send: {} items in {:.2}ms",
-                        self.config.batch_size, elapsed
-                    );
+                    eprintln!("Slow batch send: {} items in {:.2}ms", self.config.batch_size, elapsed);
                 }
                 return true;
             }
@@ -120,14 +109,9 @@ where
         let start = Instant::now();
 
         if let Some(handle) = self.writer_handle.take() {
-            let result = handle
-                .join()
-                .map_err(|_| std::io::Error::other("Writer thread panicked"))?;
+            let result = handle.join().map_err(|_| std::io::Error::other("Writer thread panicked"))?;
 
-            println!(
-                "Writer thread finished in {:.2}ms",
-                start.elapsed().as_millis()
-            );
+            println!("Writer thread finished in {:.2}ms", start.elapsed().as_millis());
 
             result
         } else {
@@ -148,11 +132,7 @@ where
 {
     pub fn new(writer: TraceWriter<T>) -> Self {
         let batch_capacity = writer.config.batch_size;
-        Self {
-            writer,
-            current_batch: Vec::with_capacity(batch_capacity),
-            total_items: 0,
-        }
+        Self { writer, current_batch: Vec::with_capacity(batch_capacity), total_items: 0 }
     }
 
     pub fn push(&mut self, item: T) {
@@ -166,10 +146,7 @@ where
 
     fn flush_batch(&mut self) {
         if !self.current_batch.is_empty() {
-            let batch = std::mem::replace(
-                &mut self.current_batch,
-                Vec::with_capacity(self.writer.config.batch_size),
-            );
+            let batch = std::mem::replace(&mut self.current_batch, Vec::with_capacity(self.writer.config.batch_size));
 
             if !self.writer.send_batch(batch) {
                 eprintln!("Failed to send batch to writer");

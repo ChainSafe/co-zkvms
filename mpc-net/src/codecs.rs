@@ -14,20 +14,14 @@ pub struct BincodeCodec<M: Serialize + DeserializeOwned> {
 
 impl<M: Serialize + DeserializeOwned> Clone for BincodeCodec<M> {
     fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            phantom: std::marker::PhantomData,
-        }
+        Self { inner: self.inner.clone(), phantom: std::marker::PhantomData }
     }
 }
 
 impl<M: Serialize + DeserializeOwned> BincodeCodec<M> {
     /// Creates a new [BincodeCodec].
     pub fn new() -> Self {
-        Self {
-            inner: LengthDelimitedCodec::new(),
-            phantom: std::marker::PhantomData,
-        }
+        Self { inner: LengthDelimitedCodec::new(), phantom: std::marker::PhantomData }
     }
 }
 
@@ -40,9 +34,8 @@ where
     fn encode(&mut self, item: M, dst: &mut bytes::BytesMut) -> Result<(), Self::Error> {
         // reserve a bit to avoid reallocations, but this does not work well for nested types
         let mut buf = BytesMut::with_capacity(std::mem::size_of::<M>() + 16).writer();
-        bincode::serialize_into(&mut buf, &item).map_err(|e| {
-            io::Error::other(format!("Failed to serialize message with bincode: {e}"))
-        })?;
+        bincode::serialize_into(&mut buf, &item)
+            .map_err(|e| io::Error::other(format!("Failed to serialize message with bincode: {e}")))?;
         let buf = buf.into_inner().freeze();
         self.inner.encode(buf, dst)
     }
@@ -64,9 +57,8 @@ where
 
         let reader = buf.reader();
 
-        let result = bincode::deserialize_from::<_, M>(reader).map_err(|e| {
-            io::Error::other(format!("Failed to deserialize message with bincode: {e}"))
-        })?;
+        let result = bincode::deserialize_from::<_, M>(reader)
+            .map_err(|e| io::Error::other(format!("Failed to deserialize message with bincode: {e}")))?;
         Ok(Some(result))
     }
 }

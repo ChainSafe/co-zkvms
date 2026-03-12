@@ -56,11 +56,7 @@ impl<const XLEN: usize> JoltLookupTable for SignExtendHalfWordTable<XLEN> {
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for SignExtendHalfWordTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
-        vec![
-            Suffixes::One,
-            Suffixes::LowerHalfWord,
-            Suffixes::SignExtensionUpperHalf,
-        ]
+        vec![Suffixes::One, Suffixes::LowerHalfWord, Suffixes::SignExtensionUpperHalf]
     }
 
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {

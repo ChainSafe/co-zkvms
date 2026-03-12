@@ -16,11 +16,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualAssertValidUnsignedRemainder {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <VirtualAssertValidUnsignedRemainder as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualAssertValidUnsignedRemainder as RISCVInstruction>::RAMAccess) {
         match cpu.xlen {
             Xlen::Bit32 => {
                 let remainder = cpu.x[self.operands.rs1 as usize] as i32 as u32;

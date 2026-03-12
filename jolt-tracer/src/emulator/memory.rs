@@ -67,8 +67,7 @@ impl Memory {
             let index = (address >> 3) as usize;
             self.data[index]
         } else if address.is_multiple_of(4) {
-            (self.read_word(address) as u64)
-                | ((self.read_word(address.wrapping_add(4)) as u64) << 32)
+            (self.read_word(address) as u64) | ((self.read_word(address.wrapping_add(4)) as u64) << 32)
         } else {
             self.read_bytes(address, 8)
         }

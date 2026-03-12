@@ -82,20 +82,14 @@ impl<const XLEN: usize> JoltLookupTable for VirtualChangeDivisorTable<XLEN> {
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualChangeDivisorTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
-        vec![
-            Suffixes::One,
-            Suffixes::RightOperand,
-            Suffixes::ChangeDivisor,
-        ]
+        vec![Suffixes::One, Suffixes::RightOperand, Suffixes::ChangeDivisor]
     }
 
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [one, right_operand, change_divisor] = suffixes.try_into().unwrap();
 
-        prefixes[Prefixes::RightOperand] * one
-            + right_operand
-            + prefixes[Prefixes::ChangeDivisor] * change_divisor
+        prefixes[Prefixes::RightOperand] * one + right_operand + prefixes[Prefixes::ChangeDivisor] * change_divisor
     }
 }
 

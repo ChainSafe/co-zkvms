@@ -34,24 +34,13 @@ pub enum LayoutStep<'a> {
     },
     /// One row of sumcheck round-polynomial coefficients, placed in the coefficient
     /// region of the Hyrax grid (one row per round across all stages).
-    CoeffRow {
-        round_idx: usize,
-        num_coeffs: usize,
-        stage_idx: usize,
-        round_in_stage: usize,
-    },
+    CoeffRow { round_idx: usize, num_coeffs: usize, stage_idx: usize, round_in_stage: usize },
     /// Derived claim for the next sumcheck round, computed from the round polynomial
     /// evaluated at the verifier challenge. Placed in the non-coefficient region.
-    NextClaim {
-        stage_idx: usize,
-        round_in_stage: usize,
-    },
+    NextClaim { stage_idx: usize, round_in_stage: usize },
     /// Final output of a stage whose output claim is a linear combination of
     /// polynomial evaluations (no constraint needed). One variable per evaluation.
-    LinearFinalOutput {
-        num_evaluations: usize,
-        stage_idx: usize,
-    },
+    LinearFinalOutput { num_evaluations: usize, stage_idx: usize },
     /// Raw variable slots when a stage specifies an exact witness variable count
     /// (e.g. for custom witness layout). No constraint is generated.
     PlaceholderVars { num_vars: usize },
@@ -114,10 +103,7 @@ pub fn compute_witness_layout<'a>(
                 stage_idx,
                 round_in_stage,
             });
-            steps.push(LayoutStep::NextClaim {
-                stage_idx,
-                round_in_stage,
-            });
+            steps.push(LayoutStep::NextClaim { stage_idx, round_in_stage });
             round_idx += 1;
         }
 
@@ -135,10 +121,7 @@ pub fn compute_witness_layout<'a>(
                     stage_idx,
                 });
             } else {
-                steps.push(LayoutStep::LinearFinalOutput {
-                    num_evaluations: fout.num_evaluations,
-                    stage_idx,
-                });
+                steps.push(LayoutStep::LinearFinalOutput { num_evaluations: fout.num_evaluations, stage_idx });
             }
         }
     }
@@ -146,21 +129,12 @@ pub fn compute_witness_layout<'a>(
     for (extra_idx, constraint) in extra_constraints.iter().enumerate() {
         let new_opening_count = count_new_openings(constraint, &mut seen_openings);
         let aux_var_count = constraint.estimate_aux_var_count();
-        steps.push(LayoutStep::ExtraConstraintVars {
-            constraint,
-            new_opening_count,
-            aux_var_count,
-            extra_idx,
-        });
+        steps.push(LayoutStep::ExtraConstraintVars { constraint, new_opening_count, aux_var_count, extra_idx });
     }
 
     steps
 }
 
 fn count_new_openings(constraint: &OutputClaimConstraint, seen: &mut HashSet<OpeningId>) -> usize {
-    constraint
-        .required_openings
-        .iter()
-        .filter(|id| seen.insert(**id))
-        .count()
+    constraint.required_openings.iter().filter(|id| seen.insert(**id)).count()
 }

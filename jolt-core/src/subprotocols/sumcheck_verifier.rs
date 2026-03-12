@@ -39,11 +39,7 @@ pub trait SumcheckInstanceVerifier<F: JoltField, T: Transcript> {
 
     /// Enqueue any openings needed after sumcheck completes.
     /// r is the instance-local slice; instance normalizes internally.
-    fn cache_openings(
-        &self,
-        accumulator: &mut VerifierOpeningAccumulator<F>,
-        sumcheck_challenges: &[F::Challenge],
-    );
+    fn cache_openings(&self, accumulator: &mut VerifierOpeningAccumulator<F>, sumcheck_challenges: &[F::Challenge]);
 }
 
 pub trait SumcheckInstanceParams<F: JoltField> {

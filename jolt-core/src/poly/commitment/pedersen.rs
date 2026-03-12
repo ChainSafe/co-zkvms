@@ -17,14 +17,8 @@ pub struct PedersenGenerators<C: JoltCurve> {
 
 impl<C: JoltCurve> PedersenGenerators<C> {
     pub fn new(message_generators: Vec<C::G1>, blinding_generator: C::G1) -> Self {
-        assert!(
-            !message_generators.is_empty(),
-            "Need at least one generator"
-        );
-        Self {
-            message_generators,
-            blinding_generator,
-        }
+        assert!(!message_generators.is_empty(), "Need at least one generator");
+        Self { message_generators, blinding_generator }
     }
 
     pub fn commit<F: JoltField>(&self, coeffs: &[F], blinding: &F) -> C::G1 {
@@ -35,21 +29,14 @@ impl<C: JoltCurve> PedersenGenerators<C> {
             self.message_generators.len()
         );
 
-        let msg_commitment = if coeffs.is_empty() {
-            C::G1::zero()
-        } else {
-            C::g1_msm(&self.message_generators[..coeffs.len()], coeffs)
-        };
+        let msg_commitment =
+            if coeffs.is_empty() { C::G1::zero() } else { C::g1_msm(&self.message_generators[..coeffs.len()], coeffs) };
 
         let blinding_commitment = self.blinding_generator.scalar_mul(blinding);
         msg_commitment + blinding_commitment
     }
 
-    pub fn commit_chunked<F: JoltField, R: CryptoRngCore>(
-        &self,
-        values: &[F],
-        rng: &mut R,
-    ) -> Vec<(C::G1, F)> {
+    pub fn commit_chunked<F: JoltField, R: CryptoRngCore>(&self, values: &[F], rng: &mut R) -> Vec<(C::G1, F)> {
         values
             .chunks(self.message_generators.len())
             .map(|chunk| {
@@ -106,10 +93,7 @@ impl<F: JoltField> BlindedScalar<F> {
     }
 
     pub fn random<R: CryptoRngCore>(value: F, rng: &mut R) -> Self {
-        Self {
-            value,
-            blinding: F::random(rng),
-        }
+        Self { value, blinding: F::random(rng) }
     }
 }
 
@@ -125,10 +109,7 @@ impl<F: JoltField> BlindedVector<F> {
     }
 
     pub fn random<R: CryptoRngCore>(values: Vec<F>, rng: &mut R) -> Self {
-        Self {
-            values,
-            blinding: F::random(rng),
-        }
+        Self { values, blinding: F::random(rng) }
     }
 }
 
@@ -192,11 +173,7 @@ mod tests {
 
         let c_sum = c1 + c2;
 
-        let coeffs_sum: Vec<Fr> = coeffs1
-            .iter()
-            .zip(coeffs2.iter())
-            .map(|(a, b)| *a + *b)
-            .collect();
+        let coeffs_sum: Vec<Fr> = coeffs1.iter().zip(coeffs2.iter()).map(|(a, b)| *a + *b).collect();
         let r_sum = r1 + r2;
         let c_expected = gens.commit(&coeffs_sum, &r_sum);
 

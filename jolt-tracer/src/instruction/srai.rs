@@ -24,9 +24,8 @@ impl SRAI {
             Xlen::Bit32 => 0x1f,
             Xlen::Bit64 => 0x3f,
         };
-        cpu.x[self.operands.rd as usize] = cpu.sign_extend(
-            cpu.x[self.operands.rs1 as usize].wrapping_shr(self.operands.imm as u32 & mask),
-        );
+        cpu.x[self.operands.rd as usize] =
+            cpu.sign_extend(cpu.x[self.operands.rs1 as usize].wrapping_shr(self.operands.imm as u32 & mask));
     }
 }
 
@@ -50,11 +49,7 @@ impl RISCVTrace for SRAI {
     ///
     /// The arithmetic shift preserves the sign bit, extending it into the
     /// high-order bits, which is essential for signed integer division by powers of 2.
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let (shift, len) = match xlen {
             Xlen::Bit32 => (self.operands.imm & 0x1f, 32),
             Xlen::Bit64 => (self.operands.imm & 0x3f, 64),

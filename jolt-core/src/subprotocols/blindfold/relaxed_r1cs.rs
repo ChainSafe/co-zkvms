@@ -95,12 +95,7 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
     }
 
     #[tracing::instrument(skip_all, name = "RelaxedR1CSInstance::fold")]
-    pub fn fold(
-        &self,
-        other: &Self,
-        t_row_commitments: &[C::G1],
-        r: F,
-    ) -> Result<Self, BlindFoldVerifyError> {
+    pub fn fold(&self, other: &Self, t_row_commitments: &[C::G1], r: F) -> Result<Self, BlindFoldVerifyError> {
         if self.round_commitments.len() != other.round_commitments.len()
             || self.output_claims_row_commitments.len() != other.output_claims_row_commitments.len()
             || self.noncoeff_row_commitments.len() != other.noncoeff_row_commitments.len()
@@ -116,12 +111,8 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
 
         let fold_row = |c1: &C::G1, c2: &C::G1| *c1 + c2.scalar_mul(&r);
 
-        let round_commitments: Vec<C::G1> = self
-            .round_commitments
-            .iter()
-            .zip(&other.round_commitments)
-            .map(|(c1, c2)| fold_row(c1, c2))
-            .collect();
+        let round_commitments: Vec<C::G1> =
+            self.round_commitments.iter().zip(&other.round_commitments).map(|(c1, c2)| fold_row(c1, c2)).collect();
 
         let output_claims_row_commitments: Vec<C::G1> = self
             .output_claims_row_commitments
@@ -145,12 +136,8 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
             .map(|((e1, t), e2)| *e1 + t.scalar_mul(&r) + e2.scalar_mul(&r_squared))
             .collect();
 
-        let eval_commitments: Vec<C::G1> = self
-            .eval_commitments
-            .iter()
-            .zip(&other.eval_commitments)
-            .map(|(c1, c2)| fold_row(c1, c2))
-            .collect();
+        let eval_commitments: Vec<C::G1> =
+            self.eval_commitments.iter().zip(&other.eval_commitments).map(|(c1, c2)| fold_row(c1, c2)).collect();
 
         Ok(Self {
             u,
@@ -167,14 +154,9 @@ impl<F: JoltField, C: JoltCurve> RelaxedR1CSInstance<F, C> {
     ///   output claims rows |
     ///   regular noncoeff rows |
     ///   padding to R'
-    pub fn all_w_row_commitments(
-        &self,
-        R_coeff: usize,
-        R_prime: usize,
-    ) -> Result<Vec<C::G1>, BlindFoldVerifyError> {
-        let total_non_padding = R_coeff
-            + self.output_claims_row_commitments.len()
-            + self.noncoeff_row_commitments.len();
+    pub fn all_w_row_commitments(&self, R_coeff: usize, R_prime: usize) -> Result<Vec<C::G1>, BlindFoldVerifyError> {
+        let total_non_padding =
+            R_coeff + self.output_claims_row_commitments.len() + self.noncoeff_row_commitments.len();
         if self.round_commitments.len() > R_coeff || total_non_padding > R_prime {
             return Err(BlindFoldVerifyError::MalformedProof);
         }
@@ -194,27 +176,13 @@ impl<F: JoltField> RelaxedR1CSWitness<F> {
     pub fn fold(&self, other: &Self, T: &[F], t_row_blindings: &[F], r: F) -> Self {
         let r_squared = r * r;
 
-        let E: Vec<F> = self
-            .E
-            .iter()
-            .zip(T.iter())
-            .zip(&other.E)
-            .map(|((e1, t), e2)| *e1 + r * *t + r_squared * *e2)
-            .collect();
+        let E: Vec<F> =
+            self.E.iter().zip(T.iter()).zip(&other.E).map(|((e1, t), e2)| *e1 + r * *t + r_squared * *e2).collect();
 
-        let W: Vec<F> = self
-            .W
-            .iter()
-            .zip(&other.W)
-            .map(|(w1, w2)| *w1 + r * *w2)
-            .collect();
+        let W: Vec<F> = self.W.iter().zip(&other.W).map(|(w1, w2)| *w1 + r * *w2).collect();
 
-        let w_row_blindings: Vec<F> = self
-            .w_row_blindings
-            .iter()
-            .zip(&other.w_row_blindings)
-            .map(|(b1, b2)| *b1 + r * *b2)
-            .collect();
+        let w_row_blindings: Vec<F> =
+            self.w_row_blindings.iter().zip(&other.w_row_blindings).map(|(b1, b2)| *b1 + r * *b2).collect();
 
         let e_row_blindings: Vec<F> = self
             .e_row_blindings
@@ -224,12 +192,7 @@ impl<F: JoltField> RelaxedR1CSWitness<F> {
             .map(|((b1, tb), b2)| *b1 + r * *tb + r_squared * *b2)
             .collect();
 
-        Self {
-            E,
-            W,
-            w_row_blindings,
-            e_row_blindings,
-        }
+        Self { E, W, w_row_blindings, e_row_blindings }
     }
 
     /// Check if the witness satisfies the relaxed R1CS: (AZ)∘(BZ) = u·(CZ) + E
@@ -239,13 +202,7 @@ impl<F: JoltField> RelaxedR1CSWitness<F> {
         z.push(u);
         z.extend_from_slice(&self.W);
 
-        assert_eq!(
-            z.len(),
-            r1cs.num_vars,
-            "Z vector size mismatch: {} vs {}",
-            z.len(),
-            r1cs.num_vars
-        );
+        assert_eq!(z.len(), r1cs.num_vars, "Z vector size mismatch: {} vs {}", z.len(), r1cs.num_vars);
 
         let az = r1cs.a.mul_vector(&z);
         let bz = r1cs.b.mul_vector(&z);
@@ -281,18 +238,10 @@ mod tests {
         type F = Fr;
 
         let configs = [StageConfig::new(1, 3)];
-        let round = RoundWitness::new(
-            vec![
-                F::from_u64(40),
-                F::from_u64(5),
-                F::from_u64(10),
-                F::from_u64(5),
-            ],
-            F::from_u64(3),
-        );
+        let round =
+            RoundWitness::new(vec![F::from_u64(40), F::from_u64(5), F::from_u64(10), F::from_u64(5)], F::from_u64(3));
         let initial_claim = F::from_u64(100);
-        let blindfold_witness =
-            BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round])]);
+        let blindfold_witness = BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round])]);
 
         let baked = BakedPublicInputs::from_witness(&blindfold_witness, &configs);
         let builder = VerifierR1CSBuilder::<F>::new(&configs, &baked);
@@ -352,18 +301,10 @@ mod tests {
         type F = Fr;
 
         let configs = [StageConfig::new(1, 3)];
-        let round = RoundWitness::new(
-            vec![
-                F::from_u64(40),
-                F::from_u64(5),
-                F::from_u64(10),
-                F::from_u64(5),
-            ],
-            F::from_u64(3),
-        );
+        let round =
+            RoundWitness::new(vec![F::from_u64(40), F::from_u64(5), F::from_u64(10), F::from_u64(5)], F::from_u64(3));
         let initial_claim = F::from_u64(100);
-        let blindfold_witness =
-            BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round])]);
+        let blindfold_witness = BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round])]);
 
         let baked = BakedPublicInputs::from_witness(&blindfold_witness, &configs);
         let builder = VerifierR1CSBuilder::<F>::new(&configs, &baked);
@@ -436,10 +377,7 @@ mod tests {
         }
 
         for i in 0..2 {
-            assert_eq!(
-                folded.e_row_blindings[i],
-                e_blinds1[i] + r * t_blinds[i] + r_sq * e_blinds2[i]
-            );
+            assert_eq!(folded.e_row_blindings[i], e_blinds1[i] + r * t_blinds[i] + r_sq * e_blinds2[i]);
         }
     }
 

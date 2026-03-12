@@ -38,16 +38,16 @@ use co_jolt_coordinator::proving::coordinate_once;
 use co_jolt_coordinator::transport::ephemeral_identity::EphemeralIdentity;
 use co_jolt_coordinator::transport::tcp_tls::TcpTlsCoordinator;
 use co_jolt_coordinator::types::ProofRequest;
-use jolt_core::host::Program;
 use jolt_core::curve::Bn254Curve;
+use jolt_core::host::Program;
 use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
 use jolt_core::transcripts::Blake2bTranscript;
 use jolt_core::zkvm::bytecode::BytecodePreprocessing;
 use jolt_core::zkvm::dag::jolt_dag::JoltDAG;
 use jolt_core::zkvm::dag::state_manager::StateManager as VanillaStateManager;
 use jolt_core::zkvm::ram::RAMPreprocessing;
-use jolt_core::zkvm::Jolt;
 use jolt_core::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials, DTH_ROOT_OF_K};
+use jolt_core::zkvm::Jolt;
 use jolt_core::zkvm::{JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing, JoltVerifierPreprocessing};
 use mpc_core::protocols::rep3::network::IoContextPool;
 use tracer::instruction::Cycle;
@@ -264,10 +264,8 @@ fn build_inputs(num_iters: u32) -> Vec<u8> {
 }
 
 fn worker_addrs() -> [SocketAddr; 3] {
-    let base_port: u16 = std::env::var("USER_LISTEN_BASE_PORT")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(30000);
+    let base_port: u16 =
+        std::env::var("USER_LISTEN_BASE_PORT").ok().and_then(|value| value.parse().ok()).unwrap_or(30000);
 
     [
         SocketAddr::from(([127, 0, 0, 1], base_port)),
@@ -315,11 +313,7 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         client.delegate(&mut program, &inputs, &[], &[])
     });
 
-    let coordinator_protocol = config
-        .coordinator
-        .as_ref()
-        .map(|coordinator| coordinator.protocol)
-        .unwrap_or_default();
+    let coordinator_protocol = config.coordinator.as_ref().map(|coordinator| coordinator.protocol).unwrap_or_default();
     match coordinator_protocol {
         mpc_net::config::CoordinatorProtocol::Quic => {
             info!("creating QUIC coordinator network");
@@ -357,8 +351,12 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     let ram_k = compute_ram_k(&vanilla_trace, &shared);
     info!(ram_k, "computed ram_K");
 
-    let preprocessing: JoltProverPreprocessing<F, PCS> =
-        <JoltArch as Jolt<F, PCS, FS>>::prover_preprocess(bytecode, io_device.memory_layout.clone(), memory_init, padded_len);
+    let preprocessing: JoltProverPreprocessing<F, PCS> = <JoltArch as Jolt<F, PCS, FS>>::prover_preprocess(
+        bytecode,
+        io_device.memory_layout.clone(),
+        memory_init,
+        padded_len,
+    );
     let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
 
     let proof: jolt_core::zkvm::dag::proof_serialization::JoltProof<F, Bn254Curve, PCS, FS> =

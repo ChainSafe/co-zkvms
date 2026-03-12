@@ -21,11 +21,7 @@ pub struct TlsWorkerListener {
 
 impl TlsWorkerListener {
     /// Bind a TLS listener on the given address using the worker's cert and key.
-    pub fn bind(
-        addr: SocketAddr,
-        cert: CertificateDer<'static>,
-        key: PrivateKeyDer<'static>,
-    ) -> eyre::Result<Self> {
+    pub fn bind(addr: SocketAddr, cert: CertificateDer<'static>, key: PrivateKeyDer<'static>) -> eyre::Result<Self> {
         let tls_config = Arc::new(
             rustls::ServerConfig::builder()
                 .with_no_client_auth()
@@ -33,21 +29,14 @@ impl TlsWorkerListener {
                 .context("building TLS server config for user listener")?,
         );
 
-        let listener = TcpListener::bind(addr)
-            .with_context(|| format!("binding user TLS listener on {addr}"))?;
+        let listener = TcpListener::bind(addr).with_context(|| format!("binding user TLS listener on {addr}"))?;
 
-        Ok(Self {
-            listener,
-            tls_config,
-        })
+        Ok(Self { listener, tls_config })
     }
 
     /// Accept a single user connection. Blocks until a connection arrives.
     pub fn accept(&self) -> eyre::Result<TlsUserConnection> {
-        let (tcp_stream, peer_addr) = self
-            .listener
-            .accept()
-            .context("accepting user TCP connection")?;
+        let (tcp_stream, peer_addr) = self.listener.accept().context("accepting user TCP connection")?;
         tcp_stream.set_nodelay(true)?;
 
         let tls_conn = rustls::ServerConnection::new(Arc::clone(&self.tls_config))
@@ -66,9 +55,7 @@ pub struct TlsUserConnection {
 
 impl std::fmt::Debug for TlsUserConnection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TlsUserConnection")
-            .field("peer_addr", &self.peer_addr)
-            .finish()
+        f.debug_struct("TlsUserConnection").field("peer_addr", &self.peer_addr).finish()
     }
 }
 

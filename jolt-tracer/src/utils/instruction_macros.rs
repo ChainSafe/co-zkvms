@@ -41,9 +41,7 @@ macro_rules! declare_riscv_instr {
                 }
                 Self {
                     address,
-                    operands: <$format as $crate::instruction::format::InstructionFormat>::parse(
-                        word,
-                    ),
+                    operands: <$format as $crate::instruction::format::InstructionFormat>::parse(word),
                     inline_sequence_remaining: None,
                     is_compressed: compressed,
                 }
@@ -53,9 +51,7 @@ macro_rules! declare_riscv_instr {
             fn random(rng: &mut rand::rngs::StdRng) -> Self {
                 Self {
                     address: rand::RngCore::next_u64(rng),
-                    operands: <$format as $crate::instruction::format::InstructionFormat>::random(
-                        rng,
-                    ),
+                    operands: <$format as $crate::instruction::format::InstructionFormat>::random(rng),
                     inline_sequence_remaining: None,
                     is_compressed: false,
                 }

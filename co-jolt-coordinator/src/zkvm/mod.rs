@@ -63,19 +63,10 @@ impl Rep3Jolt<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltArch {
         let T = trace_length;
         let num_chunks = rayon::current_num_threads().next_power_of_two().min(T);
         let chunk_size = if num_chunks > 0 { T / num_chunks } else { T };
-        let twist_sumcheck_switch_index = if chunk_size > 0 {
-            chunk_size.trailing_zeros() as usize
-        } else {
-            0
-        };
+        let twist_sumcheck_switch_index = if chunk_size > 0 { chunk_size.trailing_zeros() as usize } else { 0 };
 
-        let state = StateManager::new(
-            preprocessing,
-            program_io,
-            ram_K,
-            twist_sumcheck_switch_index,
-        )
-        .with_pcs_setup(pcs_setup);
+        let state =
+            StateManager::new(preprocessing, program_io, ram_K, twist_sumcheck_switch_index).with_pcs_setup(pcs_setup);
         Rep3JoltDag::prove(state, network)
     }
 }

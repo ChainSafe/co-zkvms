@@ -23,27 +23,16 @@ pub struct RAMPreprocessing {
 
 impl RAMPreprocessing {
     pub fn preprocess(memory_init: Vec<(u64, u8)>) -> Self {
-        let min_bytecode_address = memory_init
-            .iter()
-            .map(|(address, _)| *address)
-            .min()
-            .unwrap_or(0);
+        let min_bytecode_address = memory_init.iter().map(|(address, _)| *address).min().unwrap_or(0);
 
-        let max_bytecode_address = memory_init
-            .iter()
-            .map(|(address, _)| *address)
-            .max()
-            .unwrap_or(0)
-            + (BYTES_PER_INSTRUCTION as u64 - 1);
+        let max_bytecode_address =
+            memory_init.iter().map(|(address, _)| *address).max().unwrap_or(0) + (BYTES_PER_INSTRUCTION as u64 - 1);
 
         let ws = RAM_WORD_SIZE;
-        let num_words =
-            max_bytecode_address.next_multiple_of(ws) / ws - min_bytecode_address / ws + 1;
+        let num_words = max_bytecode_address.next_multiple_of(ws) / ws - min_bytecode_address / ws + 1;
         let mut bytecode_words = vec![0u64; num_words as usize];
         // Convert bytes into words and populate `bytecode_words`
-        for chunk in
-            memory_init.chunk_by(|(address_a, _), (address_b, _)| address_a / ws == address_b / ws)
-        {
+        for chunk in memory_init.chunk_by(|(address_a, _), (address_b, _)| address_a / ws == address_b / ws) {
             let mut word = [0u8; 8];
             for (address, byte) in chunk {
                 word[(address % ws) as usize] = *byte;
@@ -53,10 +42,7 @@ impl RAMPreprocessing {
             bytecode_words[remapped_index] = word;
         }
 
-        Self {
-            min_bytecode_address,
-            bytecode_words,
-        }
+        Self { min_bytecode_address, bytecode_words }
     }
 }
 
@@ -75,17 +61,12 @@ use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
 use crate::utils::math::Math;
 use tracer::JoltDevice;
 
-pub fn build_initial_memory_state(
-    ram_preprocessing: &RAMPreprocessing,
-    program_io: &JoltDevice,
-    K: usize,
-) -> Vec<u64> {
+pub fn build_initial_memory_state(ram_preprocessing: &RAMPreprocessing, program_io: &JoltDevice, K: usize) -> Vec<u64> {
     let memory_layout = &program_io.memory_layout;
     let mut initial_memory_state: Vec<u64> = vec![0; K];
 
     // Copy bytecode
-    let mut index =
-        remap_address(ram_preprocessing.min_bytecode_address, memory_layout).unwrap() as usize;
+    let mut index = remap_address(ram_preprocessing.min_bytecode_address, memory_layout).unwrap() as usize;
     for word in &ram_preprocessing.bytecode_words {
         initial_memory_state[index] = *word;
         index += 1;
@@ -155,13 +136,7 @@ pub fn calculate_advice_memory_evaluation<F: JoltField>(
 
     // Compute eq(r_high, binary(block_index))
     let block_bits: Vec<F::Challenge> = (0..high_bits)
-        .map(|i| {
-            if (block_index >> i) & 1 == 1 {
-                F::Challenge::from(1u128)
-            } else {
-                F::Challenge::from(0u128)
-            }
-        })
+        .map(|i| if (block_index >> i) & 1 == 1 { F::Challenge::from(1u128) } else { F::Challenge::from(0u128) })
         .collect();
     let eq_val = EqPolynomial::<F>::mle(&block_bits, r_high);
 

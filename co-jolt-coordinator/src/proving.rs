@@ -10,8 +10,8 @@ use jolt_core::transcripts::Blake2bTranscript;
 use jolt_core::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials, DTH_ROOT_OF_K};
 use jolt_core::zkvm::{Jolt, JoltVerifierPreprocessing};
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
-use mpc_net::topology::MpcStarNetCoordinator;
 use mpc_core::protocols::rep3::PartyID;
+use mpc_net::topology::MpcStarNetCoordinator;
 use tracer::JoltDevice;
 use tracing::info;
 
@@ -32,8 +32,7 @@ pub fn coordinate_once<N: Rep3NetworkCoordinator>(network: &mut N) -> eyre::Resu
 
     // Receive bincode-serialized ProofRequest from each worker (all identical)
     let requests: Vec<Vec<u8>> = network.receive_responses()?;
-    let request: ProofRequest =
-        bincode::deserialize(&requests[0]).context("deserializing ProofRequest")?;
+    let request: ProofRequest = bincode::deserialize(&requests[0]).context("deserializing ProofRequest")?;
 
     info!(
         padded_len = request.padded_len,
@@ -63,10 +62,7 @@ pub fn coordinate_once<N: Rep3NetworkCoordinator>(network: &mut N) -> eyre::Resu
 
     let _guard = (
         DoryGlobals::initialize(DTH_ROOT_OF_K, request.padded_len),
-        AllCommittedPolynomials::initialize(
-            compute_d_parameter(request.ram_k),
-            preprocessing.shared.bytecode.d,
-        ),
+        AllCommittedPolynomials::initialize(compute_d_parameter(request.ram_k), preprocessing.shared.bytecode.d),
     );
 
     // Drive MPC proof
@@ -83,9 +79,7 @@ pub fn coordinate_once<N: Rep3NetworkCoordinator>(network: &mut N) -> eyre::Resu
 
     // Send proof to worker 0 only (who relays to user).
     let mut proof_bytes = Vec::new();
-    proof
-        .serialize_compressed(&mut proof_bytes)
-        .context("serializing proof")?;
+    proof.serialize_compressed(&mut proof_bytes).context("serializing proof")?;
     network.send_request(PartyID::ID0, 0, proof_bytes)?;
 
     info!("proof sent, returning to stand-by");

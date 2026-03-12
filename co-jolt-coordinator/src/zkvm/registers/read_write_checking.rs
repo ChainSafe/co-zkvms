@@ -5,9 +5,7 @@ use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::opening_proof::OpeningId;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN};
 #[cfg(feature = "zk")]
-use jolt_core::subprotocols::blindfold::{
-    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
-};
+use jolt_core::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource};
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
@@ -39,16 +37,12 @@ impl<F: JoltField> Rep3RegistersReadWriteChecking<F> {
     pub fn new<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
-        let (r_point, rs1_rv_claim) = sm
-            .accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
-        let (_, rs2_rv_claim) = sm
-            .accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::Rs2Value, SumcheckId::SpartanOuter);
-        let (_, rd_wv_claim) = sm.accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RdWriteValue,
-            SumcheckId::SpartanOuter,
-        );
+        let (r_point, rs1_rv_claim) =
+            sm.accumulator.get_virtual_polynomial_opening(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
+        let (_, rs2_rv_claim) =
+            sm.accumulator.get_virtual_polynomial_opening(VirtualPolynomial::Rs2Value, SumcheckId::SpartanOuter);
+        let (_, rd_wv_claim) =
+            sm.accumulator.get_virtual_polynomial_opening(VirtualPolynomial::RdWriteValue, SumcheckId::SpartanOuter);
 
         let gamma: F = sm.transcript.challenge_scalar();
         let input_claim = rd_wv_claim + gamma * rs1_rv_claim + gamma.square() * rs2_rv_claim;
@@ -90,13 +84,9 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3RegistersRe
         self.input_claim
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &Rep3OpeningAccumulator<F>,
-        r: &[F::Challenge],
-    ) -> F {
-        let (r_prime, _) = accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
+    fn expected_output_claim(&self, accumulator: &Rep3OpeningAccumulator<F>, r: &[F::Challenge]) -> F {
+        let (r_prime, _) =
+            accumulator.get_virtual_polynomial_opening(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
 
         let mut r_cycle = r[..self.sumcheck_switch_index].to_vec();
         r_cycle.extend(r[self.sumcheck_switch_index..self.T.log_2()].iter().rev());
@@ -104,26 +94,16 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3RegistersRe
 
         let eq_eval_cycle = EqPolynomial::mle_endian(&r_prime, &r_cycle);
 
-        let (_, val_claim) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RegistersVal,
-            SumcheckId::RegistersReadWriteChecking,
-        );
-        let (_, rs1_ra_claim) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::Rs1Ra,
-            SumcheckId::RegistersReadWriteChecking,
-        );
-        let (_, rs2_ra_claim) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::Rs2Ra,
-            SumcheckId::RegistersReadWriteChecking,
-        );
-        let (_, rd_wa_claim) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RdWa,
-            SumcheckId::RegistersReadWriteChecking,
-        );
-        let (_, inc_claim) = accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::RdInc,
-            SumcheckId::RegistersReadWriteChecking,
-        );
+        let (_, val_claim) = accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::RegistersVal, SumcheckId::RegistersReadWriteChecking);
+        let (_, rs1_ra_claim) = accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Ra, SumcheckId::RegistersReadWriteChecking);
+        let (_, rs2_ra_claim) = accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::Rs2Ra, SumcheckId::RegistersReadWriteChecking);
+        let (_, rd_wa_claim) =
+            accumulator.get_virtual_polynomial_opening(VirtualPolynomial::RdWa, SumcheckId::RegistersReadWriteChecking);
+        let (_, inc_claim) = accumulator
+            .get_committed_polynomial_opening(CommittedPolynomial::RdInc, SumcheckId::RegistersReadWriteChecking);
 
         eq_eval_cycle
             * (rd_wa_claim * (inc_claim + val_claim)
@@ -131,10 +111,7 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3RegistersRe
                 + self.gamma_sqr * rs2_ra_claim * val_claim)
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         let log_T = self.T.log_2();
         let mut r_cycle = opening_point[self.sumcheck_switch_index..log_T].to_vec();
         r_cycle.extend(opening_point[..self.sumcheck_switch_index].iter().rev());
@@ -199,10 +176,7 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3RegistersRe
     }
 
     #[cfg(feature = "zk")]
-    fn input_constraint_challenge_values(
-        &self,
-        _accumulator: &Rep3OpeningAccumulator<F>,
-    ) -> Vec<F> {
+    fn input_constraint_challenge_values(&self, _accumulator: &Rep3OpeningAccumulator<F>) -> Vec<F> {
         vec![self.gamma, self.gamma_sqr]
     }
 
@@ -260,12 +234,7 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3RegistersRe
 
     #[cfg(feature = "zk")]
     fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
-        let eq_eval = registers_eq_eval(
-            &self.r_cycle,
-            sumcheck_challenges,
-            self.sumcheck_switch_index,
-            self.T.log_2(),
-        );
+        let eq_eval = registers_eq_eval(&self.r_cycle, sumcheck_challenges, self.sumcheck_switch_index, self.T.log_2());
         vec![eq_eval, self.gamma, self.gamma_sqr]
     }
 }

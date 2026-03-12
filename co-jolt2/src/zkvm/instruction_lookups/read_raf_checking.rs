@@ -17,9 +17,7 @@ use jolt_core::transcripts::Transcript;
 use jolt_core::utils::expanding_table::ExpandingTable;
 use jolt_core::utils::lookup_bits::LookupBits;
 use jolt_core::utils::math::Math;
-use jolt_core::zkvm::instruction_lookups::{
-    CHUNKS_PER_PHASE, D, K_CHUNK, LOG_K, LOG_K_CHUNK, LOG_M, M, PHASES,
-};
+use jolt_core::zkvm::instruction_lookups::{CHUNKS_PER_PHASE, D, K_CHUNK, LOG_K, LOG_K_CHUNK, LOG_M, M, PHASES};
 use jolt_core::zkvm::lookup_table::prefixes::{PrefixCheckpoint, PrefixEval, Prefixes};
 use jolt_core::zkvm::lookup_table::suffixes::Suffixes;
 use jolt_core::zkvm::lookup_table::LookupTables;
@@ -259,10 +257,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3ReadRafSumcheckWorker<F, N> {
             "eq_r_cycle_public length mismatch: expected {num_cycles}, got {}",
             eq_r_cycle_public.len()
         );
-        eyre::ensure!(
-            D % PHASES == 0 && CHUNKS_PER_PHASE * PHASES == D,
-            "D={D} must be divisible by PHASES={PHASES}"
-        );
+        eyre::ensure!(D % PHASES == 0 && CHUNKS_PER_PHASE * PHASES == D, "D={D} must be divisible by PHASES={PHASES}");
         eyre::ensure!(
             lookup_indices.len() == num_cycles,
             "lookup_indices length mismatch: expected {num_cycles}, got {}",
@@ -439,10 +434,8 @@ impl<F: JoltField> ReadRafProverState<F> {
 
         let mut level: Vec<Vec<Rep3PrimeFieldShare<F>>> = (0..CHUNKS_PER_PHASE)
             .map(|i| {
-                let mut e: Vec<Rep3PrimeFieldShare<F>> = self.one_hot_polys[chunk_base + i]
-                    .rand_ohv_e_field
-                    .as_ref()
-                    .clone();
+                let mut e: Vec<Rep3PrimeFieldShare<F>> =
+                    self.one_hot_polys[chunk_base + i].rand_ohv_e_field.as_ref().clone();
                 fwht_rep3_in_place(&mut e);
                 e
             })
@@ -463,11 +456,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                         b_expanded.push(right[b_idx]);
                     }
                 }
-                next.push(rep3_arith::mul_vec(
-                    &a_expanded,
-                    &b_expanded,
-                    io_ctx.main(),
-                )?);
+                next.push(rep3_arith::mul_vec(&a_expanded, &b_expanded, io_ctx.main())?);
             }
             level = next;
         }
@@ -503,9 +492,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                     let mut val: u16 = 0;
                     for i in 0..CHUNKS_PER_PHASE {
                         match self.one_hot_polys[prev_chunk_base + i].masked_indices_c[j] {
-                            Some(c) => {
-                                val |= (c as u16) << (LOG_K_CHUNK * (CHUNKS_PER_PHASE - 1 - i))
-                            }
+                            Some(c) => val |= (c as u16) << (LOG_K_CHUNK * (CHUNKS_PER_PHASE - 1 - i)),
                             None => return None,
                         }
                     }
@@ -1232,10 +1219,7 @@ impl<F: JoltField> ReadRafProverState<F> {
 
         // Build ra polynomial from ra_acc for the log_T rounds.
         // By this point, all PHASES cache_phase calls have run, so ra_acc is Some(vec).
-        let ra_vec = self
-            .ra_acc
-            .take()
-            .expect("ra_acc must be Some after all cache_phase calls");
+        let ra_vec = self.ra_acc.take().expect("ra_acc must be Some after all cache_phase calls");
         self.ra = Some(Rep3DensePolynomial::new(ra_vec));
 
         // Address-round scratch is no longer needed for the cycle rounds.

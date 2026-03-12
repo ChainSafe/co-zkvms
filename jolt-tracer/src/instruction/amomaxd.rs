@@ -38,14 +38,8 @@ impl AMOMAXD {
         };
 
         // Find the maximum and store back to memory
-        let new_value = if original_value >= compare_value {
-            original_value
-        } else {
-            compare_value
-        };
-        cpu.mmu
-            .store_doubleword(address, new_value as u64)
-            .expect("MMU store error");
+        let new_value = if original_value >= compare_value { original_value } else { compare_value };
+        cpu.mmu.store_doubleword(address, new_value as u64).expect("MMU store error");
 
         // Return the original value
         cpu.x[self.operands.rd as usize] = original_value;
@@ -79,11 +73,7 @@ impl RISCVTrace for AMOMAXD {
     ///
     /// This branchless approach avoids conditional execution, making it compatible
     /// with zkVM's constraint system while correctly handling signed comparison.
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let v_rs2 = allocator.allocate();
         let v_rd = allocator.allocate();
         let v_sel_rs2 = allocator.allocate();

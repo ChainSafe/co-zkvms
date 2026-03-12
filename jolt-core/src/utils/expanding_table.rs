@@ -23,15 +23,9 @@ impl<F: JoltField> ExpandingTable<F> {
     /// Initializes an `ExpandingTable` with the given `capacity`.
     #[tracing::instrument(skip_all, name = "ExpandingTable::new")]
     pub fn new(capacity: usize) -> Self {
-        let (values, scratch_space) = rayon::join(
-            || unsafe_allocate_zero_vec(capacity),
-            || unsafe_allocate_zero_vec(capacity),
-        );
-        Self {
-            len: 0,
-            values,
-            scratch_space,
-        }
+        let (values, scratch_space) =
+            rayon::join(|| unsafe_allocate_zero_vec(capacity), || unsafe_allocate_zero_vec(capacity));
+        Self { len: 0, values, scratch_space }
     }
 
     /// Resets this table to be length 1, containing only the given `value`.
@@ -52,14 +46,11 @@ impl<F: JoltField> ExpandingTable<F> {
     /// the new random challenge `r_j`.
     #[tracing::instrument(skip_all, name = "ExpandingTable::update")]
     pub fn update(&mut self, r_j: F::Challenge) {
-        self.values[..self.len]
-            .par_iter()
-            .zip(self.scratch_space.par_chunks_mut(2))
-            .for_each(|(&v_i, dest)| {
-                let eval_1 = r_j * v_i;
-                dest[0] = v_i - eval_1;
-                dest[1] = eval_1;
-            });
+        self.values[..self.len].par_iter().zip(self.scratch_space.par_chunks_mut(2)).for_each(|(&v_i, dest)| {
+            let eval_1 = r_j * v_i;
+            dest[0] = v_i - eval_1;
+            dest[1] = eval_1;
+        });
         std::mem::swap(&mut self.values, &mut self.scratch_space);
         self.len *= 2;
     }

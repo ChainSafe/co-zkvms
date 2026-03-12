@@ -41,10 +41,7 @@ impl Rep3BytecodeDag {
     /// Create coordinator stage4 instances AND return the init data for workers.
     pub fn stage4_instances_with_init<F, ProofTranscript, PCS>(
         sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> (
-        Vec<BatchedSumcheckInstance<F, ProofTranscript>>,
-        BytecodeStage4Init<F>,
-    )
+    ) -> (Vec<BatchedSumcheckInstance<F, ProofTranscript>>, BytecodeStage4Init<F>)
     where
         F: JoltField,
         ProofTranscript: Transcript,
@@ -76,47 +73,36 @@ impl Rep3BytecodeDag {
             3 + jolt_core::zkvm::instruction::NUM_CIRCUIT_FLAGS,
         );
         // Stage1 rv_claim: needs accumulator openings
-        let (_, unexpanded_pc_claim_1) = sm.accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::UnexpandedPC,
-            SumcheckId::SpartanOuter,
-        );
-        let (_, imm_claim_1) = sm
-            .accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
-        let (_, rd_claim_1) = sm
-            .accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::Rd, SumcheckId::SpartanOuter);
+        let (_, unexpanded_pc_claim_1) =
+            sm.accumulator.get_virtual_polynomial_opening(VirtualPolynomial::UnexpandedPC, SumcheckId::SpartanOuter);
+        let (_, imm_claim_1) =
+            sm.accumulator.get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
+        let (_, rd_claim_1) =
+            sm.accumulator.get_virtual_polynomial_opening(VirtualPolynomial::Rd, SumcheckId::SpartanOuter);
         let mut rv_claim_1 = _gamma_powers_1[0] * unexpanded_pc_claim_1
             + _gamma_powers_1[1] * imm_claim_1
             + _gamma_powers_1[2] * rd_claim_1;
         for (i, flag) in jolt_core::zkvm::instruction::CircuitFlags::iter().enumerate() {
-            let (_, flag_claim) = sm.accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::OpFlags(flag),
-                SumcheckId::SpartanOuter,
-            );
+            let (_, flag_claim) = sm
+                .accumulator
+                .get_virtual_polynomial_opening(VirtualPolynomial::OpFlags(flag), SumcheckId::SpartanOuter);
             rv_claim_1 += _gamma_powers_1[3 + i] * flag_claim;
         }
 
         // Stage2 gamma_powers
-        let _gamma_powers_2 = jolt_core::zkvm::bytecode::read_raf_checking::get_gamma_powers::<F>(
-            &mut sm.transcript,
-            3,
-        );
-        let (_, rdwa_claim_2) = sm.accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RdWa,
-            SumcheckId::RegistersReadWriteChecking,
-        );
-        let (_, rs1ra_claim_2) = sm.accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::Rs1Ra,
-            SumcheckId::RegistersReadWriteChecking,
-        );
-        let (_, rs2ra_claim_2) = sm.accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::Rs2Ra,
-            SumcheckId::RegistersReadWriteChecking,
-        );
-        let rv_claim_2 = _gamma_powers_2[0] * rdwa_claim_2
-            + _gamma_powers_2[1] * rs1ra_claim_2
-            + _gamma_powers_2[2] * rs2ra_claim_2;
+        let _gamma_powers_2 =
+            jolt_core::zkvm::bytecode::read_raf_checking::get_gamma_powers::<F>(&mut sm.transcript, 3);
+        let (_, rdwa_claim_2) = sm
+            .accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::RdWa, SumcheckId::RegistersReadWriteChecking);
+        let (_, rs1ra_claim_2) = sm
+            .accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Ra, SumcheckId::RegistersReadWriteChecking);
+        let (_, rs2ra_claim_2) = sm
+            .accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::Rs2Ra, SumcheckId::RegistersReadWriteChecking);
+        let rv_claim_2 =
+            _gamma_powers_2[0] * rdwa_claim_2 + _gamma_powers_2[1] * rs1ra_claim_2 + _gamma_powers_2[2] * rs2ra_claim_2;
 
         // Stage3 gamma_powers
         use jolt_common::constants::XLEN;
@@ -126,40 +112,32 @@ impl Rep3BytecodeDag {
             &mut sm.transcript,
             4 + LookupTables::<XLEN>::COUNT,
         );
-        let (_, rd_wa_claim_3) = sm.accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RdWa,
-            SumcheckId::RegistersValEvaluation,
-        );
-        let (_, unexpanded_pc_claim_3) = sm.accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::UnexpandedPC,
-            SumcheckId::SpartanShift,
-        );
+        let (_, rd_wa_claim_3) =
+            sm.accumulator.get_virtual_polynomial_opening(VirtualPolynomial::RdWa, SumcheckId::RegistersValEvaluation);
+        let (_, unexpanded_pc_claim_3) =
+            sm.accumulator.get_virtual_polynomial_opening(VirtualPolynomial::UnexpandedPC, SumcheckId::SpartanShift);
         let (_, is_noop_claim_3) = sm.accumulator.get_virtual_polynomial_opening(
             VirtualPolynomial::OpFlags(jolt_core::zkvm::instruction::CircuitFlags::IsNoop),
             SumcheckId::SpartanShift,
         );
-        let (_, raf_flag_claim_3) = sm.accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::InstructionRafFlag,
-            SumcheckId::InstructionReadRaf,
-        );
+        let (_, raf_flag_claim_3) = sm
+            .accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::InstructionRafFlag, SumcheckId::InstructionReadRaf);
         let mut rv_claim_3 = _gamma_powers_3[0] * rd_wa_claim_3
             + _gamma_powers_3[1] * unexpanded_pc_claim_3
             + _gamma_powers_3[2] * is_noop_claim_3
             + _gamma_powers_3[3] * raf_flag_claim_3;
         for i in 0..LookupTables::<XLEN>::COUNT {
-            let (_, lt_claim) = sm.accumulator.get_virtual_polynomial_opening(
-                VirtualPolynomial::LookupTableFlag(i),
-                SumcheckId::InstructionReadRaf,
-            );
+            let (_, lt_claim) = sm
+                .accumulator
+                .get_virtual_polynomial_opening(VirtualPolynomial::LookupTableFlag(i), SumcheckId::InstructionReadRaf);
             rv_claim_3 += _gamma_powers_3[4 + i] * lt_claim;
         }
 
-        let (_, raf_claim) = sm
-            .accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanOuter);
-        let (_, raf_shift_claim) = sm
-            .accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanShift);
+        let (_, raf_claim) =
+            sm.accumulator.get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanOuter);
+        let (_, raf_shift_claim) =
+            sm.accumulator.get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanShift);
 
         let rv_claim = rv_claim_1
             + read_raf_gamma * rv_claim_2
@@ -174,60 +152,37 @@ impl Rep3BytecodeDag {
         // Val2 needs eq_r_register from the accumulator.
         let r_register_2 = sm
             .accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RdWa,
-                SumcheckId::RegistersReadWriteChecking,
-            )
+            .get_virtual_polynomial_opening(VirtualPolynomial::RdWa, SumcheckId::RegistersReadWriteChecking)
             .0
             .r;
         let eq_r_register_2 = jolt_core::poly::eq_poly::EqPolynomial::<F>::evals(
             &r_register_2[..(jolt_common::constants::REGISTER_COUNT as usize).log_2()],
         );
-        let val_2 = BytecodeReadRaf::<F>::compute_val_2_from_bytecode(
-            bytecode,
-            &_gamma_powers_2,
-            &eq_r_register_2,
-        );
+        let val_2 = BytecodeReadRaf::<F>::compute_val_2_from_bytecode(bytecode, &_gamma_powers_2, &eq_r_register_2);
 
         // Val3 needs eq_r_register from a different sumcheck.
         let r_register_3 = sm
             .accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RdWa,
-                SumcheckId::RegistersValEvaluation,
-            )
+            .get_virtual_polynomial_opening(VirtualPolynomial::RdWa, SumcheckId::RegistersValEvaluation)
             .0
             .r;
         let eq_r_register_3 = jolt_core::poly::eq_poly::EqPolynomial::<F>::evals(
             &r_register_3[..(jolt_common::constants::REGISTER_COUNT as usize).log_2()],
         );
-        let val_3 = BytecodeReadRaf::<F>::compute_val_3_from_bytecode(
-            bytecode,
-            &_gamma_powers_3,
-            &eq_r_register_3,
-        );
+        let val_3 = BytecodeReadRaf::<F>::compute_val_3_from_bytecode(bytecode, &_gamma_powers_3, &eq_r_register_3);
 
         // Compute r_cycles from accumulator (matching vanilla get_r_cycle_verif).
         use jolt_common::constants::REGISTER_COUNT;
-        let r_cycle_1 = sm
-            .accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter)
-            .0
-            .r;
+        let r_cycle_1 =
+            sm.accumulator.get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter).0.r;
         let r_2 = sm
             .accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::Rs1Ra,
-                SumcheckId::RegistersReadWriteChecking,
-            )
+            .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Ra, SumcheckId::RegistersReadWriteChecking)
             .0;
         let (_, r_cycle_2) = r_2.split_at_r((REGISTER_COUNT as usize).log_2());
         let r_3 = sm
             .accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RdWa,
-                SumcheckId::RegistersValEvaluation,
-            )
+            .get_virtual_polynomial_opening(VirtualPolynomial::RdWa, SumcheckId::RegistersValEvaluation)
             .0;
         let (_, r_cycle_3) = r_3.split_at_r((REGISTER_COUNT as usize).log_2());
         let r_cycles = [r_cycle_1, r_cycle_2.to_vec(), r_cycle_3.to_vec()];
@@ -239,11 +194,7 @@ impl Rep3BytecodeDag {
             log_K,
             log_T,
             d,
-            [
-                _gamma_powers_1.clone(),
-                _gamma_powers_2.clone(),
-                _gamma_powers_3.clone(),
-            ],
+            [_gamma_powers_1.clone(), _gamma_powers_2.clone(), _gamma_powers_3.clone()],
             val_polys.clone(),
         );
 
@@ -253,8 +204,7 @@ impl Rep3BytecodeDag {
         for i in 1..d {
             bool_gamma_powers[i] = bool_gamma_powers[i - 1] * bool_gamma;
         }
-        let bool_r_address: Vec<F::Challenge> =
-            sm.transcript.challenge_vector_optimized::<F>(log_K_chunk);
+        let bool_r_address: Vec<F::Challenge> = sm.transcript.challenge_vector_optimized::<F>(log_K_chunk);
 
         let booleanity = BytecodeBooleanity::new_verifier_from_parts(
             bool_gamma_powers.clone(),
@@ -270,8 +220,7 @@ impl Rep3BytecodeDag {
             hw_gamma_powers[i] = hw_gamma_powers[i - 1] * hw_gamma;
         }
 
-        let hamming_weight =
-            BytecodeHammingWeight::new_verifier_from_parts(hw_gamma_powers.clone(), log_K_chunk);
+        let hamming_weight = BytecodeHammingWeight::new_verifier_from_parts(hw_gamma_powers.clone(), log_K_chunk);
 
         let instances = vec![
             BatchedSumcheckInstance::Public(Box::new(read_raf)),
@@ -324,8 +273,7 @@ fn compute_pc_hists<F: JoltField>(
         .par_chunks(chunk_size)
         .enumerate()
         .map(|(chunk_index, pcs): (usize, &[u64])| {
-            let mut local_G: Vec<Vec<F>> =
-                (0..d).map(|_| unsafe_allocate_zero_vec(K_chunk)).collect();
+            let mut local_G: Vec<Vec<F>> = (0..d).map(|_| unsafe_allocate_zero_vec(K_chunk)).collect();
             let mut r1: Vec<F> = unsafe_allocate_zero_vec(K);
             let mut r2: Vec<F> = unsafe_allocate_zero_vec(K);
             let mut r3: Vec<F> = unsafe_allocate_zero_vec(K);
@@ -352,13 +300,8 @@ fn compute_pc_hists<F: JoltField>(
         })
         .reduce(
             || {
-                let zeros_G: Vec<Vec<F>> =
-                    (0..d).map(|_| unsafe_allocate_zero_vec(K_chunk)).collect();
-                let zeros_F = [
-                    unsafe_allocate_zero_vec(K),
-                    unsafe_allocate_zero_vec(K),
-                    unsafe_allocate_zero_vec(K),
-                ];
+                let zeros_G: Vec<Vec<F>> = (0..d).map(|_| unsafe_allocate_zero_vec(K_chunk)).collect();
+                let zeros_F = [unsafe_allocate_zero_vec(K), unsafe_allocate_zero_vec(K), unsafe_allocate_zero_vec(K)];
                 (zeros_G, zeros_F)
             },
             |(mut running_G, mut running_F): (Vec<Vec<F>>, [Vec<F>; 3]), (new_G, new_F)| {

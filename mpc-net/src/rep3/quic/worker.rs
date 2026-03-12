@@ -15,10 +15,7 @@ use quinn::{
     crypto::rustls::QuicClientConfig,
     rustls::{pki_types::CertificateDer, RootCertStore},
 };
-use quinn::{
-    ClientConfig, Connection, Endpoint, IdleTimeout, RecvStream, SendStream, TransportConfig,
-    VarInt,
-};
+use quinn::{ClientConfig, Connection, Endpoint, IdleTimeout, RecvStream, SendStream, TransportConfig, VarInt};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
     collections::BTreeMap,
@@ -38,8 +35,7 @@ use tokio::{
 use tokio_util::codec::{Decoder, Encoder, LengthDelimitedCodec};
 
 use crate::{
-    channel::ChannelHandle, config::NetworkConfig, topology::MpcStarNetWorker,
-    MpcNetworkHandlerWrapper, Result,
+    channel::ChannelHandle, config::NetworkConfig, topology::MpcStarNetWorker, MpcNetworkHandlerWrapper, Result,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,18 +46,11 @@ pub enum QuicForkTopology {
 
 impl QuicForkTopology {
     fn from_env() -> Self {
-        match std::env::var("MPC_QUIC_TOPOLOGY")
-            .ok()
-            .as_deref()
-            .map(str::trim)
-        {
+        match std::env::var("MPC_QUIC_TOPOLOGY").ok().as_deref().map(str::trim) {
             Some("stream-pool") => Self::StreamPool,
             Some("conn-pool") | None => Self::ConnectionPool,
             Some(other) => {
-                tracing::warn!(
-                    topology = other,
-                    "unknown MPC_QUIC_TOPOLOGY, using conn-pool"
-                );
+                tracing::warn!(topology = other, "unknown MPC_QUIC_TOPOLOGY, using conn-pool");
                 Self::ConnectionPool
             }
         }
@@ -80,12 +69,7 @@ fn configured_transport_lanes() -> usize {
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|&v| v > 0)
-        .or_else(|| {
-            std::env::var("NETWORK_FORKS")
-                .ok()
-                .and_then(|v| v.parse::<usize>().ok())
-                .filter(|&v| v > 0)
-        })
+        .or_else(|| std::env::var("NETWORK_FORKS").ok().and_then(|v| v.parse::<usize>().ok()).filter(|&v| v > 0))
         .unwrap_or(8)
 }
 
@@ -121,9 +105,7 @@ pub(crate) fn quic_transport_config() -> Arc<TransportConfig> {
     transport_config.receive_window(VarInt::from(quic_conn_rx_window_bytes()));
     transport_config.stream_receive_window(VarInt::from(quic_stream_rx_window_bytes()));
     transport_config.max_concurrent_bidi_streams(VarInt::from(quic_max_bidi_streams()));
-    transport_config.max_idle_timeout(Some(
-        IdleTimeout::try_from(Duration::from_secs(180)).unwrap(),
-    ));
+    transport_config.max_idle_timeout(Some(IdleTimeout::try_from(Duration::from_secs(180)).unwrap()));
     transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
     Arc::new(transport_config)
 }
@@ -156,76 +138,58 @@ pub struct Rep3QuicMpcNetWorker {
 }
 
 fn fork_bulk_channels() -> bool {
-    std::env::var("MPC_FORK_BULK_CHANNELS")
-        .ok()
-        .and_then(|v| v.parse::<u32>().ok())
-        .unwrap_or(1)
-        != 0
+    std::env::var("MPC_FORK_BULK_CHANNELS").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(1) != 0
 }
 
 impl Rep3QuicMpcNetWorker {
     pub fn new(config: NetworkConfig, log_num_workers_per_party: usize) -> Result<Self> {
-        ensure!(
-            config.parties.len() == 3,
-            "REP3 protocol requires exactly 3 parties"
-        );
+        ensure!(config.parties.len() == 3, "REP3 protocol requires exactly 3 parties");
 
         let alloc = Arc::new(ForkAlloc::new());
         let fork_id = alloc.alloc();
         let seq = Arc::new(AtomicU64::new(0));
         let id = PartyWorkerID::new(config.my_id, config.worker);
 
-        let (
-            net_handler,
-            chan_next,
-            chan_prev,
-            chan_next_bulk,
-            chan_prev_bulk,
-            mut chan_coordinator,
-            transport_lanes,
-        ) = RUNTIME.block_on(async {
-            let net_handler = MpcNetworkHandlerWorker::establish(config.clone()).await?;
-            let chan_coordinator = net_handler
-                .get_coordinator_byte_channel()
-                .await?
-                .map(ChannelHandle::manage_bytes_quic);
+        let (net_handler, chan_next, chan_prev, chan_next_bulk, chan_prev_bulk, mut chan_coordinator, transport_lanes) =
+            RUNTIME.block_on(async {
+                let net_handler = MpcNetworkHandlerWorker::establish(config.clone()).await?;
+                let chan_coordinator =
+                    net_handler.get_coordinator_byte_channel().await?.map(ChannelHandle::manage_bytes_quic);
 
-            let mut channels = net_handler.get_byte_channels_for_lane(0).await?;
-            let mut bulk_channels = net_handler.get_byte_channels_for_lane(0).await?;
-            let chan_next = channels
-                .remove(&id.party_id().next_id().into())
-                .ok_or(eyre::eyre!("no next channel found"))?;
-            let chan_prev = channels
-                .remove(&id.party_id().prev_id().into())
-                .ok_or(eyre::eyre!("no prev channel found"))?;
-            let chan_next_bulk = bulk_channels
-                .remove(&id.party_id().next_id().into())
-                .ok_or(eyre::eyre!("no next bulk channel found"))?;
-            let chan_prev_bulk = bulk_channels
-                .remove(&id.party_id().prev_id().into())
-                .ok_or(eyre::eyre!("no prev bulk channel found"))?;
-            if !channels.is_empty() {
-                bail!("unexpected channels found")
-            }
-            if !bulk_channels.is_empty() {
-                bail!("unexpected bulk channels found")
-            }
-            let chan_next = ChannelHandle::manage_bytes_quic(chan_next);
-            let chan_prev = ChannelHandle::manage_bytes_quic(chan_prev);
-            let chan_next_bulk = BulkBytesChannelHandle::manage_quic(chan_next_bulk);
-            let chan_prev_bulk = BulkBytesChannelHandle::manage_quic(chan_prev_bulk);
+                let mut channels = net_handler.get_byte_channels_for_lane(0).await?;
+                let mut bulk_channels = net_handler.get_byte_channels_for_lane(0).await?;
+                let chan_next =
+                    channels.remove(&id.party_id().next_id().into()).ok_or(eyre::eyre!("no next channel found"))?;
+                let chan_prev =
+                    channels.remove(&id.party_id().prev_id().into()).ok_or(eyre::eyre!("no prev channel found"))?;
+                let chan_next_bulk = bulk_channels
+                    .remove(&id.party_id().next_id().into())
+                    .ok_or(eyre::eyre!("no next bulk channel found"))?;
+                let chan_prev_bulk = bulk_channels
+                    .remove(&id.party_id().prev_id().into())
+                    .ok_or(eyre::eyre!("no prev bulk channel found"))?;
+                if !channels.is_empty() {
+                    bail!("unexpected channels found")
+                }
+                if !bulk_channels.is_empty() {
+                    bail!("unexpected bulk channels found")
+                }
+                let chan_next = ChannelHandle::manage_bytes_quic(chan_next);
+                let chan_prev = ChannelHandle::manage_bytes_quic(chan_prev);
+                let chan_next_bulk = BulkBytesChannelHandle::manage_quic(chan_next_bulk);
+                let chan_prev_bulk = BulkBytesChannelHandle::manage_quic(chan_prev_bulk);
 
-            let transport_lanes = net_handler.transport_lanes;
-            eyre::Ok((
-                net_handler,
-                chan_next,
-                chan_prev,
-                chan_next_bulk,
-                chan_prev_bulk,
-                chan_coordinator,
-                transport_lanes,
-            ))
-        })?;
+                let transport_lanes = net_handler.transport_lanes;
+                eyre::Ok((
+                    net_handler,
+                    chan_next,
+                    chan_prev,
+                    chan_next_bulk,
+                    chan_prev_bulk,
+                    chan_coordinator,
+                    transport_lanes,
+                ))
+            })?;
 
         // If coordinator uses TLS protocol, connect via TlsCoordinatorClient
         #[cfg(feature = "tls")]
@@ -245,10 +209,7 @@ impl Rep3QuicMpcNetWorker {
 
         Ok(Self {
             id,
-            net_handler: Arc::new(MpcNetworkHandlerWrapper::new(
-                RUNTIME.handle().clone(),
-                net_handler,
-            )),
+            net_handler: Arc::new(MpcNetworkHandlerWrapper::new(RUNTIME.handle().clone(), net_handler)),
             chan_next,
             chan_prev,
             chan_next_bulk: Some(chan_next_bulk),
@@ -273,10 +234,7 @@ impl Rep3QuicMpcNetWorker {
             std::mem::drop(self.chan_prev.blocking_send(data));
             Ok(())
         } else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "Cannot send to self",
-            ));
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Cannot send to self"));
         }
     }
 
@@ -286,10 +244,7 @@ impl Rep3QuicMpcNetWorker {
         } else if target == self.id.party_id().prev_id() {
             self.chan_prev_bulk.as_ref()
         } else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "Cannot send to self",
-            ));
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Cannot send to self"));
         };
         let chan = chan.ok_or_else(|| {
             std::io::Error::new(
@@ -308,10 +263,7 @@ impl Rep3QuicMpcNetWorker {
             std::mem::drop(self.chan_prev.send(data).await);
             Ok(())
         } else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "Cannot send to self",
-            ));
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Cannot send to self"));
         }
     }
 
@@ -322,14 +274,10 @@ impl Rep3QuicMpcNetWorker {
         } else if from == self.id.party_id().next_id() {
             self.chan_next.blocking_recv().blocking_recv()
         } else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "Cannot recv from self",
-            ));
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Cannot recv from self"));
         };
-        let data = data.map_err(|_| {
-            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "receive channel end died")
-        })??;
+        let data =
+            data.map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "receive channel end died"))??;
         Ok(data)
     }
 
@@ -339,10 +287,7 @@ impl Rep3QuicMpcNetWorker {
         } else if party == self.id.party_id().next_id() {
             self.chan_next_bulk.as_ref()
         } else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "Cannot use bulk channel with self",
-            ));
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Cannot use bulk channel with self"));
         };
         chan.ok_or_else(|| {
             std::io::Error::new(
@@ -368,14 +313,10 @@ impl Rep3QuicMpcNetWorker {
         } else if from == self.id.party_id().next_id() {
             self.chan_next.recv().await.await
         } else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "Cannot recv from self",
-            ));
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Cannot recv from self"));
         };
-        let data = data.map_err(|_| {
-            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "receive channel end died")
-        })??;
+        let data =
+            data.map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "receive channel end died"))??;
         Ok(data)
     }
 
@@ -383,9 +324,7 @@ impl Rep3QuicMpcNetWorker {
     pub fn log_connection_stats(&self) {
         // hack: wait arbitrary time for all send/recv tasks till now to complete
         std::thread::sleep(std::time::Duration::from_secs(1));
-        self.net_handler
-            .runtime
-            .block_on(async { self.net_handler.inner.log_connection_stats() })
+        self.net_handler.runtime.block_on(async { self.net_handler.inner.log_connection_stats() })
     }
 }
 
@@ -395,9 +334,7 @@ pub struct ForkAlloc {
 }
 impl ForkAlloc {
     pub fn new() -> Self {
-        Self {
-            next: AtomicU32::new(0),
-        }
+        Self { next: AtomicU32::new(0) }
     }
     #[inline]
     pub fn alloc(&self) -> u32 {
@@ -407,22 +344,14 @@ impl ForkAlloc {
 }
 
 impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
-    fn send_response<T: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-        data: T,
-    ) -> Result<()> {
+    fn send_response<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: T) -> Result<()> {
         let size = data.uncompressed_size();
         let mut ser_data = Vec::with_capacity(size);
         data.serialize_uncompressed(&mut ser_data)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
             .context("while serializing data")?;
 
-        std::mem::drop(
-            self.chan_coordinator
-                .as_ref()
-                .unwrap()
-                .blocking_send(Bytes::from(ser_data)),
-        );
+        std::mem::drop(self.chan_coordinator.as_ref().unwrap().blocking_send(Bytes::from(ser_data)));
         Ok(())
     }
 
@@ -451,24 +380,14 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
             .inner
             .parties_connections
             .iter()
-            .map(|(_, conns)| {
-                conns
-                    .iter()
-                    .map(|conn| conn.stats().udp_tx.bytes as u64)
-                    .sum::<u64>()
-            })
+            .map(|(_, conns)| conns.iter().map(|conn| conn.stats().udp_tx.bytes as u64).sum::<u64>())
             .sum();
         let recv_bytes = self
             .net_handler
             .inner
             .parties_connections
             .iter()
-            .map(|(_, conns)| {
-                conns
-                    .iter()
-                    .map(|conn| conn.stats().udp_rx.bytes as u64)
-                    .sum::<u64>()
-            })
+            .map(|(_, conns)| conns.iter().map(|conn| conn.stats().udp_rx.bytes as u64).sum::<u64>())
             .sum();
         (sent_bytes, recv_bytes)
     }
@@ -500,17 +419,11 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
 
         let (chan_next, chan_prev, chan_next_bulk, chan_prev_bulk) = RUNTIME
             .block_on(async {
-                let mut channels = self
-                    .net_handler
-                    .inner
-                    .get_byte_channels_for_lane(lane_idx)
-                    .await?;
-                let chan_next = channels
-                    .remove(&id.party_id().next_id().into())
-                    .ok_or(eyre::eyre!("no next channel found"))?;
-                let chan_prev = channels
-                    .remove(&id.party_id().prev_id().into())
-                    .ok_or(eyre::eyre!("no prev channel found"))?;
+                let mut channels = self.net_handler.inner.get_byte_channels_for_lane(lane_idx).await?;
+                let chan_next =
+                    channels.remove(&id.party_id().next_id().into()).ok_or(eyre::eyre!("no next channel found"))?;
+                let chan_prev =
+                    channels.remove(&id.party_id().prev_id().into()).ok_or(eyre::eyre!("no prev channel found"))?;
                 if !channels.is_empty() {
                     bail!("unexpected channels found")
                 }
@@ -518,11 +431,7 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
                 let chan_prev = ChannelHandle::manage_bytes_quic(chan_prev);
 
                 let (chan_next_bulk, chan_prev_bulk) = if want_bulk {
-                    let mut bulk_channels = self
-                        .net_handler
-                        .inner
-                        .get_byte_channels_for_lane(lane_idx)
-                        .await?;
+                    let mut bulk_channels = self.net_handler.inner.get_byte_channels_for_lane(lane_idx).await?;
                     let chan_next_bulk = bulk_channels
                         .remove(&id.party_id().next_id().into())
                         .ok_or(eyre::eyre!("no next bulk channel found"))?;
@@ -566,18 +475,15 @@ impl MpcStarNetWorker for Rep3QuicMpcNetWorker {
         let id = self.id.clone();
         let net_handler = Arc::clone(&self.net_handler);
         let chan_coordinator = net_handler.runtime.block_on(async {
-            let chan_coordinator = net_handler
-                .inner
-                .get_coordinator_byte_channel()
-                .await?
-                .map(ChannelHandle::manage_bytes_quic);
+            let chan_coordinator =
+                net_handler.inner.get_coordinator_byte_channel().await?.map(ChannelHandle::manage_bytes_quic);
 
             Ok::<_, Report>(chan_coordinator)
         })?;
 
         Ok(Self {
             id,
-            net_handler: net_handler,
+            net_handler,
             chan_next: self.chan_next.clone(),
             chan_prev: self.chan_prev.clone(),
             chan_next_bulk: self.chan_next_bulk.clone(), // shares parent's bulk channels (if any)
@@ -643,17 +549,11 @@ impl MpcNetworkHandlerWorker {
     /// Tries to establish a connection to other parties in the network based on the provided [NetworkConfig].
     pub async fn establish(config: NetworkConfig) -> Result<Self, Report> {
         config.check_config()?;
-        let certs: HashMap<usize, CertificateDer> = config
-            .parties
-            .iter()
-            .map(|p| (p.id, p.cert.clone()))
-            .collect();
+        let certs: HashMap<usize, CertificateDer> = config.parties.iter().map(|p| (p.id, p.cert.clone())).collect();
 
         let mut root_store = RootCertStore::empty();
         for (id, cert) in &certs {
-            root_store
-                .add(cert.clone())
-                .with_context(|| format!("adding certificate for party {id} to root store"))?;
+            root_store.add(cert.clone()).with_context(|| format!("adding certificate for party {id} to root store"))?;
         }
         if let Some(coordinator) = &config.coordinator {
             root_store
@@ -661,21 +561,17 @@ impl MpcNetworkHandlerWorker {
                 .with_context(|| format!("adding certificate for coordinator to root store"))?;
         }
 
-        let crypto = quinn::rustls::ClientConfig::builder()
-            .with_root_certificates(root_store)
-            .with_no_client_auth();
+        let crypto = quinn::rustls::ClientConfig::builder().with_root_certificates(root_store).with_no_client_auth();
 
         let transport_config = quic_transport_config();
         let client_config = {
-            let mut client_config =
-                ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto)?));
+            let mut client_config = ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto)?));
             client_config.transport_config(Arc::clone(&transport_config));
             client_config
         };
 
-        let mut server_config =
-            quinn::ServerConfig::with_single_cert(vec![certs[&config.my_id].clone()], config.key)
-                .context("creating our server config")?;
+        let mut server_config = quinn::ServerConfig::with_single_cert(vec![certs[&config.my_id].clone()], config.key)
+            .context("creating our server config")?;
         server_config.transport_config(transport_config);
         let our_socket_addr = config.bind_addr;
 
@@ -709,47 +605,30 @@ impl MpcNetworkHandlerWorker {
         let coordinator_connection = if let Some(coordinator) = config.coordinator {
             match coordinator.protocol {
                 crate::config::CoordinatorProtocol::Quic => {
-                    tracing::trace!(
-                        "my id: {:?}, connecting to coordinator via QUIC",
-                        config.my_id
-                    );
+                    tracing::trace!("my id: {:?}, connecting to coordinator via QUIC", config.my_id);
 
                     let addresses: Vec<SocketAddr> = coordinator
                         .dns_name
                         .to_socket_addrs()
-                        .with_context(|| {
-                            format!("while resolving DNS name for {}", coordinator.dns_name)
-                        })?
+                        .with_context(|| format!("while resolving DNS name for {}", coordinator.dns_name))?
                         .collect();
                     if addresses.is_empty() {
-                        return Err(eyre::eyre!(
-                            "could not resolve DNS name {}",
-                            coordinator.dns_name
-                        ));
+                        return Err(eyre::eyre!("could not resolve DNS name {}", coordinator.dns_name));
                     }
                     let party_addr = addresses[0];
                     let local_client_socket: SocketAddr = match party_addr {
-                        SocketAddr::V4(_) => {
-                            "0.0.0.0:0".parse().expect("hardcoded IP address is valid")
-                        }
-                        SocketAddr::V6(_) => {
-                            "[::]:0".parse().expect("hardcoded IP address is valid")
-                        }
+                        SocketAddr::V4(_) => "0.0.0.0:0".parse().expect("hardcoded IP address is valid"),
+                        SocketAddr::V6(_) => "[::]:0".parse().expect("hardcoded IP address is valid"),
                     };
                     let endpoint = quinn::Endpoint::client(local_client_socket)
                         .with_context(|| format!("creating client endpoint to coordinator"))?;
                     let conn = endpoint
-                        .connect_with(
-                            client_config.clone(),
-                            party_addr,
-                            &coordinator.dns_name.hostname,
-                        )
+                        .connect_with(client_config.clone(), party_addr, &coordinator.dns_name.hostname)
                         .with_context(|| format!("setting up client connection with coordinator"))?
                         .await
                         .with_context(|| format!("connecting as a client to coordinator"))?;
                     let mut uni = conn.open_uni().await?;
-                    uni.write_u32(u32::try_from(config.my_id).expect("party id fits into u32"))
-                        .await?;
+                    uni.write_u32(u32::try_from(config.my_id).expect("party id fits into u32")).await?;
                     uni.write_u32(config.worker as u32).await?;
                     uni.flush().await?;
                     uni.finish()?;
@@ -780,19 +659,10 @@ impl MpcNetworkHandlerWorker {
             .parties
             .iter()
             .filter(|party| party.id != config.my_id)
-            .map(|party| {
-                (
-                    party.id,
-                    (0..physical_connections).map(|_| None).collect::<Vec<_>>(),
-                )
-            })
+            .map(|party| (party.id, (0..physical_connections).map(|_| None).collect::<Vec<_>>()))
             .collect();
 
-        for party in config
-            .parties
-            .iter()
-            .filter(|party| party.id < config.my_id)
-        {
+        for party in config.parties.iter().filter(|party| party.id < config.my_id) {
             tracing::trace!(
                 "my id: {:?}, connecting to party: {:?} with {} lanes",
                 config.my_id,
@@ -812,35 +682,18 @@ impl MpcNetworkHandlerWorker {
 
             for lane_idx in 0..physical_connections {
                 let local_client_socket: SocketAddr = match party_addr {
-                    SocketAddr::V4(_) => {
-                        "0.0.0.0:0".parse().expect("hardcoded IP address is valid")
-                    }
+                    SocketAddr::V4(_) => "0.0.0.0:0".parse().expect("hardcoded IP address is valid"),
                     SocketAddr::V6(_) => "[::]:0".parse().expect("hardcoded IP address is valid"),
                 };
-                let endpoint = quinn::Endpoint::client(local_client_socket).with_context(|| {
-                    format!(
-                        "creating client endpoint to party {} lane {}",
-                        party.id, lane_idx
-                    )
-                })?;
+                let endpoint = quinn::Endpoint::client(local_client_socket)
+                    .with_context(|| format!("creating client endpoint to party {} lane {}", party.id, lane_idx))?;
                 let conn = endpoint
                     .connect_with(client_config.clone(), party_addr, &party.dns_name.hostname)
-                    .with_context(|| {
-                        format!(
-                            "setting up client connection with party {} lane {}",
-                            party.id, lane_idx
-                        )
-                    })?
+                    .with_context(|| format!("setting up client connection with party {} lane {}", party.id, lane_idx))?
                     .await
-                    .with_context(|| {
-                        format!(
-                            "connecting as a client to party {} lane {}",
-                            party.id, lane_idx
-                        )
-                    })?;
+                    .with_context(|| format!("connecting as a client to party {} lane {}", party.id, lane_idx))?;
                 let mut uni = conn.open_uni().await?;
-                uni.write_u32(u32::try_from(config.my_id).expect("party id fits into u32"))
-                    .await?;
+                uni.write_u32(u32::try_from(config.my_id).expect("party id fits into u32")).await?;
                 uni.write_u32(lane_idx as u32).await?;
                 uni.flush().await?;
                 uni.finish()?;
@@ -851,26 +704,17 @@ impl MpcNetworkHandlerWorker {
                     endpoint.local_addr().unwrap(),
                     conn.remote_address(),
                 );
-                let slots = parties_connections_slots
-                    .get_mut(&party.id)
-                    .expect("lane slots exist");
+                let slots = parties_connections_slots.get_mut(&party.id).expect("lane slots exist");
                 assert!(slots[lane_idx].replace(conn).is_none());
                 endpoints.push(endpoint);
             }
         }
 
-        let expected_incoming = config
-            .parties
-            .iter()
-            .filter(|party| party.id > config.my_id)
-            .count()
-            * physical_connections;
+        let expected_incoming =
+            config.parties.iter().filter(|party| party.id > config.my_id).count() * physical_connections;
         for _ in 0..expected_incoming {
-            match tokio::time::timeout(
-                config.timeout.unwrap_or(DEFAULT_CONNECT_TIMEOUT),
-                server_endpoint.accept(),
-            )
-            .await
+            match tokio::time::timeout(config.timeout.unwrap_or(DEFAULT_CONNECT_TIMEOUT), server_endpoint.accept())
+                .await
             {
                 Ok(Some(maybe_conn)) => {
                     let conn = maybe_conn.await?;
@@ -881,19 +725,15 @@ impl MpcNetworkHandlerWorker {
                         conn.remote_address(),
                     );
                     let mut uni = conn.accept_uni().await?;
-                    let other_party_id =
-                        usize::try_from(uni.read_u32().await?).expect("u32 fits into usize");
-                    let lane_idx =
-                        usize::try_from(uni.read_u32().await?).expect("u32 fits into usize");
+                    let other_party_id = usize::try_from(uni.read_u32().await?).expect("u32 fits into usize");
+                    let lane_idx = usize::try_from(uni.read_u32().await?).expect("u32 fits into usize");
                     ensure!(
                         lane_idx < physical_connections,
                         "peer lane {lane_idx} out of range for party {other_party_id}"
                     );
                     let slots = parties_connections_slots
                         .get_mut(&other_party_id)
-                        .ok_or_else(|| {
-                            eyre::eyre!("unexpected connection from party {other_party_id}")
-                        })?;
+                        .ok_or_else(|| eyre::eyre!("unexpected connection from party {other_party_id}"))?;
                     ensure!(
                         slots[lane_idx].is_none(),
                         "duplicate connection for party {other_party_id} lane {lane_idx}"
@@ -901,14 +741,10 @@ impl MpcNetworkHandlerWorker {
                     slots[lane_idx] = Some(conn);
                 }
                 Ok(None) => {
-                    return Err(eyre::eyre!(
-                        "server endpoint did not accept an expected peer connection",
-                    ));
+                    return Err(eyre::eyre!("server endpoint did not accept an expected peer connection",));
                 }
                 Err(_) => {
-                    return Err(eyre::eyre!(
-                        "a party did not connect within 60 seconds - timeout",
-                    ));
+                    return Err(eyre::eyre!("a party did not connect within 60 seconds - timeout",));
                 }
             }
         }
@@ -920,9 +756,7 @@ impl MpcNetworkHandlerWorker {
                     .into_iter()
                     .enumerate()
                     .map(|(lane_idx, conn)| {
-                        conn.ok_or_else(|| {
-                            eyre::eyre!("missing connection for party {party_id} lane {lane_idx}")
-                        })
+                        conn.ok_or_else(|| eyre::eyre!("missing connection for party {party_id} lane {lane_idx}"))
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok::<_, Report>((party_id, conns))
@@ -982,9 +816,7 @@ impl MpcNetworkHandlerWorker {
     }
 
     /// Sets up a new [BytesChannel] between each party. The resulting map maps the id of the party to its respective [BytesChannel].
-    pub async fn get_byte_channels(
-        &self,
-    ) -> std::io::Result<HashMap<usize, BytesChannel<RecvStream, SendStream>>> {
+    pub async fn get_byte_channels(&self) -> std::io::Result<HashMap<usize, BytesChannel<RecvStream, SendStream>>> {
         self.get_byte_channels_for_lane(0).await
     }
 
@@ -1021,10 +853,7 @@ impl MpcNetworkHandlerWorker {
     pub async fn get_custom_channels<
         MSend,
         MRecv,
-        C: Encoder<MSend, Error = io::Error>
-            + Decoder<Item = MRecv, Error = io::Error>
-            + 'static
-            + Clone,
+        C: Encoder<MSend, Error = io::Error> + Decoder<Item = MRecv, Error = io::Error> + 'static + Clone,
     >(
         &self,
         codec: C,
@@ -1035,10 +864,7 @@ impl MpcNetworkHandlerWorker {
     pub async fn get_custom_channels_for_lane<
         MSend,
         MRecv,
-        C: Encoder<MSend, Error = io::Error>
-            + Decoder<Item = MRecv, Error = io::Error>
-            + 'static
-            + Clone,
+        C: Encoder<MSend, Error = io::Error> + Decoder<Item = MRecv, Error = io::Error> + 'static + Clone,
     >(
         &self,
         codec: C,
@@ -1069,9 +895,7 @@ impl MpcNetworkHandlerWorker {
     }
 
     /// Sets up a new [BytesChannel] between each party. The resulting map maps the id of the party to its respective [BytesChannel].
-    pub async fn get_coordinator_byte_channel(
-        &self,
-    ) -> std::io::Result<Option<BytesChannel<RecvStream, SendStream>>> {
+    pub async fn get_coordinator_byte_channel(&self) -> std::io::Result<Option<BytesChannel<RecvStream, SendStream>>> {
         if let Some(conn) = self.coordinator_connection.as_ref() {
             // set max frame length to 1Tb and length_field_length to 5 bytes
             const NUM_BYTES: usize = 5;
@@ -1106,25 +930,16 @@ impl MpcNetworkHandlerShutdown for MpcNetworkHandlerWorker {
                         let mut recv = conn.accept_uni().await?;
                         let mut buffer = vec![0u8; b"done".len()];
                         recv.read_exact(&mut buffer).await.map_err(|_| {
-                            std::io::Error::new(
-                                std::io::ErrorKind::BrokenPipe,
-                                "failed to recv done msg",
-                            )
+                            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "failed to recv done msg")
                         })?;
 
-                        conn.close(
-                            0u32.into(),
-                            format!("close from party {}", self.my_id).as_bytes(),
-                        );
+                        conn.close(0u32.into(), format!("close from party {}", self.my_id).as_bytes());
                     }
                     Ok::<_, std::io::Error>(())
                 }
                 .await;
                 if let Err(e) = res {
-                    tracing::trace!(
-                        party = id,
-                        "shutdown handshake failed (peer may have exited): {e}"
-                    );
+                    tracing::trace!(party = id, "shutdown handshake failed (peer may have exited): {e}");
                 }
             }
         }
@@ -1136,9 +951,7 @@ impl MpcNetworkHandlerShutdown for MpcNetworkHandlerWorker {
             }
             .await;
             if let Err(e) = res {
-                tracing::trace!(
-                    "coordinator shutdown handshake failed (coordinator may have exited): {e}"
-                );
+                tracing::trace!("coordinator shutdown handshake failed (coordinator may have exited): {e}");
             }
         }
 
@@ -1153,8 +966,7 @@ impl MpcNetworkHandlerShutdown for MpcNetworkHandlerWorker {
         }
 
         for endpoint in self.endpoints.iter() {
-            let _ =
-                tokio::time::timeout(std::time::Duration::from_secs(5), endpoint.wait_idle()).await;
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), endpoint.wait_idle()).await;
             endpoint.close(VarInt::from_u32(0), &[]);
         }
         Ok(())

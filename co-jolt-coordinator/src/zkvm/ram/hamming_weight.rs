@@ -24,28 +24,19 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for HammingWeight
         self.input_claim()
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &Rep3OpeningAccumulator<F>,
-        _r: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &Rep3OpeningAccumulator<F>, _r: &[F::Challenge]) -> F {
         self.gamma_powers()
             .iter()
             .enumerate()
             .map(|(i, gamma)| {
-                let (_, ra) = accumulator.get_committed_polynomial_opening(
-                    CommittedPolynomial::RamRa(i),
-                    SumcheckId::RamHammingWeight,
-                );
+                let (_, ra) = accumulator
+                    .get_committed_polynomial_opening(CommittedPolynomial::RamRa(i), SumcheckId::RamHammingWeight);
                 ra * gamma
             })
             .sum::<F>()
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         self.normalize_opening_point(opening_point)
     }
 
@@ -57,10 +48,7 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for HammingWeight
         claims: Vec<F>,
     ) {
         let r_cycle = accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RamHammingWeight,
-                SumcheckId::RamHammingBooleanity,
-            )
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamHammingWeight, SumcheckId::RamHammingBooleanity)
             .0
             .r
             .clone();
@@ -87,10 +75,7 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for HammingWeight
     }
 
     #[cfg(feature = "zk")]
-    fn input_constraint_challenge_values(
-        &self,
-        _accumulator: &Rep3OpeningAccumulator<F>,
-    ) -> Vec<F> {
+    fn input_constraint_challenge_values(&self, _accumulator: &Rep3OpeningAccumulator<F>) -> Vec<F> {
         vec![self.gamma_powers().iter().copied().sum()]
     }
 }

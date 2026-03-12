@@ -12,18 +12,7 @@ use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::ops::*;
 
-#[derive(
-    Copy,
-    Clone,
-    Debug,
-    Default,
-    PartialEq,
-    Eq,
-    Hash,
-    CanonicalSerialize,
-    CanonicalDeserialize,
-    Allocative,
-)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, CanonicalSerialize, CanonicalDeserialize, Allocative)]
 pub struct Mont254BitChallenge<F: JoltField> {
     value: F,
 }

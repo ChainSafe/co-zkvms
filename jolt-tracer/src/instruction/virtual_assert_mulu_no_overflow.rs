@@ -13,11 +13,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualAssertMulUNoOverflow {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <VirtualAssertMulUNoOverflow as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualAssertMulUNoOverflow as RISCVInstruction>::RAMAccess) {
         let rs1_val = cpu.x[self.operands.rs1 as usize] as u64;
         let rs2_val = cpu.x[self.operands.rs2 as usize] as u64;
         assert!(rs1_val.checked_mul(rs2_val).is_some());

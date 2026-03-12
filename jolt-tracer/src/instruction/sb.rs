@@ -61,11 +61,7 @@ impl RISCVTrace for SB {
     /// 1. Loading the aligned word containing the target byte
     /// 2. Masking and replacing the specific byte
     /// 3. Storing the modified word back to memory
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         match xlen {
             Xlen::Bit32 => self.inline_sequence_32(allocator),
             #[cfg(feature = "rv64")]

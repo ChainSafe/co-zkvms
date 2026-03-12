@@ -9,8 +9,7 @@ where
     S: serde::Serializer,
 {
     let mut bytes = vec![];
-    a.serialize_with_mode(&mut bytes, Compress::Yes)
-        .map_err(serde::ser::Error::custom)?;
+    a.serialize_with_mode(&mut bytes, Compress::Yes).map_err(serde::ser::Error::custom)?;
     s.serialize_bytes(&bytes)
 }
 

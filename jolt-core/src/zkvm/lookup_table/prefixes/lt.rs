@@ -8,13 +8,7 @@ use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 pub enum LessThanPrefix {}
 
 impl<F: JoltField> SparseDensePrefix<F> for LessThanPrefix {
-    fn prefix_mle<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<C>,
-        c: u32,
-        mut b: LookupBits,
-        _: usize,
-    ) -> F
+    fn prefix_mle<C>(checkpoints: &[PrefixCheckpoint<F>], r_x: Option<C>, c: u32, mut b: LookupBits, _: usize) -> F
     where
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
@@ -44,12 +38,7 @@ impl<F: JoltField> SparseDensePrefix<F> for LessThanPrefix {
         lt
     }
 
-    fn update_prefix_checkpoint<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: C,
-        r_y: C,
-        _: usize,
-    ) -> PrefixCheckpoint<F>
+    fn update_prefix_checkpoint<C>(checkpoints: &[PrefixCheckpoint<F>], r_x: C, r_y: C, _: usize) -> PrefixCheckpoint<F>
     where
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,

@@ -12,13 +12,7 @@ use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 pub enum Rev8WPrefix {}
 
 impl<F: JoltField> SparseDensePrefix<F> for Rev8WPrefix {
-    fn prefix_mle<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<C>,
-        c: u32,
-        b: LookupBits,
-        j: usize,
-    ) -> F
+    fn prefix_mle<C>(checkpoints: &[PrefixCheckpoint<F>], r_x: Option<C>, c: u32, b: LookupBits, j: usize) -> F
     where
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
@@ -54,12 +48,7 @@ impl<F: JoltField> SparseDensePrefix<F> for Rev8WPrefix {
         eval
     }
 
-    fn update_prefix_checkpoint<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: C,
-        r_y: C,
-        j: usize,
-    ) -> PrefixCheckpoint<F>
+    fn update_prefix_checkpoint<C>(checkpoints: &[PrefixCheckpoint<F>], r_x: C, r_y: C, j: usize) -> PrefixCheckpoint<F>
     where
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,

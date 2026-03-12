@@ -86,8 +86,7 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
         if point.r.is_empty() {
             return;
         }
-        self.opening_ids_by_poly_point
-            .insert((underlying_polynomial_id(key), Self::point_key(point)), key);
+        self.opening_ids_by_poly_point.insert((underlying_polynomial_id(key), Self::point_key(point)), key);
     }
 
     fn find_existing_opening_at_point(
@@ -95,9 +94,7 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
         poly_id: PolynomialId,
         point: &OpeningPoint<BIG_ENDIAN, F>,
     ) -> Option<(OpeningId, F)> {
-        let existing_id = *self
-            .opening_ids_by_poly_point
-            .get(&(poly_id, Self::point_key(point)))?;
+        let existing_id = *self.opening_ids_by_poly_point.get(&(poly_id, Self::point_key(point)))?;
         let (_, existing_claim) = self.openings.get(&existing_id).expect("indexed opening missing");
         Some((existing_id, *existing_claim))
     }
@@ -109,20 +106,12 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
         bytes
     }
 
-    fn register_opening(
-        &mut self,
-        key: OpeningId,
-        point: OpeningPoint<BIG_ENDIAN, F>,
-        claim: F,
-    ) -> (OpeningId, bool) {
+    fn register_opening(&mut self, key: OpeningId, point: OpeningPoint<BIG_ENDIAN, F>, claim: F) -> (OpeningId, bool) {
         if let Some((existing_id, existing_claim)) =
             self.find_existing_opening_at_point(underlying_polynomial_id(key), &point)
         {
             if existing_id != key {
-                assert_eq!(
-                    claim, existing_claim,
-                    "Inconsistent duplicate opening claims: {key:?} vs {existing_id:?}"
-                );
+                assert_eq!(claim, existing_claim, "Inconsistent duplicate opening claims: {key:?} vs {existing_id:?}");
                 self.aliases.insert(key, existing_id);
             }
             self.openings.insert(key, (point, claim));
@@ -235,10 +224,8 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
         sumcheck: SumcheckId,
     ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
         let key = self.resolve_alias(OpeningId::Virtual(polynomial, sumcheck));
-        let (point, claim) = self
-            .openings
-            .get(&key)
-            .unwrap_or_else(|| panic!("opening for {sumcheck:?} {polynomial:?} not found"));
+        let (point, claim) =
+            self.openings.get(&key).unwrap_or_else(|| panic!("opening for {sumcheck:?} {polynomial:?} not found"));
         (point.clone(), *claim)
     }
 
@@ -255,10 +242,8 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
         sumcheck: SumcheckId,
     ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
         let key = self.resolve_alias(OpeningId::Committed(polynomial, sumcheck));
-        let (point, claim) = self
-            .openings
-            .get(&key)
-            .unwrap_or_else(|| panic!("opening for {sumcheck:?} {polynomial:?} not found"));
+        let (point, claim) =
+            self.openings.get(&key).unwrap_or_else(|| panic!("opening for {sumcheck:?} {polynomial:?} not found"));
         (point.clone(), *claim)
     }
 

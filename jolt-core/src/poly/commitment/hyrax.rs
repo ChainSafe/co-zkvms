@@ -27,21 +27,13 @@ pub fn combined_row<F: JoltField>(flat: &[F], cols: usize, ry_row: &[F]) -> Vec<
 /// eval = Σ_k combined_row[k] · eq(ry_col, k)
 pub fn evaluate<F: JoltField>(combined_row: &[F], ry_col: &[F]) -> F {
     let eq_col: Vec<F> = EqPolynomial::evals(ry_col);
-    combined_row
-        .iter()
-        .zip(eq_col.iter())
-        .map(|(c, e)| *c * *e)
-        .sum()
+    combined_row.iter().zip(eq_col.iter()).map(|(c, e)| *c * *e).sum()
 }
 
 /// combined_blinding = Σ_i eq(ry_row, i) · row_blindings[i]
 pub fn combined_blinding<F: JoltField>(row_blindings: &[F], ry_row: &[F]) -> F {
     let eq_row: Vec<F> = EqPolynomial::evals(ry_row);
-    row_blindings
-        .iter()
-        .zip(eq_row.iter())
-        .map(|(b, e)| *b * *e)
-        .sum()
+    row_blindings.iter().zip(eq_row.iter()).map(|(b, e)| *b * *e).sum()
 }
 
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
@@ -63,12 +55,8 @@ mod tests {
         let cols: usize = 4;
         let rows: usize = 4;
         let flat: Vec<Fr> = (0..rows * cols).map(|_| Fr::rand(&mut rng)).collect();
-        let ry_row: Vec<Fr> = (0..rows.ilog2() as usize)
-            .map(|_| Fr::rand(&mut rng))
-            .collect();
-        let ry_col: Vec<Fr> = (0..cols.ilog2() as usize)
-            .map(|_| Fr::rand(&mut rng))
-            .collect();
+        let ry_row: Vec<Fr> = (0..rows.ilog2() as usize).map(|_| Fr::rand(&mut rng)).collect();
+        let ry_col: Vec<Fr> = (0..cols.ilog2() as usize).map(|_| Fr::rand(&mut rng)).collect();
 
         let cr = combined_row(&flat, cols, &ry_row);
         let eval = evaluate(&cr, &ry_col);
@@ -84,11 +72,7 @@ mod tests {
         assert_eq!(eval, direct_eval);
 
         let eq_row: Vec<Fr> = EqPolynomial::evals(&ry_row);
-        let direct_cb: Fr = blindings
-            .iter()
-            .zip(eq_row.iter())
-            .map(|(b, e)| *b * *e)
-            .sum();
+        let direct_cb: Fr = blindings.iter().zip(eq_row.iter()).map(|(b, e)| *b * *e).sum();
         assert_eq!(cb, direct_cb);
     }
 }

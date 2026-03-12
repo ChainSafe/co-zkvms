@@ -15,9 +15,7 @@ use crate::protocols::rep3::IoResult;
 const MASK66: u128 = (1u128 << 66) - 1;
 
 /// 66-bit unsigned integer (Z_{2^66}).
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
-)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[repr(transparent)]
 pub struct U66(u128);
 
@@ -188,11 +186,7 @@ impl Shl<usize> for U66 {
     type Output = Self;
     #[inline(always)]
     fn shl(self, rhs: usize) -> Self {
-        if rhs >= 66 {
-            Self(0)
-        } else {
-            Self((self.0 << rhs) & MASK66)
-        }
+        if rhs >= 66 { Self(0) } else { Self((self.0 << rhs) & MASK66) }
     }
 }
 

@@ -14,8 +14,8 @@ use crate::{
     transcripts::Transcript,
     utils::math::Math,
     zkvm::{
-        bytecode::BytecodePreprocessing, dag::proof_serialization::JoltProof,
-        ram::RAMPreprocessing, witness::DTH_ROOT_OF_K,
+        bytecode::BytecodePreprocessing, dag::proof_serialization::JoltProof, ram::RAMPreprocessing,
+        witness::DTH_ROOT_OF_K,
     },
 };
 use ark_bn254::Fr;
@@ -54,8 +54,7 @@ pub struct PprofGuard;
 impl Drop for PprofGuard {
     fn drop(&mut self) {
         if let Ok(report) = self.guard.report().build() {
-            let prefix = std::env::var("PPROF_PREFIX")
-                .unwrap_or_else(|_| String::from("benchmark-runs/pprof/"));
+            let prefix = std::env::var("PPROF_PREFIX").unwrap_or_else(|_| String::from("benchmark-runs/pprof/"));
             let filename = format!("{}{}.pb", prefix, self.label);
             // Extract directory from prefix for creation
             if let Some(dir) = std::path::Path::new(&filename).parent() {
@@ -82,12 +81,7 @@ macro_rules! pprof_scope {
         {
             Some($crate::zkvm::PprofGuard {
                 guard: pprof::ProfilerGuardBuilder::default()
-                    .frequency(
-                        std::env::var("PPROF_FREQ")
-                            .unwrap_or("100".to_string())
-                            .parse::<i32>()
-                            .unwrap(),
-                    )
+                    .frequency(std::env::var("PPROF_FREQ").unwrap_or("100".to_string()).parse::<i32>().unwrap())
                     .blocklist(&["libc", "libgcc", "pthread", "vdso"])
                     .build()
                     .expect("Failed to initialize profiler"),
@@ -156,20 +150,13 @@ where
 
     #[cfg(feature = "zk")]
     pub fn pedersen_generators(&self, count: usize) -> PedersenGenerators<Bn254Curve> {
-        let gens = &self
-            .blindfold_setup
-            .as_ref()
-            .expect("BlindfoldSetup required for ZK mode")
-            .0;
+        let gens = &self.blindfold_setup.as_ref().expect("BlindfoldSetup required for ZK mode").0;
         assert!(
             count <= gens.message_generators.len(),
             "requested {count} Pedersen generators but only {} are available",
             gens.message_generators.len()
         );
-        PedersenGenerators::new(
-            gens.message_generators[..count].to_vec(),
-            gens.blinding_generator,
-        )
+        PedersenGenerators::new(gens.message_generators[..count].to_vec(), gens.blinding_generator)
     }
 }
 
@@ -200,13 +187,9 @@ where
     where
         PCS: ZkEvalCommitment<Bn254Curve>,
     {
-        let (message_generators, blinding_generator) =
-            PCS::zk_generators(&self.generators, usize::MAX)
-                .expect("PCS does not support BlindFold Pedersen generators");
-        BlindfoldSetup(PedersenGenerators::new(
-            message_generators,
-            blinding_generator,
-        ))
+        let (message_generators, blinding_generator) = PCS::zk_generators(&self.generators, usize::MAX)
+            .expect("PCS does not support BlindFold Pedersen generators");
+        BlindfoldSetup(PedersenGenerators::new(message_generators, blinding_generator))
     }
 
     pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {
@@ -255,11 +238,7 @@ where
         let bytecode_preprocessing = BytecodePreprocessing::preprocess(bytecode);
         let ram_preprocessing = RAMPreprocessing::preprocess(memory_init);
 
-        JoltSharedPreprocessing {
-            memory_layout,
-            bytecode: bytecode_preprocessing,
-            ram: ram_preprocessing,
-        }
+        JoltSharedPreprocessing { memory_layout, bytecode: bytecode_preprocessing, ram: ram_preprocessing }
     }
 
     #[tracing::instrument(skip_all, name = "Jolt::prover_preprocess")]
@@ -329,11 +308,7 @@ pub trait Serializable: CanonicalSerialize + CanonicalDeserialize + Sized {
     /// Deserializes data from bytes but skips checks for performance
     fn deserialize_from_bytes_unchecked(bytes: &[u8]) -> Result<Self> {
         let cursor = Cursor::new(bytes);
-        Ok(Self::deserialize_with_mode(
-            cursor,
-            ark_serialize::Compress::Yes,
-            ark_serialize::Validate::No,
-        )?)
+        Ok(Self::deserialize_with_mode(cursor, ark_serialize::Compress::Yes, ark_serialize::Validate::No)?)
     }
 }
 

@@ -14,11 +14,11 @@ use jolt_core::jolt_optimizations;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
+#[cfg(feature = "ring-msm")]
+use mpc_core::protocols::rep3;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::PartyID;
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
-#[cfg(feature = "ring-msm")]
-use mpc_core::protocols::rep3;
 #[cfg(feature = "ring-msm")]
 use mpc_core::protocols::rep3_ring;
 #[cfg(feature = "ring-msm")]
@@ -976,7 +976,8 @@ fn compute_row_commitment_shares_ring<N: Rep3NetworkWorker>(
 
         // Ring B2A via edaBits Π₂ — 2 rounds
         let ring_edabits = preproc.take_ring_edabits_u66(num_shared)?;
-        let val_arith: Vec<Rep3RingShare<U66>> = rep3_ring::conversion::b2a_preproc_many(&bin_ext, &ring_edabits, &mut io)?;
+        let val_arith: Vec<Rep3RingShare<U66>> =
+            rep3_ring::conversion::b2a_preproc_many(&bin_ext, &ring_edabits, &mut io)?;
         let diff_u66: Vec<Rep3RingShare<U66>> = arith_ext.iter().zip(val_arith.iter()).map(|(a, v)| *a - *v).collect();
 
         // Extract m bits via DaBit mask+open (1 round)
@@ -1680,14 +1681,10 @@ mod tests {
         use jolt_common::constants::{ArithmeticWideInt, XlenInt};
         let all_arith_shares: Vec<_> = values
             .iter()
-            .map(|&v| {
-                rep3_ring::share_ring_element(RingElement(v as ArithmeticWideInt), &mut rng)
-            })
+            .map(|&v| rep3_ring::share_ring_element(RingElement(v as ArithmeticWideInt), &mut rng))
             .collect();
-        let all_bin_shares: Vec<_> = values
-            .iter()
-            .map(|&v| rep3_ring::share_ring_element_binary(RingElement(v as XlenInt), &mut rng))
-            .collect();
+        let all_bin_shares: Vec<_> =
+            values.iter().map(|&v| rep3_ring::share_ring_element_binary(RingElement(v as XlenInt), &mut rng)).collect();
 
         let polys_by_party: [Rep3MultilinearPolynomial<Fr>; 3] = std::array::from_fn(|pid| {
             let shares: Vec<Rep3RingShare<ArithmeticWideInt>> = all_arith_shares.iter().map(|s| s[pid]).collect();
@@ -1958,8 +1955,7 @@ mod tests {
                 bits_all.extend(m1_bin.iter().copied());
 
                 // Online: dot product
-                let total_corr_add =
-                    rep3::pointshare::dot_product_dapoints(&bits_all, &q_all, &batch, io_ctx.main())?;
+                let total_corr_add = rep3::pointshare::dot_product_dapoints(&bits_all, &q_all, &batch, io_ctx.main())?;
 
                 Ok(party_msm - total_corr_add)
             },

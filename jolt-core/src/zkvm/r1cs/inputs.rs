@@ -1,8 +1,4 @@
-#![allow(
-    clippy::len_without_is_empty,
-    clippy::type_complexity,
-    clippy::too_many_arguments
-)]
+#![allow(clippy::len_without_is_empty, clippy::type_complexity, clippy::too_many_arguments)]
 
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
@@ -103,11 +99,7 @@ impl R1CSCycleInputs {
         let norm = instr.normalize();
 
         // Next-cycle context
-        let next_cycle = if t + 1 < len {
-            Some(&trace[t + 1])
-        } else {
-            None
-        };
+        let next_cycle = if t + 1 < len { Some(&trace[t + 1]) } else { None };
 
         // Instruction inputs and product
         let (left_input, right_i128) = LookupQuery::<XLEN>::to_instruction_inputs(cycle);
@@ -141,17 +133,10 @@ impl R1CSCycleInputs {
 
         // PCs
         let pc = preprocessing.bytecode.get_pc(cycle) as u64;
-        let next_pc = if let Some(nc) = next_cycle {
-            preprocessing.bytecode.get_pc(nc) as u64
-        } else {
-            0u64
-        };
+        let next_pc = if let Some(nc) = next_cycle { preprocessing.bytecode.get_pc(nc) as u64 } else { 0u64 };
         let unexpanded_pc = norm.address as u64;
-        let next_unexpanded_pc = if let Some(nc) = next_cycle {
-            nc.instruction().normalize().address as u64
-        } else {
-            0u64
-        };
+        let next_unexpanded_pc =
+            if let Some(nc) = next_cycle { nc.instruction().normalize().address as u64 } else { 0u64 };
 
         // Immediate — for rv32, most instructions use the low-word bit pattern as-is, but branch
         // target updates need the signed branch offset. For rv64, the normalized immediate is
@@ -165,10 +150,7 @@ impl R1CSCycleInputs {
         #[cfg(feature = "rv64")]
         let imm_i128 = norm.operands.imm;
         let imm_mag = imm_i128.unsigned_abs();
-        debug_assert!(
-            imm_mag <= u64::MAX as u128,
-            "Imm overflow at row {t}: |{imm_i128}| > 2^64-1"
-        );
+        debug_assert!(imm_mag <= u64::MAX as u128, "Imm overflow at row {t}: |{imm_i128}| > 2^64-1");
         let imm = S64::from_u64_with_sign(imm_mag as u64, imm_i128 >= 0);
 
         // Flags and derived booleans
@@ -176,29 +158,14 @@ impl R1CSCycleInputs {
         for flag in CircuitFlags::iter() {
             flags[flag] = flags_view[flag];
         }
-        let next_is_noop = if let Some(nc) = next_cycle {
-            nc.instruction().circuit_flags()[CircuitFlags::IsNoop]
-        } else {
-            false
-        };
+        let next_is_noop =
+            if let Some(nc) = next_cycle { nc.instruction().circuit_flags()[CircuitFlags::IsNoop] } else { false };
         let should_jump = flags_view[CircuitFlags::Jump] && !next_is_noop;
-        let should_branch = if flags_view[CircuitFlags::Branch] {
-            lookup_output
-        } else {
-            0u64
-        };
+        let should_branch = if flags_view[CircuitFlags::Branch] { lookup_output } else { 0u64 };
 
         // Write-to-Rd selectors (masked by flags)
-        let write_lookup_output_to_rd_addr = if flags_view[CircuitFlags::WriteLookupOutputToRD] {
-            rd_addr
-        } else {
-            0
-        };
-        let write_pc_to_rd_addr = if flags_view[CircuitFlags::Jump] {
-            rd_addr
-        } else {
-            0
-        };
+        let write_lookup_output_to_rd_addr = if flags_view[CircuitFlags::WriteLookupOutputToRD] { rd_addr } else { 0 };
+        let write_pc_to_rd_addr = if flags_view[CircuitFlags::Jump] { rd_addr } else { 0 };
 
         Self {
             left_input,
@@ -233,12 +200,8 @@ impl R1CSCycleInputs {
         match input_index {
             JoltR1CSInputs::LeftInstructionInput => self.left_input.to_field(),
             JoltR1CSInputs::RightInstructionInput => F::from_i128(self.right_input.to_i128()),
-            JoltR1CSInputs::Product => {
-                F::from_i128(self.right_input.to_i128()).mul_u64(self.left_input)
-            }
-            JoltR1CSInputs::WriteLookupOutputToRD => {
-                (self.write_lookup_output_to_rd_addr as u64).to_field()
-            }
+            JoltR1CSInputs::Product => F::from_i128(self.right_input.to_i128()).mul_u64(self.left_input),
+            JoltR1CSInputs::WriteLookupOutputToRD => (self.write_lookup_output_to_rd_addr as u64).to_field(),
             JoltR1CSInputs::WritePCtoRD => (self.write_pc_to_rd_addr as u64).to_field(),
             JoltR1CSInputs::ShouldBranch => self.should_branch.to_field(),
             JoltR1CSInputs::PC => self.pc.to_field(),
@@ -505,40 +468,28 @@ pub fn compute_claimed_witness_evals<F: JoltField>(
                 let row = R1CSCycleInputs::from_trace::<F>(preprocessing, trace, idx);
 
                 // Accumulate directly from materialized row using field_mul on raw values
-                inner[JoltR1CSInputs::LeftInstructionInput.to_index()] +=
-                    row.left_input.field_mul(eq2_val);
-                inner[JoltR1CSInputs::RightInstructionInput.to_index()] +=
-                    row.right_input.field_mul(eq2_val);
+                inner[JoltR1CSInputs::LeftInstructionInput.to_index()] += row.left_input.field_mul(eq2_val);
+                inner[JoltR1CSInputs::RightInstructionInput.to_index()] += row.right_input.field_mul(eq2_val);
                 inner[JoltR1CSInputs::Product.to_index()] += row.product.field_mul(eq2_val);
                 inner[JoltR1CSInputs::WriteLookupOutputToRD.to_index()] +=
                     row.write_lookup_output_to_rd_addr.field_mul(eq2_val);
-                inner[JoltR1CSInputs::WritePCtoRD.to_index()] +=
-                    row.write_pc_to_rd_addr.field_mul(eq2_val);
-                inner[JoltR1CSInputs::ShouldBranch.to_index()] +=
-                    row.should_branch.field_mul(eq2_val);
+                inner[JoltR1CSInputs::WritePCtoRD.to_index()] += row.write_pc_to_rd_addr.field_mul(eq2_val);
+                inner[JoltR1CSInputs::ShouldBranch.to_index()] += row.should_branch.field_mul(eq2_val);
                 inner[JoltR1CSInputs::PC.to_index()] += row.pc.field_mul(eq2_val);
-                inner[JoltR1CSInputs::UnexpandedPC.to_index()] +=
-                    row.unexpanded_pc.field_mul(eq2_val);
+                inner[JoltR1CSInputs::UnexpandedPC.to_index()] += row.unexpanded_pc.field_mul(eq2_val);
                 inner[JoltR1CSInputs::Rd.to_index()] += row.rd_addr.field_mul(eq2_val);
                 inner[JoltR1CSInputs::Imm.to_index()] += row.imm.to_i128().field_mul(eq2_val);
                 inner[JoltR1CSInputs::RamAddress.to_index()] += row.ram_addr.field_mul(eq2_val);
                 inner[JoltR1CSInputs::Rs1Value.to_index()] += row.rs1_read_value.field_mul(eq2_val);
                 inner[JoltR1CSInputs::Rs2Value.to_index()] += row.rs2_read_value.field_mul(eq2_val);
-                inner[JoltR1CSInputs::RdWriteValue.to_index()] +=
-                    row.rd_write_value.field_mul(eq2_val);
-                inner[JoltR1CSInputs::RamReadValue.to_index()] +=
-                    row.ram_read_value.field_mul(eq2_val);
-                inner[JoltR1CSInputs::RamWriteValue.to_index()] +=
-                    row.ram_write_value.field_mul(eq2_val);
-                inner[JoltR1CSInputs::LeftLookupOperand.to_index()] +=
-                    row.left_lookup.field_mul(eq2_val);
-                inner[JoltR1CSInputs::RightLookupOperand.to_index()] +=
-                    row.right_lookup.field_mul(eq2_val);
-                inner[JoltR1CSInputs::NextUnexpandedPC.to_index()] +=
-                    row.next_unexpanded_pc.field_mul(eq2_val);
+                inner[JoltR1CSInputs::RdWriteValue.to_index()] += row.rd_write_value.field_mul(eq2_val);
+                inner[JoltR1CSInputs::RamReadValue.to_index()] += row.ram_read_value.field_mul(eq2_val);
+                inner[JoltR1CSInputs::RamWriteValue.to_index()] += row.ram_write_value.field_mul(eq2_val);
+                inner[JoltR1CSInputs::LeftLookupOperand.to_index()] += row.left_lookup.field_mul(eq2_val);
+                inner[JoltR1CSInputs::RightLookupOperand.to_index()] += row.right_lookup.field_mul(eq2_val);
+                inner[JoltR1CSInputs::NextUnexpandedPC.to_index()] += row.next_unexpanded_pc.field_mul(eq2_val);
                 inner[JoltR1CSInputs::NextPC.to_index()] += row.next_pc.field_mul(eq2_val);
-                inner[JoltR1CSInputs::LookupOutput.to_index()] +=
-                    row.lookup_output.field_mul(eq2_val);
+                inner[JoltR1CSInputs::LookupOutput.to_index()] += row.lookup_output.field_mul(eq2_val);
                 if row.next_is_noop {
                     inner[JoltR1CSInputs::NextIsNoop.to_index()] += eq2_val;
                 }
@@ -589,16 +540,13 @@ where
     let mut pc: Vec<u64> = vec![0; len];
     let mut is_noop: Vec<u8> = vec![0; len];
 
-    unexpanded_pc
-        .par_iter_mut()
-        .zip(pc.par_iter_mut())
-        .zip(is_noop.par_iter_mut())
-        .zip(trace.par_iter())
-        .for_each(|(((u, p), n), cycle)| {
+    unexpanded_pc.par_iter_mut().zip(pc.par_iter_mut()).zip(is_noop.par_iter_mut()).zip(trace.par_iter()).for_each(
+        |(((u, p), n), cycle)| {
             *u = cycle.instruction().normalize().address as u64;
             *p = preprocessing.bytecode.get_pc(cycle) as u64;
             *n = cycle.instruction().circuit_flags()[CircuitFlags::IsNoop] as u8;
-        });
+        },
+    );
 
     (unexpanded_pc.into(), pc.into(), is_noop.into())
 }
@@ -617,13 +565,11 @@ where
     let mut left_input: Vec<u64> = vec![0; len];
     let mut right_input: Vec<i128> = vec![0; len];
 
-    left_input
-        .par_iter_mut()
-        .zip(right_input.par_iter_mut())
-        .zip(trace.par_iter())
-        .for_each(|((left, right), cycle)| {
+    left_input.par_iter_mut().zip(right_input.par_iter_mut()).zip(trace.par_iter()).for_each(
+        |((left, right), cycle)| {
             (*left, *right) = LookupQuery::<XLEN>::to_instruction_inputs(cycle);
-        });
+        },
+    );
 
     (left_input.into(), right_input.into())
 }
@@ -660,18 +606,12 @@ mod tests {
                 (JoltR1CSInputs::RdWriteValue, JoltR1CSInputs::RdWriteValue) => true,
                 (JoltR1CSInputs::RamReadValue, JoltR1CSInputs::RamReadValue) => true,
                 (JoltR1CSInputs::RamWriteValue, JoltR1CSInputs::RamWriteValue) => true,
-                (JoltR1CSInputs::LeftInstructionInput, JoltR1CSInputs::LeftInstructionInput) => {
-                    true
-                }
-                (JoltR1CSInputs::RightInstructionInput, JoltR1CSInputs::RightInstructionInput) => {
-                    true
-                }
+                (JoltR1CSInputs::LeftInstructionInput, JoltR1CSInputs::LeftInstructionInput) => true,
+                (JoltR1CSInputs::RightInstructionInput, JoltR1CSInputs::RightInstructionInput) => true,
                 (JoltR1CSInputs::LeftLookupOperand, JoltR1CSInputs::LeftLookupOperand) => true,
                 (JoltR1CSInputs::RightLookupOperand, JoltR1CSInputs::RightLookupOperand) => true,
                 (JoltR1CSInputs::Product, JoltR1CSInputs::Product) => true,
-                (JoltR1CSInputs::WriteLookupOutputToRD, JoltR1CSInputs::WriteLookupOutputToRD) => {
-                    true
-                }
+                (JoltR1CSInputs::WriteLookupOutputToRD, JoltR1CSInputs::WriteLookupOutputToRD) => true,
                 (JoltR1CSInputs::WritePCtoRD, JoltR1CSInputs::WritePCtoRD) => true,
                 (JoltR1CSInputs::ShouldBranch, JoltR1CSInputs::ShouldBranch) => true,
                 (JoltR1CSInputs::NextUnexpandedPC, JoltR1CSInputs::NextUnexpandedPC) => true,
@@ -690,43 +630,21 @@ mod tests {
         const fn const_eq_circuit_flags(&self, flag1: CircuitFlags, flag2: CircuitFlags) -> bool {
             matches!(
                 (flag1, flag2),
-                (
-                    CircuitFlags::LeftOperandIsRs1Value,
-                    CircuitFlags::LeftOperandIsRs1Value
-                ) | (
-                    CircuitFlags::RightOperandIsRs2Value,
-                    CircuitFlags::RightOperandIsRs2Value
-                ) | (CircuitFlags::LeftOperandIsPC, CircuitFlags::LeftOperandIsPC)
-                    | (
-                        CircuitFlags::RightOperandIsImm,
-                        CircuitFlags::RightOperandIsImm
-                    )
+                (CircuitFlags::LeftOperandIsRs1Value, CircuitFlags::LeftOperandIsRs1Value)
+                    | (CircuitFlags::RightOperandIsRs2Value, CircuitFlags::RightOperandIsRs2Value)
+                    | (CircuitFlags::LeftOperandIsPC, CircuitFlags::LeftOperandIsPC)
+                    | (CircuitFlags::RightOperandIsImm, CircuitFlags::RightOperandIsImm)
                     | (CircuitFlags::AddOperands, CircuitFlags::AddOperands)
-                    | (
-                        CircuitFlags::SubtractOperands,
-                        CircuitFlags::SubtractOperands
-                    )
-                    | (
-                        CircuitFlags::MultiplyOperands,
-                        CircuitFlags::MultiplyOperands
-                    )
+                    | (CircuitFlags::SubtractOperands, CircuitFlags::SubtractOperands)
+                    | (CircuitFlags::MultiplyOperands, CircuitFlags::MultiplyOperands)
                     | (CircuitFlags::Load, CircuitFlags::Load)
                     | (CircuitFlags::Store, CircuitFlags::Store)
                     | (CircuitFlags::Jump, CircuitFlags::Jump)
                     | (CircuitFlags::Branch, CircuitFlags::Branch)
-                    | (
-                        CircuitFlags::WriteLookupOutputToRD,
-                        CircuitFlags::WriteLookupOutputToRD
-                    )
-                    | (
-                        CircuitFlags::InlineSequenceInstruction,
-                        CircuitFlags::InlineSequenceInstruction
-                    )
+                    | (CircuitFlags::WriteLookupOutputToRD, CircuitFlags::WriteLookupOutputToRD)
+                    | (CircuitFlags::InlineSequenceInstruction, CircuitFlags::InlineSequenceInstruction)
                     | (CircuitFlags::Assert, CircuitFlags::Assert)
-                    | (
-                        CircuitFlags::DoNotUpdateUnexpandedPC,
-                        CircuitFlags::DoNotUpdateUnexpandedPC
-                    )
+                    | (CircuitFlags::DoNotUpdateUnexpandedPC, CircuitFlags::DoNotUpdateUnexpandedPC)
                     | (CircuitFlags::Advice, CircuitFlags::Advice)
                     | (CircuitFlags::IsNoop, CircuitFlags::IsNoop)
                     | (CircuitFlags::IsCompressed, CircuitFlags::IsCompressed)

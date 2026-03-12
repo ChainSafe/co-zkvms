@@ -14,9 +14,7 @@ use amoxorw::AMOXORW;
 use and::AND;
 use andi::ANDI;
 use andn::ANDN;
-use ark_serialize::{
-    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
-};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate};
 use auipc::AUIPC;
 use beq::BEQ;
 use bge::BGE;
@@ -397,12 +395,7 @@ pub struct NormalizedInstruction {
 }
 
 pub trait RISCVInstruction:
-    std::fmt::Debug
-    + Sized
-    + Copy
-    + Into<Instruction>
-    + From<NormalizedInstruction>
-    + Into<NormalizedInstruction>
+    std::fmt::Debug + Sized + Copy + Into<Instruction> + From<NormalizedInstruction> + Into<NormalizedInstruction>
 {
     const MASK: u32;
     const MATCH: u32;
@@ -426,26 +419,17 @@ where
     RISCVCycle<Self>: Into<Cycle>,
 {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        let mut cycle: RISCVCycle<Self> = RISCVCycle {
-            instruction: *self,
-            register_state: Default::default(),
-            ram_access: Default::default(),
-        };
-        self.operands()
-            .capture_pre_execution_state(&mut cycle.register_state, cpu);
+        let mut cycle: RISCVCycle<Self> =
+            RISCVCycle { instruction: *self, register_state: Default::default(), ram_access: Default::default() };
+        self.operands().capture_pre_execution_state(&mut cycle.register_state, cpu);
         self.execute(cpu, &mut cycle.ram_access);
-        self.operands()
-            .capture_post_execution_state(&mut cycle.register_state, cpu);
+        self.operands().capture_post_execution_state(&mut cycle.register_state, cpu);
         if let Some(trace_vec) = trace {
             trace_vec.push(cycle.into());
         }
     }
     // Default implementation. Instructions with inline sequences will override this.
-    fn inline_sequence(
-        &self,
-        _vr_allocator: &VirtualRegisterAllocator,
-        _xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, _vr_allocator: &VirtualRegisterAllocator, _xlen: Xlen) -> Vec<Instruction> {
         vec![(*self).into()]
     }
 }
@@ -711,9 +695,7 @@ impl CanonicalSerialize for Instruction {
         let bytes = serde_json::to_vec(self).map_err(|_| SerializationError::InvalidData)?;
         let len: u64 = bytes.len() as u64;
         len.serialize_with_mode(&mut writer, _compress)?;
-        writer
-            .write_all(&bytes)
-            .map_err(|_| SerializationError::InvalidData)?;
+        writer.write_all(&bytes).map_err(|_| SerializationError::InvalidData)?;
         Ok(())
     }
 
@@ -731,9 +713,7 @@ impl CanonicalDeserialize for Instruction {
     ) -> Result<Self, SerializationError> {
         let len = u64::deserialize_with_mode(&mut reader, compress, validate)?;
         let mut bytes = vec![0u8; len as usize];
-        reader
-            .read_exact(&mut bytes)
-            .map_err(|_| SerializationError::InvalidData)?;
+        reader.read_exact(&mut bytes).map_err(|_| SerializationError::InvalidData)?;
         serde_json::from_slice(&bytes).map_err(|e| {
             println!("Deserialization error: {e}");
             SerializationError::InvalidData
@@ -1081,12 +1061,7 @@ pub fn uncompress_instruction(halfword: u32, xlen: Xlen) -> u32 {
                         ((halfword << 1) & 0xc0); // uimm[7:6] <= [6:5]
                 let imm11_5 = (offset >> 5) & 0x7f;
                 let imm4_0 = offset & 0x1f;
-                return (imm11_5 << 25)
-                    | ((rs2 + 8) << 20)
-                    | ((rs1 + 8) << 15)
-                    | (3 << 12)
-                    | (imm4_0 << 7)
-                    | 0x27;
+                return (imm11_5 << 25) | ((rs2 + 8) << 20) | ((rs1 + 8) << 15) | (3 << 12) | (imm4_0 << 7) | 0x27;
             }
             6 => {
                 // C.SW
@@ -1098,12 +1073,7 @@ pub fn uncompress_instruction(halfword: u32, xlen: Xlen) -> u32 {
                         ((halfword >> 4) & 0x4); // offset[2] <= [6]
                 let imm11_5 = (offset >> 5) & 0x7f;
                 let imm4_0 = offset & 0x1f;
-                return (imm11_5 << 25)
-                    | ((rs2 + 8) << 20)
-                    | ((rs1 + 8) << 15)
-                    | (2 << 12)
-                    | (imm4_0 << 7)
-                    | 0x23;
+                return (imm11_5 << 25) | ((rs2 + 8) << 20) | ((rs1 + 8) << 15) | (2 << 12) | (imm4_0 << 7) | 0x23;
             }
             7 => {
                 // @TODO: Support C.FSW in 32-bit mode
@@ -1115,12 +1085,7 @@ pub fn uncompress_instruction(halfword: u32, xlen: Xlen) -> u32 {
                         ((halfword << 1) & 0xc0); // uimm[7:6] <= [6:5]
                 let imm11_5 = (offset >> 5) & 0x7f;
                 let imm4_0 = offset & 0x1f;
-                return (imm11_5 << 25)
-                    | ((rs2 + 8) << 20)
-                    | ((rs1 + 8) << 15)
-                    | (3 << 12)
-                    | (imm4_0 << 7)
-                    | 0x23;
+                return (imm11_5 << 25) | ((rs2 + 8) << 20) | ((rs1 + 8) << 15) | (3 << 12) | (imm4_0 << 7) | 0x23;
             }
             _ => {} // Not happens
         },
@@ -1262,11 +1227,7 @@ pub fn uncompress_instruction(halfword: u32, xlen: Xlen) -> u32 {
                             let shamt = ((halfword >> 7) & 0x20) | // shamt[5] <= [12]
                                     ((halfword >> 2) & 0x1f); // shamt[4:0] <= [6:2]
                             let rs1 = (halfword >> 7) & 0x7; // [9:7]
-                            return (shamt << 20)
-                                | ((rs1 + 8) << 15)
-                                | (5 << 12)
-                                | ((rs1 + 8) << 7)
-                                | 0x13;
+                            return (shamt << 20) | ((rs1 + 8) << 15) | (5 << 12) | ((rs1 + 8) << 7) | 0x13;
                         }
                         1 => {
                             // C.SRAI
@@ -1291,11 +1252,7 @@ pub fn uncompress_instruction(halfword: u32, xlen: Xlen) -> u32 {
                                 } | // imm[31:6] <= [12]
                                 ((halfword >> 7) & 0x20) | // imm[5] <= [12]
                                 ((halfword >> 2) & 0x1f); // imm[4:0] <= [6:2]
-                            return (imm << 20)
-                                | ((r + 8) << 15)
-                                | (7 << 12)
-                                | ((r + 8) << 7)
-                                | 0x13;
+                            return (imm << 20) | ((r + 8) << 15) | (7 << 12) | ((r + 8) << 7) | 0x13;
                         }
                         3 => {
                             let funct1 = (halfword >> 12) & 1; // [12]
@@ -1355,10 +1312,7 @@ pub fn uncompress_instruction(halfword: u32, xlen: Xlen) -> u32 {
                                     1 => {
                                         // C.ADDW
                                         // addw r1+8, r1+8, r2+8
-                                        return ((rs2 + 8) << 20)
-                                            | ((rs1 + 8) << 15)
-                                            | ((rs1 + 8) << 7)
-                                            | 0x3b;
+                                        return ((rs2 + 8) << 20) | ((rs1 + 8) << 15) | ((rs1 + 8) << 7) | 0x3b;
                                     }
                                     2 => {
                                         // Reserved
@@ -1547,12 +1501,7 @@ pub fn uncompress_instruction(halfword: u32, xlen: Xlen) -> u32 {
                             ((halfword >> 1) & 0x1c0); // offset[8:6] <= [9:7]
                     let imm11_5 = (offset >> 5) & 0x3f;
                     let imm4_0 = offset & 0x1f;
-                    return (imm11_5 << 25)
-                        | (rs2 << 20)
-                        | (2 << 15)
-                        | (3 << 12)
-                        | (imm4_0 << 7)
-                        | 0x27;
+                    return (imm11_5 << 25) | (rs2 << 20) | (2 << 15) | (3 << 12) | (imm4_0 << 7) | 0x27;
                 }
                 6 => {
                     // C.SWSP
@@ -1562,12 +1511,7 @@ pub fn uncompress_instruction(halfword: u32, xlen: Xlen) -> u32 {
                             ((halfword >> 1) & 0xc0); // offset[7:6] <= [8:7]
                     let imm11_5 = (offset >> 5) & 0x3f;
                     let imm4_0 = offset & 0x1f;
-                    return (imm11_5 << 25)
-                        | (rs2 << 20)
-                        | (2 << 15)
-                        | (2 << 12)
-                        | (imm4_0 << 7)
-                        | 0x23;
+                    return (imm11_5 << 25) | (rs2 << 20) | (2 << 15) | (2 << 12) | (imm4_0 << 7) | 0x23;
                 }
                 7 => {
                     // @TODO: Support C.FSWSP in 32-bit mode
@@ -1578,12 +1522,7 @@ pub fn uncompress_instruction(halfword: u32, xlen: Xlen) -> u32 {
                             ((halfword >> 1) & 0x1c0); // offset[8:6] <= [9:7]
                     let imm11_5 = (offset >> 5) & 0x3f;
                     let imm4_0 = offset & 0x1f;
-                    return (imm11_5 << 25)
-                        | (rs2 << 20)
-                        | (2 << 15)
-                        | (3 << 12)
-                        | (imm4_0 << 7)
-                        | 0x23;
+                    return (imm11_5 << 25) | (rs2 << 20) | (2 << 15) | (3 << 12) | (imm4_0 << 7) | 0x23;
                 }
                 _ => {} // Not happens
             };
@@ -1604,15 +1543,8 @@ impl<T: RISCVInstruction> RISCVCycle<T> {
     #[cfg(any(feature = "test-utils", test))]
     pub fn random(&self, rng: &mut rand::rngs::StdRng) -> Self {
         let instruction = T::random(rng);
-        let register_state =
-            <<T::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(
-                rng,
-            );
-        Self {
-            instruction,
-            ram_access: Default::default(),
-            register_state,
-        }
+        let register_state = <<T::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(rng);
+        Self { instruction, ram_access: Default::default(), register_state }
     }
 }
 
@@ -1625,9 +1557,6 @@ mod tests {
     fn rv32im_cycle_size() {
         let size = size_of::<Cycle>();
         let expected = 80;
-        assert_eq!(
-            size, expected,
-            "Cycle size should be {expected} bytes, but is {size} bytes"
-        );
+        assert_eq!(size, expected, "Cycle size should be {expected} bytes, but is {size} bytes");
     }
 }

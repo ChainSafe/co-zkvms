@@ -33,10 +33,8 @@ impl<F: JoltField> Rep3RamValEvaluation<F> {
         sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
         init_eval: F,
     ) -> Self {
-        let (opening_point, claimed_evaluation) = sm.accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamVal,
-            SumcheckId::RamReadWriteChecking,
-        );
+        let (opening_point, claimed_evaluation) =
+            sm.accumulator.get_virtual_polynomial_opening(VirtualPolynomial::RamVal, SumcheckId::RamReadWriteChecking);
 
         let K = sm.ram_K;
         let r_address_len = K.log_2();
@@ -70,15 +68,9 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3RamValEvalu
         self.input_claim
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &Rep3OpeningAccumulator<F>,
-        r: &[F::Challenge],
-    ) -> F {
-        let (opening_point, _) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamVal,
-            SumcheckId::RamReadWriteChecking,
-        );
+    fn expected_output_claim(&self, accumulator: &Rep3OpeningAccumulator<F>, r: &[F::Challenge]) -> F {
+        let (opening_point, _) =
+            accumulator.get_virtual_polynomial_opening(VirtualPolynomial::RamVal, SumcheckId::RamReadWriteChecking);
         let (_, r_cycle) = opening_point.split_at(self.K.log_2());
 
         // Compute LT(r_cycle', r_cycle)
@@ -89,20 +81,15 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3RamValEvalu
             eq_term *= F::one() - x - y + *x * y + *x * y;
         }
 
-        let (_, inc_claim) = accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::RamInc,
-            SumcheckId::RamValEvaluation,
-        );
-        let (_, wa_claim) = accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamValEvaluation);
+        let (_, inc_claim) =
+            accumulator.get_committed_polynomial_opening(CommittedPolynomial::RamInc, SumcheckId::RamValEvaluation);
+        let (_, wa_claim) =
+            accumulator.get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamValEvaluation);
 
         inc_claim * wa_claim * lt_eval
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.to_vec())
     }
 
@@ -113,10 +100,8 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3RamValEvalu
         r_cycle: OpeningPoint<BIG_ENDIAN, F>,
         claims: Vec<F>,
     ) {
-        let (opening_point, _) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamVal,
-            SumcheckId::RamReadWriteChecking,
-        );
+        let (opening_point, _) =
+            accumulator.get_virtual_polynomial_opening(VirtualPolynomial::RamVal, SumcheckId::RamReadWriteChecking);
         let (r_address, _) = opening_point.split_at(self.K.log_2());
 
         // Must match vanilla order: append_virtual (wa) first, then append_dense (inc)
@@ -143,17 +128,11 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3RamValEvalu
         InputClaimConstraint::linear(vec![
             (
                 ValueSource::one(),
-                ValueSource::opening(OpeningId::Virtual(
-                    VirtualPolynomial::RamVal,
-                    SumcheckId::RamReadWriteChecking,
-                )),
+                ValueSource::opening(OpeningId::Virtual(VirtualPolynomial::RamVal, SumcheckId::RamReadWriteChecking)),
             ),
             (
                 ValueSource::neg_one(),
-                ValueSource::opening(OpeningId::Virtual(
-                    VirtualPolynomial::RamValInit,
-                    SumcheckId::RamOutputCheck,
-                )),
+                ValueSource::opening(OpeningId::Virtual(VirtualPolynomial::RamValInit, SumcheckId::RamOutputCheck)),
             ),
         ])
     }
@@ -162,14 +141,8 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3RamValEvalu
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
         Some(OutputClaimConstraint::product(vec![
             ValueSource::challenge(0),
-            ValueSource::opening(OpeningId::Committed(
-                CommittedPolynomial::RamInc,
-                SumcheckId::RamValEvaluation,
-            )),
-            ValueSource::opening(OpeningId::Virtual(
-                VirtualPolynomial::RamRa,
-                SumcheckId::RamValEvaluation,
-            )),
+            ValueSource::opening(OpeningId::Committed(CommittedPolynomial::RamInc, SumcheckId::RamValEvaluation)),
+            ValueSource::opening(OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamValEvaluation)),
         ]))
     }
 

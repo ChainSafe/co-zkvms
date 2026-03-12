@@ -380,7 +380,10 @@ mod tests {
     use rand::SeedableRng;
     use rand_chacha::ChaCha12Rng;
 
-    fn share_field_element_rep3<F: JoltField, R: rand::Rng + rand::CryptoRng>(val: F, rng: &mut R) -> [Rep3PrimeFieldShare<F>; 3] {
+    fn share_field_element_rep3<F: JoltField, R: rand::Rng + rand::CryptoRng>(
+        val: F,
+        rng: &mut R,
+    ) -> [Rep3PrimeFieldShare<F>; 3] {
         mpc_core::protocols::rep3::share_field_element(val, rng)
     }
 

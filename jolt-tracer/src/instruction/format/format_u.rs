@@ -2,9 +2,7 @@ use crate::emulator::cpu::Cpu;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
-use super::{
-    normalize_register_value, InstructionFormat, InstructionRegisterState, NormalizedOperands,
-};
+use super::{normalize_register_value, InstructionFormat, InstructionRegisterState, NormalizedOperands};
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatU {
@@ -21,9 +19,7 @@ impl InstructionRegisterState for RegisterStateFormatU {
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
         use rand::RngCore;
-        Self {
-            rd: (rng.next_u64(), rng.next_u64()),
-        }
+        Self { rd: (rng.next_u64(), rng.next_u64()) }
     }
 
     fn rd_values(&self) -> (u64, u64) {
@@ -60,29 +56,18 @@ impl InstructionFormat for FormatU {
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
         use common::constants::RISCV_REGISTER_COUNT;
         use rand::RngCore;
-        Self {
-            rd: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
-            imm: rng.next_u64(),
-        }
+        Self { rd: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT), imm: rng.next_u64() }
     }
 }
 
 impl From<NormalizedOperands> for FormatU {
     fn from(operands: NormalizedOperands) -> Self {
-        Self {
-            rd: operands.rd,
-            imm: operands.imm as u64,
-        }
+        Self { rd: operands.rd, imm: operands.imm as u64 }
     }
 }
 
 impl From<FormatU> for NormalizedOperands {
     fn from(format: FormatU) -> Self {
-        Self {
-            rs1: 0,
-            rs2: 0,
-            rd: format.rd,
-            imm: format.imm as i128,
-        }
+        Self { rs1: 0, rs2: 0, rd: format.rd, imm: format.imm as i128 }
     }
 }

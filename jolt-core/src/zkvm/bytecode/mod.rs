@@ -28,19 +28,12 @@ impl BytecodePreprocessing {
 
         let d = compute_d_parameter(bytecode.len().next_power_of_two().max(2));
         // Make log(code_size) a multiple of d
-        let code_size = (bytecode.len().next_power_of_two().log_2().div_ceil(d) * d)
-            .pow2()
-            .max(DTH_ROOT_OF_K);
+        let code_size = (bytecode.len().next_power_of_two().log_2().div_ceil(d) * d).pow2().max(DTH_ROOT_OF_K);
 
         // Bytecode: Pad to nearest power of 2
         bytecode.resize(code_size, Instruction::NoOp);
 
-        Self {
-            code_size,
-            bytecode,
-            pc_map,
-            d,
-        }
+        Self { code_size, bytecode, pc_map, d }
     }
 
     pub fn get_pc(&self, cycle: &Cycle) -> usize {
@@ -48,8 +41,7 @@ impl BytecodePreprocessing {
             return 0;
         }
         let instr = cycle.instruction().normalize();
-        self.pc_map
-            .get_pc(instr.address, instr.inline_sequence_remaining.unwrap_or(0))
+        self.pc_map.get_pc(instr.address, instr.inline_sequence_remaining.unwrap_or(0))
     }
 }
 
@@ -86,25 +78,18 @@ impl BytecodePCMapper {
             last_pc += 1;
             if let Some((_, max_sequence)) = indices.get(Self::get_index(instr.address)).unwrap() {
                 if instr.inline_sequence_remaining.unwrap_or(0) >= *max_sequence {
-                    panic!(
-                        "Bytecode has non-decreasing inline sequences at index {}",
-                        Self::get_index(instr.address)
-                    );
+                    panic!("Bytecode has non-decreasing inline sequences at index {}", Self::get_index(instr.address));
                 }
             } else {
-                indices[Self::get_index(instr.address)] =
-                    Some((last_pc, instr.inline_sequence_remaining.unwrap_or(0)));
+                indices[Self::get_index(instr.address)] = Some((last_pc, instr.inline_sequence_remaining.unwrap_or(0)));
             }
         });
         Self { indices }
     }
 
     pub fn get_pc(&self, address: usize, inline_sequence_remaining: u16) -> usize {
-        let (base_pc, max_inline_seq) = self
-            .indices
-            .get(Self::get_index(address))
-            .unwrap()
-            .expect("PC for address not found");
+        let (base_pc, max_inline_seq) =
+            self.indices.get(Self::get_index(address)).unwrap().expect("PC for address not found");
         base_pc + (max_inline_seq - inline_sequence_remaining) as usize
     }
 

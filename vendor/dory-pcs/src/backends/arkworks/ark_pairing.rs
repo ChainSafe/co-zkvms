@@ -108,11 +108,7 @@ mod pairing_helpers {
         #[cfg(feature = "cache")]
         {
             if let Some(cache) = crate::backends::arkworks::ark_cache::get_prepared_cache() {
-                let ps_prep: Vec<_> = ps
-                    .iter()
-                    .enumerate()
-                    .map(|(i, _)| cache.g1_prepared[i].clone())
-                    .collect();
+                let ps_prep: Vec<_> = ps.iter().enumerate().map(|(i, _)| cache.g1_prepared[i].clone()).collect();
                 return multi_pair_with_prepared(ps_prep, &qs_prep);
             }
         }
@@ -133,8 +129,7 @@ mod pairing_helpers {
         qs_prep: &[<Bn254 as Pairing>::G2Prepared],
     ) -> ArkGT {
         let miller_output = Bn254::multi_miller_loop(ps_prep, qs_prep.to_vec());
-        let result = Bn254::final_exponentiation(miller_output)
-            .expect("Final exponentiation should not fail");
+        let result = Bn254::final_exponentiation(miller_output).expect("Final exponentiation should not fail");
         ArkGT(result.0)
     }
 
@@ -174,8 +169,7 @@ mod pairing_helpers {
                 |a, b| ark_ec::pairing::MillerLoopOutput(a.0 * b.0),
             );
 
-        let result =
-            Bn254::final_exponentiation(combined).expect("Final exponentiation should not fail");
+        let result = Bn254::final_exponentiation(combined).expect("Final exponentiation should not fail");
         ArkGT(result.0)
     }
 
@@ -238,8 +232,7 @@ mod pairing_helpers {
                 |a, b| ark_ec::pairing::MillerLoopOutput(a.0 * b.0),
             );
 
-        let result =
-            Bn254::final_exponentiation(combined).expect("Final exponentiation should not fail");
+        let result = Bn254::final_exponentiation(combined).expect("Final exponentiation should not fail");
         ArkGT(result.0)
     }
 
@@ -302,8 +295,7 @@ mod pairing_helpers {
                 |a, b| ark_ec::pairing::MillerLoopOutput(a.0 * b.0),
             );
 
-        let result =
-            Bn254::final_exponentiation(combined).expect("Final exponentiation should not fail");
+        let result = Bn254::final_exponentiation(combined).expect("Final exponentiation should not fail");
         ArkGT(result.0)
     }
 
@@ -355,11 +347,7 @@ impl PairingCurve for BN254 {
 
     #[tracing::instrument(skip_all, name = "BN254::multi_pair", fields(len = ps.len()))]
     fn multi_pair(ps: &[Self::G1], qs: &[Self::G2]) -> Self::GT {
-        assert_eq!(
-            ps.len(),
-            qs.len(),
-            "multi_pair requires equal length vectors"
-        );
+        assert_eq!(ps.len(), qs.len(), "multi_pair requires equal length vectors");
 
         if ps.is_empty() {
             return Self::GT::identity();
@@ -370,11 +358,7 @@ impl PairingCurve for BN254 {
 
     #[tracing::instrument(skip_all, name = "BN254::multi_pair_g2_setup", fields(len = ps.len()))]
     fn multi_pair_g2_setup(ps: &[Self::G1], qs: &[Self::G2]) -> Self::GT {
-        assert_eq!(
-            ps.len(),
-            qs.len(),
-            "multi_pair_g2_setup requires equal length vectors"
-        );
+        assert_eq!(ps.len(), qs.len(), "multi_pair_g2_setup requires equal length vectors");
 
         if ps.is_empty() {
             return Self::GT::identity();
@@ -385,11 +369,7 @@ impl PairingCurve for BN254 {
 
     #[tracing::instrument(skip_all, name = "BN254::multi_pair_g1_setup", fields(len = ps.len()))]
     fn multi_pair_g1_setup(ps: &[Self::G1], qs: &[Self::G2]) -> Self::GT {
-        assert_eq!(
-            ps.len(),
-            qs.len(),
-            "multi_pair_g1_setup requires equal length vectors"
-        );
+        assert_eq!(ps.len(), qs.len(), "multi_pair_g1_setup requires equal length vectors");
 
         if ps.is_empty() {
             return Self::GT::identity();

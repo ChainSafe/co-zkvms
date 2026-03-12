@@ -19,9 +19,7 @@ impl VirtualZeroExtendWord {
     fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualZeroExtendWord as RISCVInstruction>::RAMAccess) {
         match cpu.xlen {
             Xlen::Bit32 => panic!("VirtualExtend is not supported for 32-bit mode"),
-            Xlen::Bit64 => {
-                cpu.x[self.operands.rd as usize] = cpu.x[self.operands.rs1 as usize] & 0xFFFFFFFF
-            }
+            Xlen::Bit64 => cpu.x[self.operands.rd as usize] = cpu.x[self.operands.rs1 as usize] & 0xFFFFFFFF,
         }
     }
 }

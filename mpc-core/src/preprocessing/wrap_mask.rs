@@ -7,12 +7,12 @@
 use crate::IoResult;
 use crate::protocols::rep3::PartyID;
 use crate::protocols::rep3::network::{IoContext, Rep3Network};
-use crate::protocols::rep3_ring::{arithmetic, binary, conversion};
 use crate::protocols::rep3_ring::Rep3RingShare;
 use crate::protocols::rep3_ring::ring::bit::Bit;
 use crate::protocols::rep3_ring::ring::int_ring::IntRing2k;
 use crate::protocols::rep3_ring::ring::ring_impl::RingElement;
 use crate::protocols::rep3_ring::ring::u66::U66;
+use crate::protocols::rep3_ring::{arithmetic, binary, conversion};
 use rand::{Rng, SeedableRng};
 
 use super::backing_store;
@@ -104,11 +104,7 @@ impl LazyWrapMasks {
         );
 
         if n == 0 {
-            return Ok(WrapMaskBatch {
-                r0_bin: Vec::new(),
-                r1_bin: Vec::new(),
-                mask_arith: Vec::new(),
-            });
+            return Ok(WrapMaskBatch { r0_bin: Vec::new(), r1_bin: Vec::new(), mask_arith: Vec::new() });
         }
 
         let cursor_base = self.cursor;
@@ -157,22 +153,14 @@ impl LazyWrapMasks {
         let flat_start = cursor_base * 2;
         let flat_end = flat_start + n * 2;
         let flat = &self.mask_arith_flat.as_slice()[flat_start..flat_end];
-        let mask_arith: Vec<Rep3RingShare<U66>> = (0..n)
-            .map(|i| Rep3RingShare {
-                a: flat[2 * i],
-                b: flat[2 * i + 1],
-            })
-            .collect();
+        let mask_arith: Vec<Rep3RingShare<U66>> =
+            (0..n).map(|i| Rep3RingShare { a: flat[2 * i], b: flat[2 * i + 1] }).collect();
 
         self.cursor += n;
         self.persist_cursor();
         self.mask_arith_flat.consume(flat_start, flat_end);
 
-        Ok(WrapMaskBatch {
-            r0_bin,
-            r1_bin,
-            mask_arith,
-        })
+        Ok(WrapMaskBatch { r0_bin, r1_bin, mask_arith })
     }
 
     pub fn save(&self, dir: &std::path::Path) -> std::io::Result<()> {
@@ -203,10 +191,7 @@ impl LazyWrapMasks {
             return std::result::Result::Ok(Self::empty(party_id));
         }
         let meta = backing_store::read_meta(&meta_path)?;
-        assert_eq!(
-            meta.party_id_byte,
-            backing_store::party_id_to_byte(party_id)
-        );
+        assert_eq!(meta.party_id_byte, backing_store::party_id_to_byte(party_id));
         let mask_arith_flat = if meta.total > 0 {
             let data_path = dir.join("wrap_masks.data");
             backing_store::BackingStore::load_from_file(&data_path)?
@@ -237,10 +222,7 @@ impl LazyWrapMasks {
 ///
 /// Binary shares are generated from a forked RNG (seed-regenerable).
 /// Arithmetic shares are stored in a BackingStore (all parties).
-pub fn generate_wrap_masks_lazy<N: Rep3Network>(
-    n: usize,
-    io: &mut IoContext<N>,
-) -> IoResult<LazyWrapMasks> {
+pub fn generate_wrap_masks_lazy<N: Rep3Network>(n: usize, io: &mut IoContext<N>) -> IoResult<LazyWrapMasks> {
     let party_id = io.id;
     if n == 0 {
         return Ok(LazyWrapMasks::empty(party_id));
@@ -258,8 +240,7 @@ pub fn generate_wrap_masks_lazy<N: Rep3Network>(
     }
 
     // Convert binary bit shares → arithmetic U66 shares (2 rounds, uses MAIN io RNG).
-    let all_arith: Vec<Rep3RingShare<U66>> =
-        conversion::bit_inject_from_bits_many::<U66, N>(&all_bits, io)?;
+    let all_arith: Vec<Rep3RingShare<U66>> = conversion::bit_inject_from_bits_many::<U66, N>(&all_bits, io)?;
 
     let r0_arith = &all_arith[..n];
     let r1_arith = &all_arith[n..];
@@ -280,9 +261,7 @@ pub fn generate_wrap_masks_lazy<N: Rep3Network>(
     // Flatten to interleaved [a₀, b₀, a₁, b₁, ...] for BackingStore.
     let flat: Vec<RingElement<U66>> = mask_arith.iter().flat_map(|s| [s.a, s.b]).collect();
 
-    Ok(LazyWrapMasks::new(
-        seed1, pos1, seed2, pos2, n, flat, party_id,
-    ))
+    Ok(LazyWrapMasks::new(seed1, pos1, seed2, pos2, n, flat, party_id))
 }
 
 /// Extract binary shares of wrap bits m0, m1 from diff_u66 = m·2^64 in Z_{2^66}.
@@ -299,11 +278,7 @@ pub fn extract_wrap_m2_from_diff_u66_many<N: Rep3Network>(
     assert_eq!(n, masks.mask_arith.len());
 
     // c = diff - R (local, arithmetic in U66)
-    let c: Vec<Rep3RingShare<U66>> = diff_u66
-        .iter()
-        .zip(masks.mask_arith.iter())
-        .map(|(d, r)| *d - *r)
-        .collect();
+    let c: Vec<Rep3RingShare<U66>> = diff_u66.iter().zip(masks.mask_arith.iter()).map(|(d, r)| *d - *r).collect();
 
     // Open c (1 round)
     let c_open: Vec<RingElement<U66>> = arithmetic::open_vec(&c, io)?;
@@ -314,12 +289,7 @@ pub fn extract_wrap_m2_from_diff_u66_many<N: Rep3Network>(
 
     for i in 0..n {
         let ctop = ((c_open[i].0.inner() >> 64) & 3) as u8;
-        let (m0, m1) = two_bit_add_public_const_into_binary_share(
-            ctop,
-            masks.r0_bin[i],
-            masks.r1_bin[i],
-            party_id,
-        );
+        let (m0, m1) = two_bit_add_public_const_into_binary_share(ctop, masks.r0_bin[i], masks.r1_bin[i], party_id);
         m0_bin.push(m0);
         m1_bin.push(m1);
     }
@@ -348,10 +318,7 @@ fn two_bit_add_public_const_into_binary_share(
     let carry = if c0 { r0_b } else { Rep3RingShare::default() };
 
     // m1 = (r1 XOR carry) XOR c1
-    let r1_xor_carry = Rep3RingShare {
-        a: r1_b.a ^ carry.a,
-        b: r1_b.b ^ carry.b,
-    };
+    let r1_xor_carry = Rep3RingShare { a: r1_b.a ^ carry.a, b: r1_b.b ^ carry.b };
     let m1 = binary::xor_public(&r1_xor_carry, &RingElement(Bit::new(c1)), party_id);
 
     (m0, m1)
@@ -376,32 +343,24 @@ mod tests {
         let n = test_ms.len();
 
         // diff = m * 2^64 in U66
-        let diffs: Vec<RingElement<U66>> = test_ms
-            .iter()
-            .map(|&m| RingElement(U66::new((m as u128) << 64)))
-            .collect();
+        let diffs: Vec<RingElement<U66>> = test_ms.iter().map(|&m| RingElement(U66::new((m as u128) << 64))).collect();
 
         // Share each diff arithmetically
-        let diff_shares: Vec<[Rep3RingShare<U66>; 3]> = diffs
-            .iter()
-            .map(|d| share_ring_element(*d, &mut rng))
-            .collect();
+        let diff_shares: Vec<[Rep3RingShare<U66>; 3]> =
+            diffs.iter().map(|d| share_ring_element(*d, &mut rng)).collect();
 
         let (results, _) = run_rep3_local_test_with_coordinator(
             0,
             |party_idx| {
-                let party_diffs: Vec<Rep3RingShare<U66>> =
-                    diff_shares.iter().map(|s| s[party_idx]).collect();
+                let party_diffs: Vec<Rep3RingShare<U66>> = diff_shares.iter().map(|s| s[party_idx]).collect();
                 (party_diffs, n)
             },
             || (),
-            |(party_diffs, n): (Vec<Rep3RingShare<U66>>, usize),
-             mut io_ctx: IoContextPool<LocalRep3TestWorkerNet>| {
+            |(party_diffs, n): (Vec<Rep3RingShare<U66>>, usize), mut io_ctx: IoContextPool<LocalRep3TestWorkerNet>| {
                 let io = io_ctx.main();
                 let mut lazy_masks = generate_wrap_masks_lazy(n, io)?;
                 let masks = lazy_masks.take_batch(n)?;
-                let (m0_bin, m1_bin) =
-                    extract_wrap_m2_from_diff_u66_many(&party_diffs, &masks, io)?;
+                let (m0_bin, m1_bin) = extract_wrap_m2_from_diff_u66_many(&party_diffs, &masks, io)?;
                 Ok((m0_bin, m1_bin))
             },
             |(), _net| Ok(()),

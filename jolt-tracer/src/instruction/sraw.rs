@@ -27,8 +27,7 @@ impl SRAW {
         // on 32-bit values and sign-extend their 32-bit results to 64 bits. The shift amount is
         // given by rs2[4:0].
         let shamt = (cpu.x[self.operands.rs2 as usize] & 0x1f) as u32;
-        cpu.x[self.operands.rd as usize] =
-            ((cpu.x[self.operands.rs1 as usize] as i32) >> shamt) as i64;
+        cpu.x[self.operands.rd as usize] = ((cpu.x[self.operands.rs1 as usize] as i32) >> shamt) as i64;
     }
 }
 
@@ -55,11 +54,7 @@ impl RISCVTrace for SRAW {
     /// 5. Sign-extend the result to ensure proper 32-bit semantics
     ///
     /// The double sign-extension ensures correct handling of negative 32-bit values.
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let v_rs1 = allocator.allocate();
         let v_bitmask = allocator.allocate();
 

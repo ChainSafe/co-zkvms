@@ -29,10 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let commitments: Vec<_> = polys
         .iter()
-        .map(|poly| {
-            poly.commit::<BN254, Transparent, G1Routines>(nu, sigma, &prover_setup)
-                .unwrap()
-        })
+        .map(|poly| poly.commit::<BN254, Transparent, G1Routines>(nu, sigma, &prover_setup).unwrap())
         .collect();
 
     let coeffs: Vec<ArkFr> = (0..num_polys).map(|_| ArkFr::random()).collect();
@@ -59,13 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         #[allow(clippy::needless_range_loop)]
         for coeff_idx in 0..poly_size {
             let point: Vec<ArkFr> = (0..num_vars)
-                .map(|bit_idx| {
-                    if (coeff_idx >> bit_idx) & 1 == 1 {
-                        ArkFr::one()
-                    } else {
-                        ArkFr::zero()
-                    }
-                })
+                .map(|bit_idx| if (coeff_idx >> bit_idx) & 1 == 1 { ArkFr::one() } else { ArkFr::zero() })
                 .collect();
 
             let eval = polys[poly_idx].evaluate(&point);

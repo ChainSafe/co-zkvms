@@ -16,16 +16,7 @@ use crate::constants::{
 /// all reads from the reserved memory address space for program inputs and all writes
 /// to the reserved memory address space for program outputs.
 /// The inputs and outputs are part of the public inputs to the proof.
-#[derive(
-    Default,
-    Debug,
-    Clone,
-    PartialEq,
-    Serialize,
-    Deserialize,
-    CanonicalSerialize,
-    CanonicalDeserialize,
-)]
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltDevice {
     pub inputs: Vec<u8>,
     pub trusted_advice: Vec<u8>,
@@ -110,13 +101,11 @@ impl JoltDevice {
     }
 
     pub fn is_trusted_advice(&self, address: u64) -> bool {
-        address >= self.memory_layout.trusted_advice_start
-            && address < self.memory_layout.trusted_advice_end
+        address >= self.memory_layout.trusted_advice_start && address < self.memory_layout.trusted_advice_end
     }
 
     pub fn is_untrusted_advice(&self, address: u64) -> bool {
-        address >= self.memory_layout.untrusted_advice_start
-            && address < self.memory_layout.untrusted_advice_end
+        address >= self.memory_layout.untrusted_advice_start && address < self.memory_layout.untrusted_advice_end
     }
 
     pub fn is_output(&self, address: u64) -> bool {
@@ -173,9 +162,7 @@ impl Default for MemoryConfig {
     }
 }
 
-#[derive(
-    Default, Clone, PartialEq, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize,
-)]
+#[derive(Default, Clone, PartialEq, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
 pub struct MemoryLayout {
     /// The total size of the elf's sections, including the .text, .data, .rodata, and .bss sections.
     pub program_size: u64,
@@ -212,22 +199,10 @@ impl core::fmt::Debug for MemoryLayout {
             .field("max_trusted_advice_size", &self.max_trusted_advice_size)
             .field("max_untrusted_advice_size", &self.max_untrusted_advice_size)
             .field("max_output_size", &self.max_output_size)
-            .field(
-                "trusted_advice_start",
-                &format_args!("{:#X}", self.trusted_advice_start),
-            )
-            .field(
-                "trusted_advice_end",
-                &format_args!("{:#X}", self.trusted_advice_end),
-            )
-            .field(
-                "untrusted_advice_start",
-                &format_args!("{:#X}", self.untrusted_advice_start),
-            )
-            .field(
-                "untrusted_advice_end",
-                &format_args!("{:#X}", self.untrusted_advice_end),
-            )
+            .field("trusted_advice_start", &format_args!("{:#X}", self.trusted_advice_start))
+            .field("trusted_advice_end", &format_args!("{:#X}", self.trusted_advice_end))
+            .field("untrusted_advice_start", &format_args!("{:#X}", self.untrusted_advice_start))
+            .field("untrusted_advice_end", &format_args!("{:#X}", self.untrusted_advice_end))
             .field("input_start", &format_args!("{:#X}", self.input_start))
             .field("input_end", &format_args!("{:#X}", self.input_end))
             .field("output_start", &format_args!("{:#X}", self.output_start))
@@ -244,10 +219,7 @@ impl core::fmt::Debug for MemoryLayout {
 
 impl MemoryLayout {
     pub fn new(config: &MemoryConfig) -> Self {
-        assert!(
-            config.program_size.is_some(),
-            "MemoryLayout requires bytecode size to be set"
-        );
+        assert!(config.program_size.is_some(), "MemoryLayout requires bytecode size to be set");
         // helper to align ‘val’ *up* to a multiple of ‘align’, panicking on overflow
         #[inline]
         fn align_up(val: u64, align: u64) -> u64 {
@@ -285,30 +257,21 @@ impl MemoryLayout {
         let io_region_words = (io_region_bytes / 8).next_power_of_two();
         // let io_region_words = (io_region_bytes / 8 + 1).next_power_of_two() - 1;
 
-        let io_bytes = io_region_words
-            .checked_mul(8)
-            .expect("I/O region byte count overflow");
+        let io_bytes = io_region_words.checked_mul(8).expect("I/O region byte count overflow");
 
-        let trusted_advice_start = RAM_START_ADDRESS
-            .checked_sub(io_bytes)
-            .expect("I/O region exceeds RAM_START_ADDRESS");
-        let trusted_advice_end = trusted_advice_start
-            .checked_add(max_trusted_advice_size)
-            .expect("trusted_advice_end overflow");
+        let trusted_advice_start =
+            RAM_START_ADDRESS.checked_sub(io_bytes).expect("I/O region exceeds RAM_START_ADDRESS");
+        let trusted_advice_end =
+            trusted_advice_start.checked_add(max_trusted_advice_size).expect("trusted_advice_end overflow");
 
         let untrusted_advice_start = trusted_advice_end;
-        let untrusted_advice_end = untrusted_advice_start
-            .checked_add(max_untrusted_advice_size)
-            .expect("untrusted_advice_end overflow");
+        let untrusted_advice_end =
+            untrusted_advice_start.checked_add(max_untrusted_advice_size).expect("untrusted_advice_end overflow");
 
         let input_start = untrusted_advice_end;
-        let input_end = input_start
-            .checked_add(max_input_size)
-            .expect("input_end overflow");
+        let input_end = input_start.checked_add(max_input_size).expect("input_end overflow");
         let output_start = input_end;
-        let output_end = output_start
-            .checked_add(max_output_size)
-            .expect("output_end overflow");
+        let output_end = output_start.checked_add(max_output_size).expect("output_end overflow");
         let panic = output_end;
         let termination = panic.checked_add(8).expect("termination overflow");
         let io_end = termination.checked_add(8).expect("io_end overflow");
@@ -316,17 +279,11 @@ impl MemoryLayout {
         let program_size = config.program_size.unwrap();
 
         // stack grows downwards (decreasing addresses) from the bytecode_end + stack_size up to bytecode_end
-        let stack_end = RAM_START_ADDRESS
-            .checked_add(program_size)
-            .expect("stack_end overflow");
-        let stack_start = stack_end
-            .checked_add(stack_size)
-            .expect("stack_start overflow");
+        let stack_end = RAM_START_ADDRESS.checked_add(program_size).expect("stack_end overflow");
+        let stack_start = stack_end.checked_add(stack_size).expect("stack_start overflow");
 
         // heap grows *up* (increasing addresses) from the stack of the stack
-        let memory_end = stack_start
-            .checked_add(memory_size)
-            .expect("memory_end overflow");
+        let memory_end = stack_start.checked_add(memory_size).expect("memory_end overflow");
 
         Self {
             program_size,

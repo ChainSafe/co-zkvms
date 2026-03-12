@@ -5,8 +5,6 @@ use mpc_core::protocols::rep3_ring::{self, Rep3RingShare};
 use serde::{Deserialize, Serialize};
 use tracer::emulator::memory::Memory;
 
-
-
 /// Rep3 secret-shared main memory.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Rep3Memory {
@@ -41,8 +39,7 @@ impl Rep3Memory {
         let total_dram_words = (memory.data.len() as u64 * 8).div_ceil(ws) as usize;
         let share_len = dram_words_needed.min(total_dram_words);
 
-        let mut transposed: [Vec<Rep3RingShare<u64>>; 3] =
-            std::array::from_fn(|_| Vec::with_capacity(share_len));
+        let mut transposed: [Vec<Rep3RingShare<u64>>; 3] = std::array::from_fn(|_| Vec::with_capacity(share_len));
         for word_idx in 0..share_len {
             let address = word_idx as u64 * ws;
             let word = memory.read_bytes(address, ws);

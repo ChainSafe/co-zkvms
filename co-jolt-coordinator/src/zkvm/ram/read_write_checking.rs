@@ -4,9 +4,7 @@ use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::opening_proof::OpeningId;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN};
 #[cfg(feature = "zk")]
-use jolt_core::subprotocols::blindfold::{
-    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
-};
+use jolt_core::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource};
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
@@ -40,21 +38,15 @@ impl<F: JoltField> Rep3RamReadWriteChecking<F> {
         let gamma = sm.transcript.challenge_scalar();
         let K = sm.ram_K;
 
-        let (_, rv_claim) = sm.accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamReadValue,
-            SumcheckId::SpartanOuter,
-        );
-        let (_, wv_claim) = sm.accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamWriteValue,
-            SumcheckId::SpartanOuter,
-        );
+        let (_, rv_claim) =
+            sm.accumulator.get_virtual_polynomial_opening(VirtualPolynomial::RamReadValue, SumcheckId::SpartanOuter);
+        let (_, wv_claim) =
+            sm.accumulator.get_virtual_polynomial_opening(VirtualPolynomial::RamWriteValue, SumcheckId::SpartanOuter);
         let input_claim = rv_claim + gamma * wv_claim;
 
         // Infer T from opening point dimension
-        let (r_point, _) = sm.accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamReadValue,
-            SumcheckId::SpartanOuter,
-        );
+        let (r_point, _) =
+            sm.accumulator.get_virtual_polynomial_opening(VirtualPolynomial::RamReadValue, SumcheckId::SpartanOuter);
         let T = 1 << r_point.r.len();
 
         Self {
@@ -92,41 +84,26 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3RamReadWrit
         self.input_claim
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &Rep3OpeningAccumulator<F>,
-        r: &[F::Challenge],
-    ) -> F {
-        let (r_prime, _) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamReadValue,
-            SumcheckId::SpartanOuter,
-        );
+    fn expected_output_claim(&self, accumulator: &Rep3OpeningAccumulator<F>, r: &[F::Challenge]) -> F {
+        let (r_prime, _) =
+            accumulator.get_virtual_polynomial_opening(VirtualPolynomial::RamReadValue, SumcheckId::SpartanOuter);
 
         let mut r_cycle = r[..self.sumcheck_switch_index].to_vec();
         r_cycle.extend(r[self.sumcheck_switch_index..self.T.log_2()].iter().rev());
         let r_cycle = OpeningPoint::<LITTLE_ENDIAN, F>::new(r_cycle);
         let eq_eval = EqPolynomial::mle_endian(&r_prime, &r_cycle);
 
-        let (_, ra_claim) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamRa,
-            SumcheckId::RamReadWriteChecking,
-        );
-        let (_, val_claim) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamVal,
-            SumcheckId::RamReadWriteChecking,
-        );
-        let (_, inc_claim) = accumulator.get_committed_polynomial_opening(
-            CommittedPolynomial::RamInc,
-            SumcheckId::RamReadWriteChecking,
-        );
+        let (_, ra_claim) =
+            accumulator.get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamReadWriteChecking);
+        let (_, val_claim) =
+            accumulator.get_virtual_polynomial_opening(VirtualPolynomial::RamVal, SumcheckId::RamReadWriteChecking);
+        let (_, inc_claim) =
+            accumulator.get_committed_polynomial_opening(CommittedPolynomial::RamInc, SumcheckId::RamReadWriteChecking);
 
         eq_eval * ra_claim * (val_claim + self.gamma * (val_claim + inc_claim))
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         let log_T = self.T.log_2();
         let mut r_cycle = opening_point[self.sumcheck_switch_index..log_T].to_vec();
         r_cycle.extend(opening_point[..self.sumcheck_switch_index].iter().rev());
@@ -176,10 +153,7 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3RamReadWrit
     }
 
     #[cfg(feature = "zk")]
-    fn input_constraint_challenge_values(
-        &self,
-        _accumulator: &Rep3OpeningAccumulator<F>,
-    ) -> Vec<F> {
+    fn input_constraint_challenge_values(&self, _accumulator: &Rep3OpeningAccumulator<F>) -> Vec<F> {
         vec![self.gamma]
     }
 
@@ -188,34 +162,19 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3RamReadWrit
         Some(OutputClaimConstraint::sum_of_products(vec![
             ProductTerm::product(vec![
                 ValueSource::challenge(0),
-                ValueSource::opening(OpeningId::Virtual(
-                    VirtualPolynomial::RamRa,
-                    SumcheckId::RamReadWriteChecking,
-                )),
-                ValueSource::opening(OpeningId::Virtual(
-                    VirtualPolynomial::RamVal,
-                    SumcheckId::RamReadWriteChecking,
-                )),
+                ValueSource::opening(OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamReadWriteChecking)),
+                ValueSource::opening(OpeningId::Virtual(VirtualPolynomial::RamVal, SumcheckId::RamReadWriteChecking)),
             ]),
             ProductTerm::product(vec![
                 ValueSource::challenge(0),
                 ValueSource::challenge(1),
-                ValueSource::opening(OpeningId::Virtual(
-                    VirtualPolynomial::RamRa,
-                    SumcheckId::RamReadWriteChecking,
-                )),
-                ValueSource::opening(OpeningId::Virtual(
-                    VirtualPolynomial::RamVal,
-                    SumcheckId::RamReadWriteChecking,
-                )),
+                ValueSource::opening(OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamReadWriteChecking)),
+                ValueSource::opening(OpeningId::Virtual(VirtualPolynomial::RamVal, SumcheckId::RamReadWriteChecking)),
             ]),
             ProductTerm::product(vec![
                 ValueSource::challenge(0),
                 ValueSource::challenge(1),
-                ValueSource::opening(OpeningId::Virtual(
-                    VirtualPolynomial::RamRa,
-                    SumcheckId::RamReadWriteChecking,
-                )),
+                ValueSource::opening(OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamReadWriteChecking)),
                 ValueSource::opening(OpeningId::Committed(
                     CommittedPolynomial::RamInc,
                     SumcheckId::RamReadWriteChecking,
@@ -226,12 +185,7 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3RamReadWrit
 
     #[cfg(feature = "zk")]
     fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
-        let eq_eval = ram_eq_eval(
-            &self.r_cycle,
-            sumcheck_challenges,
-            self.sumcheck_switch_index,
-            self.T.log_2(),
-        );
+        let eq_eval = ram_eq_eval(&self.r_cycle, sumcheck_challenges, self.sumcheck_switch_index, self.T.log_2());
         vec![eq_eval, self.gamma]
     }
 }

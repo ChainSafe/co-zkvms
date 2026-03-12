@@ -255,11 +255,7 @@ impl CanonicalDeserialize for OpeningId {
                     SumcheckId::from_u8(sumcheck_id).ok_or(SerializationError::InvalidData)?,
                 ))
             }
-            2 => Ok(OpeningId::ReducedOpeningClaim(u32::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-            )?)),
+            2 => Ok(OpeningId::ReducedOpeningClaim(u32::deserialize_with_mode(&mut reader, compress, validate)?)),
             3 => Ok(OpeningId::UntrustedAdvice),
             4 => Ok(OpeningId::TrustedAdvice),
             _ => Err(SerializationError::InvalidData),

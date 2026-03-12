@@ -8,8 +8,8 @@ use crate::{
 };
 
 use super::{
-    format::format_r::FormatR, virtual_shift_right_bitmask::VirtualShiftRightBitmask,
-    virtual_sra::VirtualSRA, Cycle, Instruction, RISCVInstruction, RISCVTrace,
+    format::format_r::FormatR, virtual_shift_right_bitmask::VirtualShiftRightBitmask, virtual_sra::VirtualSRA, Cycle,
+    Instruction, RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -27,8 +27,7 @@ impl SRA {
             Xlen::Bit64 => 0x3f,
         };
         cpu.x[self.operands.rd as usize] = cpu.sign_extend(
-            cpu.x[self.operands.rs1 as usize]
-                .wrapping_shr(cpu.x[self.operands.rs2 as usize] as u32 & mask),
+            cpu.x[self.operands.rs1 as usize].wrapping_shr(cpu.x[self.operands.rs2 as usize] as u32 & mask),
         );
     }
 }
@@ -43,11 +42,7 @@ impl RISCVTrace for SRA {
     }
 
     /// SRA performs arithmetic right shift preserving the sign bit.
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let v_bitmask = allocator.allocate();
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);

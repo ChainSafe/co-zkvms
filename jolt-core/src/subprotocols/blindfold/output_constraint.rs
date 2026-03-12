@@ -43,10 +43,7 @@ impl ProductTerm {
     }
 
     pub fn product(factors: Vec<ValueSource>) -> Self {
-        Self {
-            coeff: ValueSource::one(),
-            factors,
-        }
+        Self { coeff: ValueSource::one(), factors }
     }
 
     pub fn scaled(coeff: ValueSource, factors: Vec<ValueSource>) -> Self {
@@ -54,10 +51,7 @@ impl ProductTerm {
     }
 
     pub fn single(value: ValueSource) -> Self {
-        Self {
-            coeff: value,
-            factors: vec![],
-        }
+        Self { coeff: value, factors: vec![] }
     }
 }
 
@@ -88,11 +82,7 @@ impl OutputClaimConstraint {
             .max()
             .unwrap_or(0);
 
-        Self {
-            terms,
-            required_openings,
-            num_challenges,
-        }
+        Self { terms, required_openings, num_challenges }
     }
 
     fn collect_unique_openings(terms: &[ProductTerm]) -> Vec<OpeningId> {
@@ -110,11 +100,7 @@ impl OutputClaimConstraint {
         openings
     }
 
-    pub fn evaluate<F: crate::field::JoltField>(
-        &self,
-        opening_values: &[F],
-        challenge_values: &[F],
-    ) -> F {
+    pub fn evaluate<F: crate::field::JoltField>(&self, opening_values: &[F], challenge_values: &[F]) -> F {
         let mut visitor = EvaluateVisitor::new(self, opening_values, challenge_values);
         let mut acc = F::zero();
         self.visit(&mut visitor, &mut acc);
@@ -128,20 +114,16 @@ impl OutputClaimConstraint {
     }
 
     pub fn linear(terms: Vec<(ValueSource, ValueSource)>) -> Self {
-        let product_terms: Vec<ProductTerm> = terms
-            .into_iter()
-            .map(|(coeff, val)| ProductTerm::scaled(coeff, vec![val]))
-            .collect();
+        let product_terms: Vec<ProductTerm> =
+            terms.into_iter().map(|(coeff, val)| ProductTerm::scaled(coeff, vec![val])).collect();
 
         let required_openings = Self::collect_unique_openings(&product_terms);
         Self::new(product_terms, required_openings)
     }
 
     pub fn scaled_linear(multiplier: ValueSource, terms: Vec<(ValueSource, ValueSource)>) -> Self {
-        let product_terms: Vec<ProductTerm> = terms
-            .into_iter()
-            .map(|(coeff, val)| ProductTerm::scaled(coeff, vec![multiplier.clone(), val]))
-            .collect();
+        let product_terms: Vec<ProductTerm> =
+            terms.into_iter().map(|(coeff, val)| ProductTerm::scaled(coeff, vec![multiplier.clone(), val])).collect();
 
         let required_openings = Self::collect_unique_openings(&product_terms);
         Self::new(product_terms, required_openings)
@@ -183,20 +165,14 @@ impl OutputClaimConstraint {
     }
 
     pub fn direct(opening: OpeningId) -> Self {
-        Self::new(
-            vec![ProductTerm::single(ValueSource::Opening(opening))],
-            vec![opening],
-        )
+        Self::new(vec![ProductTerm::single(ValueSource::Opening(opening))], vec![opening])
     }
 
     /// Builds: opening_0 + Challenge(0)*opening_1 + Challenge(1)*opening_2 + ...
     pub fn weighted_openings(openings: &[OpeningId]) -> Self {
         let mut terms = vec![ProductTerm::single(ValueSource::Opening(openings[0]))];
         for (i, opening) in openings[1..].iter().enumerate() {
-            terms.push(ProductTerm::scaled(
-                ValueSource::Challenge(i),
-                vec![ValueSource::Opening(*opening)],
-            ));
+            terms.push(ProductTerm::scaled(ValueSource::Challenge(i), vec![ValueSource::Opening(*opening)]));
         }
         Self::sum_of_products(terms)
     }
@@ -206,12 +182,7 @@ impl OutputClaimConstraint {
         let terms = openings
             .iter()
             .enumerate()
-            .map(|(i, opening)| {
-                ProductTerm::scaled(
-                    ValueSource::Challenge(i),
-                    vec![ValueSource::Opening(*opening)],
-                )
-            })
+            .map(|(i, opening)| ProductTerm::scaled(ValueSource::Challenge(i), vec![ValueSource::Opening(*opening)]))
             .collect();
         Self::sum_of_products(terms)
     }
@@ -221,8 +192,7 @@ impl OutputClaimConstraint {
             return None;
         }
 
-        let refs: Vec<&OutputClaimConstraint> =
-            constraints.iter().map(|c| c.as_ref().unwrap()).collect();
+        let refs: Vec<&OutputClaimConstraint> = constraints.iter().map(|c| c.as_ref().unwrap()).collect();
         Some(Self::batch_inner(&refs))
     }
 
@@ -237,11 +207,8 @@ impl OutputClaimConstraint {
 
             for term in &constraint.terms {
                 let offset_coeff = Self::offset_challenge(&term.coeff, challenge_offset);
-                let offset_factors: Vec<_> = term
-                    .factors
-                    .iter()
-                    .map(|f| Self::offset_challenge(f, challenge_offset))
-                    .collect();
+                let offset_factors: Vec<_> =
+                    term.factors.iter().map(|f| Self::offset_challenge(f, challenge_offset)).collect();
 
                 let mut new_factors = vec![alpha_j.clone()];
                 new_factors.extend(offset_factors);
@@ -275,12 +242,7 @@ pub trait SumOfProductsVisitor {
 
     fn resolve(&self, vs: &ValueSource) -> Self::Resolved;
     fn on_no_factors(&mut self, acc: &mut Self::Acc, coeff: Self::Resolved);
-    fn on_single_factor(
-        &mut self,
-        acc: &mut Self::Acc,
-        coeff: Self::Resolved,
-        factor: Self::Resolved,
-    );
+    fn on_single_factor(&mut self, acc: &mut Self::Acc, coeff: Self::Resolved, factor: Self::Resolved);
     fn on_chain_start(&mut self, acc: &mut Self::Acc, f0: Self::Resolved, f1: Self::Resolved);
     fn on_chain_step(&mut self, acc: &mut Self::Acc, factor: Self::Resolved);
     fn on_chain_finalize(&mut self, acc: &mut Self::Acc, coeff: Self::Resolved);
@@ -318,23 +280,9 @@ pub(crate) struct EvaluateVisitor<'a, F> {
 }
 
 impl<'a, F: crate::field::JoltField> EvaluateVisitor<'a, F> {
-    pub fn new(
-        constraint: &OutputClaimConstraint,
-        opening_values: &'a [F],
-        challenge_values: &'a [F],
-    ) -> Self {
-        let opening_map = constraint
-            .required_openings
-            .iter()
-            .enumerate()
-            .map(|(i, id)| (*id, i))
-            .collect();
-        Self {
-            opening_map,
-            opening_values,
-            challenge_values,
-            current_product: F::zero(),
-        }
+    pub fn new(constraint: &OutputClaimConstraint, opening_values: &'a [F], challenge_values: &'a [F]) -> Self {
+        let opening_map = constraint.required_openings.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+        Self { opening_map, opening_values, challenge_values, current_product: F::zero() }
     }
 }
 
@@ -377,10 +325,7 @@ impl<F: crate::field::JoltField> SumOfProductsVisitor for EvaluateVisitor<'_, F>
 pub type InputClaimConstraint = OutputClaimConstraint;
 
 impl InputClaimConstraint {
-    pub fn batch_required(
-        constraints: &[InputClaimConstraint],
-        num_batching_coefficients: usize,
-    ) -> Self {
+    pub fn batch_required(constraints: &[InputClaimConstraint], num_batching_coefficients: usize) -> Self {
         assert_eq!(num_batching_coefficients, constraints.len());
         let refs: Vec<&InputClaimConstraint> = constraints.iter().collect();
         Self::batch_inner(&refs)
@@ -394,10 +339,7 @@ mod tests {
     use crate::zkvm::witness::CommittedPolynomial;
 
     fn test_opening(idx: usize) -> OpeningId {
-        OpeningId::committed(
-            CommittedPolynomial::RamRa(idx),
-            SumcheckId::RamReadWriteChecking,
-        )
+        OpeningId::committed(CommittedPolynomial::RamRa(idx), SumcheckId::RamReadWriteChecking)
     }
 
     #[test]

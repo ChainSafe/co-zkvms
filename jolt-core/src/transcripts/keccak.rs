@@ -30,9 +30,7 @@ impl KeccakTranscript {
         let mut packed = [0_u8; 28].to_vec();
         packed.append(&mut self.n_rounds.to_be_bytes().to_vec());
         // Note we add the extra memory here to improve the ease of eth integrations
-        Keccak256::new()
-            .chain_update(self.state)
-            .chain_update(&packed)
+        Keccak256::new().chain_update(self.state).chain_update(&packed)
     }
 
     // Loads arbitrary byte lengths using ceil(out/32) invocations of 32 byte randoms
@@ -66,10 +64,7 @@ impl KeccakTranscript {
         #[cfg(test)]
         {
             if let Some(expected_state_history) = &self.expected_state_history {
-                assert!(
-                    new_state == expected_state_history[self.n_rounds as usize],
-                    "Fiat-Shamir transcript mismatch"
-                );
+                assert!(new_state == expected_state_history[self.n_rounds as usize], "Fiat-Shamir transcript mismatch");
             }
             self.state_history.push(new_state);
         }
@@ -214,9 +209,7 @@ impl Transcript for KeccakTranscript {
     }
 
     fn challenge_vector<F: JoltField>(&mut self, len: usize) -> Vec<F> {
-        (0..len)
-            .map(|_i| self.challenge_scalar())
-            .collect::<Vec<F>>()
+        (0..len).map(|_i| self.challenge_scalar()).collect::<Vec<F>>()
     }
 
     // Compute powers of scalar q : (1, q, q^2, ..., q^(len-1))
@@ -239,9 +232,7 @@ impl Transcript for KeccakTranscript {
     }
 
     fn challenge_vector_optimized<F: JoltField>(&mut self, len: usize) -> Vec<F::Challenge> {
-        (0..len)
-            .map(|_i| self.challenge_scalar_optimized::<F>())
-            .collect::<Vec<F::Challenge>>()
+        (0..len).map(|_i| self.challenge_scalar_optimized::<F>()).collect::<Vec<F::Challenge>>()
     }
 
     fn challenge_scalar_powers_optimized<F: JoltField>(&mut self, len: usize) -> Vec<F> {
@@ -269,15 +260,9 @@ mod tests {
             let scalar: Fr = transcript.challenge_scalar_128_bits();
 
             let num_bits = scalar.num_bits();
-            assert!(
-                num_bits <= 128,
-                "Scalar at iteration {i} has {num_bits} bits, expected <= 128",
-            );
+            assert!(num_bits <= 128, "Scalar at iteration {i} has {num_bits} bits, expected <= 128",);
 
-            assert!(
-                scalars.insert(scalar),
-                "Duplicate scalar found at iteration {i}",
-            );
+            assert!(scalars.insert(scalar), "Duplicate scalar found at iteration {i}",);
         }
     }
 }

@@ -32,16 +32,14 @@ declare_riscv_instr!(
 
 impl LH {
     fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LH as RISCVInstruction>::RAMAccess) {
-        cpu.x[self.operands.rd as usize] = match cpu
-            .mmu
-            .load_halfword(cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64)
-        {
-            Ok((halfword, memory_read)) => {
-                *ram_access = memory_read;
-                halfword as i16 as i64
-            }
-            Err(_) => panic!("MMU load error"),
-        };
+        cpu.x[self.operands.rd as usize] =
+            match cpu.mmu.load_halfword(cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64) {
+                Ok((halfword, memory_read)) => {
+                    *ram_access = memory_read;
+                    halfword as i16 as i64
+                }
+                Err(_) => panic!("MMU load error"),
+            };
     }
 }
 
@@ -66,11 +64,7 @@ impl RISCVTrace for LH {
     ///
     /// The clever trick here is to shift the halfword to the MSB position
     /// then use arithmetic right shift to simultaneously extract and sign-extend.
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         match xlen {
             Xlen::Bit32 => self.inline_sequence_32(allocator),
             #[cfg(feature = "rv64")]

@@ -1,7 +1,7 @@
 use super::output_constraint::SumOfProductsVisitor;
 use super::{
-    compute_hyrax_params, BakedPublicInputs, Constraint, HyraxParams, LinearCombination,
-    OutputClaimConstraint, StageConfig, ValueSource, Variable,
+    compute_hyrax_params, BakedPublicInputs, Constraint, HyraxParams, LinearCombination, OutputClaimConstraint,
+    StageConfig, ValueSource, Variable,
 };
 use crate::field::JoltField;
 use crate::poly::opening_proof::OpeningId;
@@ -31,35 +31,18 @@ struct R1csConstraintVisitor<'a, F> {
 struct R1csConstraintAcc<F> {
     aux_vars: Vec<Variable>,
     term_results: Vec<Variable>,
-    constraints: Vec<(
-        LinearCombination<F>,
-        LinearCombination<F>,
-        LinearCombination<F>,
-    )>,
+    constraints: Vec<(LinearCombination<F>, LinearCombination<F>, LinearCombination<F>)>,
 }
 
 impl<F> R1csConstraintAcc<F> {
     fn new() -> Self {
-        Self {
-            aux_vars: Vec::new(),
-            term_results: Vec::new(),
-            constraints: Vec::new(),
-        }
+        Self { aux_vars: Vec::new(), term_results: Vec::new(), constraints: Vec::new() }
     }
 }
 
 impl<'a, F: JoltField> R1csConstraintVisitor<'a, F> {
-    fn new(
-        next_var: usize,
-        opening_vars: &'a HashMap<OpeningId, Variable>,
-        baked_challenge_values: &'a [F],
-    ) -> Self {
-        Self {
-            next_var,
-            opening_vars,
-            baked_challenge_values,
-            current_product: Variable::new(0),
-        }
+    fn new(next_var: usize, opening_vars: &'a HashMap<OpeningId, Variable>, baked_challenge_values: &'a [F]) -> Self {
+        Self { next_var, opening_vars, baked_challenge_values, current_product: Variable::new(0) }
     }
 
     fn alloc_var(&mut self) -> Variable {
@@ -76,14 +59,9 @@ impl<F: JoltField> SumOfProductsVisitor for R1csConstraintVisitor<'_, F> {
     fn resolve(&self, vs: &ValueSource) -> ResolvedValue<F> {
         match vs {
             ValueSource::Opening(id) => ResolvedValue::Variable(LinearCombination::variable(
-                *self
-                    .opening_vars
-                    .get(id)
-                    .unwrap_or_else(|| panic!("Opening {id:?} not found")),
+                *self.opening_vars.get(id).unwrap_or_else(|| panic!("Opening {id:?} not found")),
             )),
-            ValueSource::Challenge(idx) => {
-                ResolvedValue::Constant(self.baked_challenge_values[*idx])
-            }
+            ValueSource::Challenge(idx) => ResolvedValue::Constant(self.baked_challenge_values[*idx]),
             ValueSource::Constant(val) => ResolvedValue::Constant(F::from_i128(*val)),
         }
     }
@@ -93,61 +71,36 @@ impl<F: JoltField> SumOfProductsVisitor for R1csConstraintVisitor<'_, F> {
         acc.aux_vars.push(aux);
         let a = coeff.into_lc();
         let b = LinearCombination::constant(F::one());
-        acc.constraints
-            .push((a, b, LinearCombination::variable(aux)));
+        acc.constraints.push((a, b, LinearCombination::variable(aux)));
         acc.term_results.push(aux);
     }
 
-    fn on_single_factor(
-        &mut self,
-        acc: &mut R1csConstraintAcc<F>,
-        coeff: ResolvedValue<F>,
-        factor: ResolvedValue<F>,
-    ) {
+    fn on_single_factor(&mut self, acc: &mut R1csConstraintAcc<F>, coeff: ResolvedValue<F>, factor: ResolvedValue<F>) {
         let aux = self.alloc_var();
         acc.aux_vars.push(aux);
         match (coeff, factor) {
             (ResolvedValue::Constant(cv), ResolvedValue::Constant(fv)) => {
                 let a = LinearCombination::constant(cv * fv);
                 let b = LinearCombination::constant(F::one());
-                acc.constraints
-                    .push((a, b, LinearCombination::variable(aux)));
+                acc.constraints.push((a, b, LinearCombination::variable(aux)));
             }
             (ResolvedValue::Constant(cv), ResolvedValue::Variable(fv)) => {
-                acc.constraints.push((
-                    LinearCombination::constant(cv),
-                    fv,
-                    LinearCombination::variable(aux),
-                ));
+                acc.constraints.push((LinearCombination::constant(cv), fv, LinearCombination::variable(aux)));
             }
             (ResolvedValue::Variable(cv), ResolvedValue::Constant(fv)) => {
-                acc.constraints.push((
-                    cv,
-                    LinearCombination::constant(fv),
-                    LinearCombination::variable(aux),
-                ));
+                acc.constraints.push((cv, LinearCombination::constant(fv), LinearCombination::variable(aux)));
             }
             (ResolvedValue::Variable(cv), ResolvedValue::Variable(fv)) => {
-                acc.constraints
-                    .push((cv, fv, LinearCombination::variable(aux)));
+                acc.constraints.push((cv, fv, LinearCombination::variable(aux)));
             }
         }
         acc.term_results.push(aux);
     }
 
-    fn on_chain_start(
-        &mut self,
-        acc: &mut R1csConstraintAcc<F>,
-        f0: ResolvedValue<F>,
-        f1: ResolvedValue<F>,
-    ) {
+    fn on_chain_start(&mut self, acc: &mut R1csConstraintAcc<F>, f0: ResolvedValue<F>, f1: ResolvedValue<F>) {
         let product = self.alloc_var();
         acc.aux_vars.push(product);
-        acc.constraints.push((
-            f0.into_lc(),
-            f1.into_lc(),
-            LinearCombination::variable(product),
-        ));
+        acc.constraints.push((f0.into_lc(), f1.into_lc(), LinearCombination::variable(product)));
         self.current_product = product;
     }
 
@@ -184,26 +137,12 @@ pub struct SparseR1CSMatrix<F> {
 
 impl<F: JoltField> SparseR1CSMatrix<F> {
     pub fn new(num_rows: usize, num_cols: usize) -> Self {
-        Self {
-            entries: Vec::new(),
-            num_rows,
-            num_cols,
-        }
+        Self { entries: Vec::new(), num_rows, num_cols }
     }
 
     pub fn push(&mut self, row: usize, col: usize, value: F) {
-        debug_assert!(
-            row < self.num_rows,
-            "Row {} >= num_rows {}",
-            row,
-            self.num_rows
-        );
-        debug_assert!(
-            col < self.num_cols,
-            "Col {} >= num_cols {}",
-            col,
-            self.num_cols
-        );
+        debug_assert!(row < self.num_rows, "Row {} >= num_rows {}", row, self.num_rows);
+        debug_assert!(col < self.num_cols, "Col {} >= num_cols {}", col, self.num_cols);
         if !value.is_zero() {
             self.entries.push((row, col, value));
         }
@@ -223,13 +162,7 @@ impl<F: JoltField> SparseR1CSMatrix<F> {
     ///
     /// Projects out rows via `eq_row` weighting, keeping only columns
     /// in `[col_start .. col_start + out_len)`.
-    pub fn project_columns(
-        &self,
-        eq_row: &[F],
-        col_start: usize,
-        out_len: usize,
-        row_bound: usize,
-    ) -> Vec<F> {
+    pub fn project_columns(&self, eq_row: &[F], col_start: usize, out_len: usize, row_bound: usize) -> Vec<F> {
         let mut out = vec![F::zero(); out_len];
         let col_end = col_start + out_len;
         for &(row, col, ref val) in &self.entries {
@@ -241,14 +174,7 @@ impl<F: JoltField> SparseR1CSMatrix<F> {
     }
 
     /// Σ_{row,col} M[row,col] · eq_row[row] · eq_col[col - col_start]
-    pub fn bilinear_eval(
-        &self,
-        eq_row: &[F],
-        eq_col: &[F],
-        col_start: usize,
-        col_len: usize,
-        row_bound: usize,
-    ) -> F {
+    pub fn bilinear_eval(&self, eq_row: &[F], eq_col: &[F], col_start: usize, col_len: usize, row_bound: usize) -> F {
         let col_end = col_start + col_len;
         let mut result = F::zero();
         for &(row, col, ref val) in &self.entries {
@@ -363,12 +289,7 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
     }
 
     /// Add a constraint: a * b = c
-    fn add_constraint(
-        &mut self,
-        a: LinearCombination<F>,
-        b: LinearCombination<F>,
-        c: LinearCombination<F>,
-    ) {
+    fn add_constraint(&mut self, a: LinearCombination<F>, b: LinearCombination<F>, c: LinearCombination<F>) {
         self.constraints.push(Constraint::new(a, b, c));
     }
 
@@ -439,18 +360,9 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
         use super::layout::{compute_witness_layout, ConstraintKind, LayoutStep};
 
         let total_rounds: usize = self.stage_configs.iter().map(|s| s.num_rounds).sum();
-        let max_coeffs = self
-            .stage_configs
-            .iter()
-            .map(|c| c.poly_degree + 1)
-            .max()
-            .unwrap_or(1);
+        let max_coeffs = self.stage_configs.iter().map(|c| c.poly_degree + 1).max().unwrap_or(1);
         let hyrax_C = max_coeffs.next_power_of_two();
-        let hyrax_R_coeff = if total_rounds == 0 {
-            1
-        } else {
-            total_rounds.next_power_of_two()
-        };
+        let hyrax_R_coeff = if total_rounds == 0 { 1 } else { total_rounds.next_power_of_two() };
         let witness_start = self.next_var;
         self.next_var = witness_start + hyrax_R_coeff * hyrax_C;
 
@@ -503,9 +415,7 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
                     self.next_var += 1;
                     current_claim = LinearCombination::variable(var);
                 }
-                LayoutStep::ConstraintVars {
-                    constraint, kind, ..
-                } => {
+                LayoutStep::ConstraintVars { constraint, kind, .. } => {
                     for opening_id in &constraint.required_openings {
                         if !global_opening_vars.contains_key(opening_id) {
                             let var = Variable::new(self.next_var);
@@ -517,15 +427,14 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
                     let baked_challenge_values = match kind {
                         ConstraintKind::InitialInput => {
                             let n = constraint.num_challenges;
-                            let vals = &baked.input_constraint_challenges
-                                [input_challenge_idx..input_challenge_idx + n];
+                            let vals = &baked.input_constraint_challenges[input_challenge_idx..input_challenge_idx + n];
                             input_challenge_idx += n;
                             vals
                         }
                         ConstraintKind::FinalOutput => {
                             let n = constraint.num_challenges;
-                            let vals = &baked.output_constraint_challenges
-                                [output_challenge_idx..output_challenge_idx + n];
+                            let vals =
+                                &baked.output_constraint_challenges[output_challenge_idx..output_challenge_idx + n];
                             output_challenge_idx += n;
                             vals
                         }
@@ -538,41 +447,29 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
                         baked_challenge_values,
                     );
                 }
-                LayoutStep::CoeffRow {
-                    round_idx,
-                    num_coeffs,
-                    ..
-                } => {
-                    let coeffs: Vec<Variable> = (0..*num_coeffs)
-                        .map(|k| Variable::new(witness_start + round_idx * hyrax_C + k))
-                        .collect();
+                LayoutStep::CoeffRow { round_idx, num_coeffs, .. } => {
+                    let coeffs: Vec<Variable> =
+                        (0..*num_coeffs).map(|k| Variable::new(witness_start + round_idx * hyrax_C + k)).collect();
                     pending_coeffs = Some(coeffs);
                 }
                 LayoutStep::NextClaim { stage_idx, .. } => {
                     let next_claim = Variable::new(self.next_var);
                     self.next_var += 1;
 
-                    let coeffs = pending_coeffs
-                        .take()
-                        .expect("CoeffRow must precede NextClaim");
+                    let coeffs = pending_coeffs.take().expect("CoeffRow must precede NextClaim");
                     let vars = RoundVariables { coeffs, next_claim };
 
                     let config = &stage_configs[*stage_idx];
                     let challenge_value = baked.challenges[challenge_idx];
                     let power_sums = config.uniskip_power_sums.as_deref();
 
-                    let claimed_sum = std::mem::replace(
-                        &mut current_claim,
-                        LinearCombination::variable(next_claim),
-                    );
+                    let claimed_sum = std::mem::replace(&mut current_claim, LinearCombination::variable(next_claim));
                     self.add_round_constraints(&vars, claimed_sum, challenge_value, power_sums);
                     challenge_idx += 1;
                 }
-                LayoutStep::LinearFinalOutput {
-                    num_evaluations, ..
-                } => {
-                    let baked_coeffs = &baked.batching_coefficients
-                        [batching_coeff_idx..batching_coeff_idx + num_evaluations];
+                LayoutStep::LinearFinalOutput { num_evaluations, .. } => {
+                    let baked_coeffs =
+                        &baked.batching_coefficients[batching_coeff_idx..batching_coeff_idx + num_evaluations];
                     batching_coeff_idx += num_evaluations;
 
                     let eval_vars: Vec<Variable> = (0..*num_evaluations)
@@ -583,11 +480,7 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
                         })
                         .collect();
 
-                    self.add_final_output_constraint_baked(
-                        current_claim.clone(),
-                        baked_coeffs,
-                        &eval_vars,
-                    );
+                    self.add_final_output_constraint_baked(current_claim.clone(), baked_coeffs, &eval_vars);
                 }
                 LayoutStep::PlaceholderVars { num_vars } => {
                     self.next_var += num_vars;
@@ -605,8 +498,8 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
                     self.next_var += 1;
 
                     let n = constraint.num_challenges;
-                    let baked_challenge_values = &baked.extra_constraint_challenges
-                        [extra_challenge_idx..extra_challenge_idx + n];
+                    let baked_challenge_values =
+                        &baked.extra_constraint_challenges[extra_challenge_idx..extra_challenge_idx + n];
                     extra_challenge_idx += n;
 
                     self.add_sum_of_products_constraint_baked(
@@ -626,8 +519,7 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
         }
 
         let num_constraints = self.constraints.len();
-        let noncoeff_region_start =
-            witness_start + hyrax_R_coeff * hyrax_C + output_claims_rows * hyrax_C;
+        let noncoeff_region_start = witness_start + hyrax_R_coeff * hyrax_C + output_claims_rows * hyrax_C;
         let noncoeff_count = self.next_var - noncoeff_region_start;
         let hyrax = compute_hyrax_params(&self.stage_configs, noncoeff_count, output_claims_rows);
         let num_vars = witness_start + hyrax.R_prime * hyrax.C;
@@ -702,8 +594,7 @@ impl<F: JoltField> VerifierR1CSBuilder<F> {
             return Vec::new();
         }
 
-        let mut visitor =
-            R1csConstraintVisitor::new(self.next_var, opening_vars, baked_challenge_values);
+        let mut visitor = R1csConstraintVisitor::new(self.next_var, opening_vars, baked_challenge_values);
         let mut r1cs_acc = R1csConstraintAcc::new();
         constraint.visit(&mut visitor, &mut r1cs_acc);
 
@@ -786,8 +677,7 @@ mod tests {
         assert_eq!(claim2, next1, "Round 2 claim should equal round 1 output");
 
         let configs = [super::super::StageConfig::new(2, 3)];
-        let witness =
-            BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round1, round2])]);
+        let witness = BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round1, round2])]);
 
         let baked = BakedPublicInputs::from_witness(&witness, &configs);
         let builder = VerifierR1CSBuilder::<F>::new(&configs, &baked);
@@ -808,9 +698,7 @@ mod tests {
         type F = Fr;
 
         // Build dummy baked values for 120 rounds, 1 chain
-        let configs: Vec<_> = (0..6)
-            .map(|_| super::super::StageConfig::new(20, 3))
-            .collect();
+        let configs: Vec<_> = (0..6).map(|_| super::super::StageConfig::new(20, 3)).collect();
 
         let baked = BakedPublicInputs {
             challenges: vec![F::from_u64(1); 120],
@@ -847,10 +735,7 @@ mod tests {
         let r1cs = builder.build();
 
         let z = witness.assign(&r1cs);
-        assert!(
-            r1cs.check_satisfaction(&z).is_err(),
-            "R1CS should NOT be satisfied with invalid witness"
-        );
+        assert!(r1cs.check_satisfaction(&z).is_err(), "R1CS should NOT be satisfied with invalid witness");
     }
 
     #[test]
@@ -907,10 +792,7 @@ mod tests {
 
         let witness = BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round])]);
         let z = witness.assign(&r1cs);
-        assert!(
-            r1cs.check_satisfaction(&z).is_err(),
-            "R1CS should NOT be satisfied with invalid uni-skip witness"
-        );
+        assert!(r1cs.check_satisfaction(&z).is_err(), "R1CS should NOT be satisfied with invalid uni-skip witness");
     }
 
     #[test]
@@ -976,8 +858,7 @@ mod tests {
         let partial_sum = alpha0 * y0 + alpha1 * y1;
         let y2 = (final_claim - partial_sum) * alpha2.inverse().unwrap();
 
-        let fout_witness =
-            FinalOutputWitness::linear(vec![alpha0, alpha1, alpha2], vec![y0, y1, y2]);
+        let fout_witness = FinalOutputWitness::linear(vec![alpha0, alpha1, alpha2], vec![y0, y1, y2]);
         let stage = StageWitness::with_final_output(vec![round], fout_witness);
         let witness = BlindFoldWitness::new(initial_claim, vec![stage]);
 
@@ -1024,9 +905,6 @@ mod tests {
         let r1cs = builder.build();
 
         let z = witness.assign(&r1cs);
-        assert!(
-            r1cs.check_satisfaction(&z).is_err(),
-            "R1CS should NOT be satisfied with invalid final output"
-        );
+        assert!(r1cs.check_satisfaction(&z).is_err(), "R1CS should NOT be satisfied with invalid final output");
     }
 }

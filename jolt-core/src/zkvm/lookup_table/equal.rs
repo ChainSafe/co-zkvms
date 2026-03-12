@@ -23,9 +23,7 @@ impl<const XLEN: usize> JoltLookupTable for EqualTable<XLEN> {
 
         let x = r.iter().step_by(2);
         let y = r.iter().skip(1).step_by(2);
-        x.zip(y)
-            .map(|(x_i, y_i)| *x_i * y_i + (F::one() - x_i) * (F::one() - y_i))
-            .product()
+        x.zip(y).map(|(x_i, y_i)| *x_i * y_i + (F::one() - x_i) * (F::one() - y_i)).product()
     }
 
     fn materialize_entry(&self, index: u128) -> u64 {

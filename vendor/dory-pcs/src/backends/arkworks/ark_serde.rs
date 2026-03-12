@@ -3,8 +3,8 @@ use crate::backends::arkworks::{ArkFr, ArkG1, ArkG2, ArkGT};
 use crate::primitives::serialization::{Compress, SerializationError, Valid, Validate};
 use crate::primitives::{DoryDeserialize, DorySerialize};
 use ark_serialize::{
-    CanonicalDeserialize, CanonicalSerialize, Compress as ArkCompress,
-    SerializationError as ArkSerializationError, Valid as ArkValid, Validate as ArkValidate,
+    CanonicalDeserialize, CanonicalSerialize, Compress as ArkCompress, SerializationError as ArkSerializationError,
+    Valid as ArkValid, Validate as ArkValidate,
 };
 use std::io::{Read, Write};
 
@@ -14,27 +14,19 @@ use crate::setup::{ProverSetup, VerifierSetup};
 
 impl Valid for ArkFr {
     fn check(&self) -> Result<(), SerializationError> {
-        self.0
-            .check()
-            .map_err(|e| SerializationError::InvalidData(format!("{e:?}")))
+        self.0.check().map_err(|e| SerializationError::InvalidData(format!("{e:?}")))
     }
 }
 
 impl DorySerialize for ArkFr {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
+    fn serialize_with_mode<W: Write>(&self, writer: W, compress: Compress) -> Result<(), SerializationError> {
         match compress {
-            Compress::Yes => self
-                .0
-                .serialize_compressed(writer)
-                .map_err(|e| SerializationError::InvalidData(format!("{e}"))),
-            Compress::No => self
-                .0
-                .serialize_uncompressed(writer)
-                .map_err(|e| SerializationError::InvalidData(format!("{e}"))),
+            Compress::Yes => {
+                self.0.serialize_compressed(writer).map_err(|e| SerializationError::InvalidData(format!("{e}")))
+            }
+            Compress::No => {
+                self.0.serialize_uncompressed(writer).map_err(|e| SerializationError::InvalidData(format!("{e}")))
+            }
         }
     }
 
@@ -60,9 +52,7 @@ impl DoryDeserialize for ArkFr {
         };
 
         if matches!(validate, Validate::Yes) {
-            inner
-                .check()
-                .map_err(|e| SerializationError::InvalidData(format!("{e:?}")))?;
+            inner.check().map_err(|e| SerializationError::InvalidData(format!("{e:?}")))?;
         }
 
         Ok(ArkFr(inner))
@@ -71,27 +61,19 @@ impl DoryDeserialize for ArkFr {
 
 impl Valid for ArkG1 {
     fn check(&self) -> Result<(), SerializationError> {
-        self.0
-            .check()
-            .map_err(|e| SerializationError::InvalidData(format!("{e:?}")))
+        self.0.check().map_err(|e| SerializationError::InvalidData(format!("{e:?}")))
     }
 }
 
 impl DorySerialize for ArkG1 {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
+    fn serialize_with_mode<W: Write>(&self, writer: W, compress: Compress) -> Result<(), SerializationError> {
         match compress {
-            Compress::Yes => self
-                .0
-                .serialize_compressed(writer)
-                .map_err(|e| SerializationError::InvalidData(format!("{e}"))),
-            Compress::No => self
-                .0
-                .serialize_uncompressed(writer)
-                .map_err(|e| SerializationError::InvalidData(format!("{e}"))),
+            Compress::Yes => {
+                self.0.serialize_compressed(writer).map_err(|e| SerializationError::InvalidData(format!("{e}")))
+            }
+            Compress::No => {
+                self.0.serialize_uncompressed(writer).map_err(|e| SerializationError::InvalidData(format!("{e}")))
+            }
         }
     }
 
@@ -117,9 +99,7 @@ impl DoryDeserialize for ArkG1 {
         };
 
         if matches!(validate, Validate::Yes) {
-            inner
-                .check()
-                .map_err(|e| SerializationError::InvalidData(format!("{e:?}")))?;
+            inner.check().map_err(|e| SerializationError::InvalidData(format!("{e:?}")))?;
         }
 
         Ok(ArkG1(inner))
@@ -128,27 +108,19 @@ impl DoryDeserialize for ArkG1 {
 
 impl Valid for ArkG2 {
     fn check(&self) -> Result<(), SerializationError> {
-        self.0
-            .check()
-            .map_err(|e| SerializationError::InvalidData(format!("{e:?}")))
+        self.0.check().map_err(|e| SerializationError::InvalidData(format!("{e:?}")))
     }
 }
 
 impl DorySerialize for ArkG2 {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
+    fn serialize_with_mode<W: Write>(&self, writer: W, compress: Compress) -> Result<(), SerializationError> {
         match compress {
-            Compress::Yes => self
-                .0
-                .serialize_compressed(writer)
-                .map_err(|e| SerializationError::InvalidData(format!("{e}"))),
-            Compress::No => self
-                .0
-                .serialize_uncompressed(writer)
-                .map_err(|e| SerializationError::InvalidData(format!("{e}"))),
+            Compress::Yes => {
+                self.0.serialize_compressed(writer).map_err(|e| SerializationError::InvalidData(format!("{e}")))
+            }
+            Compress::No => {
+                self.0.serialize_uncompressed(writer).map_err(|e| SerializationError::InvalidData(format!("{e}")))
+            }
         }
     }
 
@@ -174,9 +146,7 @@ impl DoryDeserialize for ArkG2 {
         };
 
         if matches!(validate, Validate::Yes) {
-            inner
-                .check()
-                .map_err(|e| SerializationError::InvalidData(format!("{e:?}")))?;
+            inner.check().map_err(|e| SerializationError::InvalidData(format!("{e:?}")))?;
         }
 
         Ok(ArkG2(inner))
@@ -185,27 +155,19 @@ impl DoryDeserialize for ArkG2 {
 
 impl Valid for ArkGT {
     fn check(&self) -> Result<(), SerializationError> {
-        self.0
-            .check()
-            .map_err(|e| SerializationError::InvalidData(format!("{e:?}")))
+        self.0.check().map_err(|e| SerializationError::InvalidData(format!("{e:?}")))
     }
 }
 
 impl DorySerialize for ArkGT {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
+    fn serialize_with_mode<W: Write>(&self, writer: W, compress: Compress) -> Result<(), SerializationError> {
         match compress {
-            Compress::Yes => self
-                .0
-                .serialize_compressed(writer)
-                .map_err(|e| SerializationError::InvalidData(format!("{e}"))),
-            Compress::No => self
-                .0
-                .serialize_uncompressed(writer)
-                .map_err(|e| SerializationError::InvalidData(format!("{e}"))),
+            Compress::Yes => {
+                self.0.serialize_compressed(writer).map_err(|e| SerializationError::InvalidData(format!("{e}")))
+            }
+            Compress::No => {
+                self.0.serialize_uncompressed(writer).map_err(|e| SerializationError::InvalidData(format!("{e}")))
+            }
         }
     }
 
@@ -231,9 +193,7 @@ impl DoryDeserialize for ArkGT {
         };
 
         if matches!(validate, Validate::Yes) {
-            inner
-                .check()
-                .map_err(|e| SerializationError::InvalidData(format!("{e:?}")))?;
+            inner.check().map_err(|e| SerializationError::InvalidData(format!("{e:?}")))?;
         }
 
         Ok(ArkGT(inner))
@@ -246,16 +206,11 @@ use super::ArkDoryProof;
 #[cfg(feature = "zk")]
 mod zk_serde {
     use ark_serialize::{
-        CanonicalDeserialize as De, CanonicalSerialize as Ser, Compress, SerializationError, Valid,
-        Validate,
+        CanonicalDeserialize as De, CanonicalSerialize as Ser, Compress, SerializationError, Valid, Validate,
     };
     use std::io::{Read, Write};
 
-    pub(super) fn ser_opt<W: Write, T: Ser>(
-        v: &Option<T>,
-        w: &mut W,
-        c: Compress,
-    ) -> Result<(), SerializationError> {
+    pub(super) fn ser_opt<W: Write, T: Ser>(v: &Option<T>, w: &mut W, c: Compress) -> Result<(), SerializationError> {
         match v {
             Some(val) => {
                 Ser::serialize_with_mode(&1u8, &mut *w, c)?;
@@ -265,11 +220,7 @@ mod zk_serde {
         }
     }
 
-    pub(super) fn de_opt<R: Read, T: De>(
-        r: &mut R,
-        c: Compress,
-        v: Validate,
-    ) -> Result<Option<T>, SerializationError> {
+    pub(super) fn de_opt<R: Read, T: De>(r: &mut R, c: Compress, v: Validate) -> Result<Option<T>, SerializationError> {
         match <u8 as De>::deserialize_with_mode(&mut *r, c, v)? {
             0 => Ok(None),
             1 => Ok(Some(T::deserialize_with_mode(r, c, v)?)),
@@ -316,11 +267,7 @@ impl ArkValid for ArkDoryProof {
 }
 
 impl CanonicalSerialize for ArkDoryProof {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: ArkCompress,
-    ) -> Result<(), ArkSerializationError> {
+    fn serialize_with_mode<W: Write>(&self, mut writer: W, compress: ArkCompress) -> Result<(), ArkSerializationError> {
         // Serialize VMV message
         CanonicalSerialize::serialize_with_mode(&self.vmv_message.c, &mut writer, compress)?;
         CanonicalSerialize::serialize_with_mode(&self.vmv_message.d2, &mut writer, compress)?;
@@ -435,57 +382,30 @@ impl CanonicalDeserialize for ArkDoryProof {
 
         // Deserialize number of rounds
         let num_rounds =
-            <u32 as CanonicalDeserialize>::deserialize_with_mode(&mut reader, compress, validate)?
-                as usize;
+            <u32 as CanonicalDeserialize>::deserialize_with_mode(&mut reader, compress, validate)? as usize;
 
         // Deserialize first messages
         let mut first_messages = Vec::with_capacity(num_rounds);
         for _ in 0..num_rounds {
-            let d1_left =
-                CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
-            let d1_right =
-                CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
-            let d2_left =
-                CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
-            let d2_right =
-                CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
-            let e1_beta =
-                CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
-            let e2_beta =
-                CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
-            first_messages.push(FirstReduceMessage {
-                d1_left,
-                d1_right,
-                d2_left,
-                d2_right,
-                e1_beta,
-                e2_beta,
-            });
+            let d1_left = CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+            let d1_right = CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+            let d2_left = CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+            let d2_right = CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+            let e1_beta = CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+            let e2_beta = CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+            first_messages.push(FirstReduceMessage { d1_left, d1_right, d2_left, d2_right, e1_beta, e2_beta });
         }
 
         // Deserialize second messages
         let mut second_messages = Vec::with_capacity(num_rounds);
         for _ in 0..num_rounds {
-            let c_plus =
-                CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
-            let c_minus =
-                CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
-            let e1_plus =
-                CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
-            let e1_minus =
-                CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
-            let e2_plus =
-                CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
-            let e2_minus =
-                CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
-            second_messages.push(SecondReduceMessage {
-                c_plus,
-                c_minus,
-                e1_plus,
-                e1_minus,
-                e2_plus,
-                e2_minus,
-            });
+            let c_plus = CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+            let c_minus = CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+            let e1_plus = CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+            let e1_minus = CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+            let e2_plus = CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+            let e2_minus = CanonicalDeserialize::deserialize_with_mode(&mut reader, compress, validate)?;
+            second_messages.push(SecondReduceMessage { c_plus, c_minus, e1_plus, e1_minus, e2_plus, e2_minus });
         }
 
         // Deserialize final message
@@ -494,12 +414,8 @@ impl CanonicalDeserialize for ArkDoryProof {
         let final_message = ScalarProductMessage { e1, e2 };
 
         // Deserialize nu and sigma
-        let nu =
-            <u32 as CanonicalDeserialize>::deserialize_with_mode(&mut reader, compress, validate)?
-                as usize;
-        let sigma =
-            <u32 as CanonicalDeserialize>::deserialize_with_mode(&mut reader, compress, validate)?
-                as usize;
+        let nu = <u32 as CanonicalDeserialize>::deserialize_with_mode(&mut reader, compress, validate)? as usize;
+        let sigma = <u32 as CanonicalDeserialize>::deserialize_with_mode(&mut reader, compress, validate)? as usize;
 
         Ok(ArkDoryProof {
             vmv_message,
@@ -532,11 +448,7 @@ impl ArkValid for ArkworksProverSetup {
 }
 
 impl CanonicalSerialize for ArkworksProverSetup {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: ArkCompress,
-    ) -> Result<(), ArkSerializationError> {
+    fn serialize_with_mode<W: Write>(&self, mut writer: W, compress: ArkCompress) -> Result<(), ArkSerializationError> {
         let dory_compress = match compress {
             ArkCompress::Yes => Compress::Yes,
             ArkCompress::No => Compress::No,
@@ -571,9 +483,8 @@ impl CanonicalDeserialize for ArkworksProverSetup {
             ArkValidate::No => Validate::No,
         };
 
-        let setup =
-            ProverSetup::<BN254>::deserialize_with_mode(&mut reader, dory_compress, dory_validate)
-                .map_err(|_| ArkSerializationError::InvalidData)?;
+        let setup = ProverSetup::<BN254>::deserialize_with_mode(&mut reader, dory_compress, dory_validate)
+            .map_err(|_| ArkSerializationError::InvalidData)?;
 
         Ok(Self(setup))
     }
@@ -586,11 +497,7 @@ impl ArkValid for ArkworksVerifierSetup {
 }
 
 impl CanonicalSerialize for ArkworksVerifierSetup {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: ArkCompress,
-    ) -> Result<(), ArkSerializationError> {
+    fn serialize_with_mode<W: Write>(&self, mut writer: W, compress: ArkCompress) -> Result<(), ArkSerializationError> {
         let dory_compress = match compress {
             ArkCompress::Yes => Compress::Yes,
             ArkCompress::No => Compress::No,
@@ -625,12 +532,8 @@ impl CanonicalDeserialize for ArkworksVerifierSetup {
             ArkValidate::No => Validate::No,
         };
 
-        let setup = VerifierSetup::<BN254>::deserialize_with_mode(
-            &mut reader,
-            dory_compress,
-            dory_validate,
-        )
-        .map_err(|_| ArkSerializationError::InvalidData)?;
+        let setup = VerifierSetup::<BN254>::deserialize_with_mode(&mut reader, dory_compress, dory_validate)
+            .map_err(|_| ArkSerializationError::InvalidData)?;
 
         Ok(Self(setup))
     }

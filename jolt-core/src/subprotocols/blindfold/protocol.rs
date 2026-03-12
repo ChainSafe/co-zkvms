@@ -46,11 +46,7 @@ fn append_scalars_labeled<T: Transcript, F: JoltField>(
     transcript.append_scalars(scalars);
 }
 
-fn append_bytes_labeled<T: Transcript>(
-    transcript: &mut T,
-    label: &'static [u8],
-    bytes: &[u8],
-) {
+fn append_bytes_labeled<T: Transcript>(transcript: &mut T, label: &'static [u8], bytes: &[u8]) {
     transcript.append_message(label);
     transcript.append_bytes(bytes);
 }
@@ -94,11 +90,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
         r1cs: &'a VerifierR1CS<F>,
         eval_commitment_gens: Option<(C::G1, C::G1)>,
     ) -> Self {
-        Self {
-            gens,
-            r1cs,
-            eval_commitment_gens,
-        }
+        Self { gens, r1cs, eval_commitment_gens }
     }
 
     #[tracing::instrument(skip_all, name = "BlindFoldProver::prove")]
@@ -116,58 +108,33 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
         append_label(transcript, b"BlindFold_real_instance");
         append_instance_to_transcript(real_instance, transcript);
 
-        let (random_instance, random_witness, random_z) = sample_random_satisfying_pair(
-            self.gens,
-            self.r1cs,
-            self.eval_commitment_gens,
-            &mut rng,
-        );
+        let (random_instance, random_witness, random_z) =
+            sample_random_satisfying_pair(self.gens, self.r1cs, self.eval_commitment_gens, &mut rng);
 
         append_label(transcript, b"BlindFold_random_instance");
         append_instance_to_transcript(&random_instance, transcript);
 
-        let T = compute_cross_term(
-            self.r1cs,
-            real_z,
-            real_instance.u,
-            &random_z,
-            random_instance.u,
-        );
+        let T = compute_cross_term(self.r1cs, real_z, real_instance.u, &random_z, random_instance.u);
 
         let (R_E, C_E) = self.r1cs.hyrax.e_grid(self.r1cs.num_constraints);
 
-        let (t_row_commitments, t_row_blindings) =
-            commit_cross_term_rows(self.gens, &T, R_E, C_E, &mut rng);
+        let (t_row_commitments, t_row_blindings) = commit_cross_term_rows(self.gens, &T, R_E, C_E, &mut rng);
 
         append_commitments(transcript, b"blindfold_cross_term", &t_row_commitments);
 
         let r: F::Challenge = transcript.challenge_scalar_optimized::<F>();
         let r_field: F = r.into();
 
-        let folded_instance = real_instance
-            .fold(&random_instance, &t_row_commitments, r_field)
-            .expect("prover-controlled fold inputs");
+        let folded_instance =
+            real_instance.fold(&random_instance, &t_row_commitments, r_field).expect("prover-controlled fold inputs");
         let folded_witness = real_witness.fold(&random_witness, &T, &t_row_blindings, r_field);
 
-        let RelaxedR1CSWitness {
-            E: folded_E,
-            W: folded_W,
-            w_row_blindings,
-            e_row_blindings,
-        } = folded_witness;
+        let RelaxedR1CSWitness { E: folded_E, W: folded_W, w_row_blindings, e_row_blindings } = folded_witness;
 
-        let folded_eval_outputs: Vec<F> = self
-            .r1cs
-            .extra_output_vars
-            .iter()
-            .map(|var| folded_W[var.index() - 1])
-            .collect();
-        let folded_eval_blindings: Vec<F> = self
-            .r1cs
-            .extra_blinding_vars
-            .iter()
-            .map(|var| folded_W[var.index() - 1])
-            .collect();
+        let folded_eval_outputs: Vec<F> =
+            self.r1cs.extra_output_vars.iter().map(|var| folded_W[var.index() - 1]).collect();
+        let folded_eval_blindings: Vec<F> =
+            self.r1cs.extra_blinding_vars.iter().map(|var| folded_W[var.index() - 1]).collect();
 
         let mut folded_z = Vec::with_capacity(self.r1cs.num_vars);
         folded_z.push(folded_instance.u);
@@ -182,8 +149,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
         let num_vars = padded_e_len.log_2();
         let tau: Vec<_> = transcript.challenge_vector_optimized::<F>(num_vars);
 
-        let mut spartan_prover =
-            BlindFoldSpartanProver::new(self.r1cs, folded_instance.u, folded_z, e_padded, tau);
+        let mut spartan_prover = BlindFoldSpartanProver::new(self.r1cs, folded_instance.u, folded_z, e_padded, tau);
 
         let mut spartan_proof = Vec::with_capacity(num_vars);
         let mut spartan_challenges: Vec<F::Challenge> = Vec::with_capacity(num_vars);
@@ -213,14 +179,8 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
         let rc: F = transcript.challenge_scalar_optimized::<F>().into();
 
         let w_for_inner = folded_W.clone();
-        let mut inner_prover = BlindFoldInnerSumcheckProver::new(
-            self.r1cs,
-            &spartan_challenges,
-            w_for_inner,
-            ra,
-            rb,
-            rc,
-        );
+        let mut inner_prover =
+            BlindFoldInnerSumcheckProver::new(self.r1cs, &spartan_challenges, w_for_inner, ra, rb, rc);
 
         let inner_num_vars = inner_prover.num_vars();
         let mut inner_proof = Vec::with_capacity(inner_num_vars);
@@ -238,11 +198,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
             );
 
             let compressed = poly.compress();
-            append_scalars_labeled(
-                transcript,
-                b"inner_sumcheck_poly",
-                &compressed.coeffs_except_linear_term,
-            );
+            append_scalars_labeled(transcript, b"inner_sumcheck_poly", &compressed.coeffs_except_linear_term);
             inner_proof.push(compressed);
 
             let r_j = transcript.challenge_scalar_optimized::<F>();
@@ -274,14 +230,8 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldProver<'a, F, C> {
             bz_r,
             cz_r,
             inner_sumcheck_proof: inner_proof,
-            w_opening: HyraxOpeningProof {
-                combined_row: w_combined_row,
-                combined_blinding: w_combined_blinding,
-            },
-            e_opening: HyraxOpeningProof {
-                combined_row: e_combined_row,
-                combined_blinding: e_combined_blinding,
-            },
+            w_opening: HyraxOpeningProof { combined_row: w_combined_row, combined_blinding: w_combined_blinding },
+            e_opening: HyraxOpeningProof { combined_row: e_combined_row, combined_blinding: e_combined_blinding },
             folded_eval_outputs,
             folded_eval_blindings,
         }
@@ -322,11 +272,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         r1cs: &'a VerifierR1CS<F>,
         eval_commitment_gens: Option<(C::G1, C::G1)>,
     ) -> Self {
-        Self {
-            gens,
-            r1cs,
-            eval_commitment_gens,
-        }
+        Self { gens, r1cs, eval_commitment_gens }
     }
 
     #[tracing::instrument(skip_all, name = "BlindFoldVerifier::verify")]
@@ -377,11 +323,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         let r: F::Challenge = transcript.challenge_scalar_optimized::<F>();
         let r_field: F = r.into();
 
-        let folded_instance = real_instance.fold(
-            &proof.random_instance,
-            &proof.cross_term_row_commitments,
-            r_field,
-        )?;
+        let folded_instance = real_instance.fold(&proof.random_instance, &proof.cross_term_row_commitments, r_field)?;
 
         if let Some((g1_0, h1)) = self.eval_commitment_gens {
             if proof.folded_eval_outputs.len() != folded_instance.eval_commitments.len()
@@ -390,8 +332,8 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
                 return Err(BlindFoldVerifyError::MalformedProof);
             }
             for (i, eval_com) in folded_instance.eval_commitments.iter().enumerate() {
-                let expected = g1_0.scalar_mul(&proof.folded_eval_outputs[i])
-                    + h1.scalar_mul(&proof.folded_eval_blindings[i]);
+                let expected =
+                    g1_0.scalar_mul(&proof.folded_eval_outputs[i]) + h1.scalar_mul(&proof.folded_eval_blindings[i]);
                 if *eval_com != expected {
                     return Err(BlindFoldVerifyError::EvalCommitmentMismatch);
                 }
@@ -468,11 +410,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
                 });
             }
 
-            append_scalars_labeled(
-                transcript,
-                b"inner_sumcheck_poly",
-                &compressed_poly.coeffs_except_linear_term,
-            );
+            append_scalars_labeled(transcript, b"inner_sumcheck_poly", &compressed_poly.coeffs_except_linear_term);
 
             let poly = compressed_poly.decompress(&inner_claim);
             let sum = poly.coeffs[0] + poly.coeffs.iter().sum::<F>();
@@ -494,10 +432,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         for (i, com) in folded_instance.e_row_commitments.iter().enumerate() {
             c_combined_e += com.scalar_mul(&eq_rx_row[i]);
         }
-        let expected_e_com = self.gens.commit(
-            &proof.e_opening.combined_row,
-            &proof.e_opening.combined_blinding,
-        );
+        let expected_e_com = self.gens.commit(&proof.e_opening.combined_row, &proof.e_opening.combined_blinding);
         if c_combined_e != expected_e_com {
             return Err(BlindFoldVerifyError::EOpeningFailed);
         }
@@ -518,10 +453,7 @@ impl<'a, F: JoltField, C: JoltCurve> BlindFoldVerifier<'a, F, C> {
         for (i, com) in all_w_rows.iter().enumerate() {
             c_combined_w += com.scalar_mul(&eq_ry_row[i]);
         }
-        let expected_w_com = self.gens.commit(
-            &proof.w_opening.combined_row,
-            &proof.w_opening.combined_blinding,
-        );
+        let expected_w_com = self.gens.commit(&proof.w_opening.combined_row, &proof.w_opening.combined_blinding);
         if c_combined_w != expected_w_com {
             return Err(BlindFoldVerifyError::WOpeningFailed);
         }
@@ -542,18 +474,11 @@ fn append_instance_to_transcript<F: JoltField, C: JoltCurve>(
     transcript: &mut impl Transcript,
 ) {
     let mut u_bytes = Vec::new();
-    instance
-        .u
-        .serialize_compressed(&mut u_bytes)
-        .expect("Serialization should not fail");
+    instance.u.serialize_compressed(&mut u_bytes).expect("Serialization should not fail");
     append_bytes_labeled(transcript, b"blindfold_u", &u_bytes);
 
     append_commitments(transcript, b"blindfold_round_coms", &instance.round_commitments);
-    append_commitments(
-        transcript,
-        b"blindfold_oc_rows",
-        &instance.output_claims_row_commitments,
-    );
+    append_commitments(transcript, b"blindfold_oc_rows", &instance.output_claims_row_commitments);
     append_commitments(transcript, b"blindfold_noncoeff", &instance.noncoeff_row_commitments);
     append_commitments(transcript, b"blindfold_e_rows", &instance.e_row_commitments);
     append_commitments(transcript, b"blindfold_eval_coms", &instance.eval_commitments);
@@ -579,10 +504,7 @@ mod tests {
         Vec<Fr>,
     );
 
-    fn make_test_instance(
-        configs: &[StageConfig],
-        blindfold_witness: &BlindFoldWitness<Fr>,
-    ) -> TestInstance {
+    fn make_test_instance(configs: &[StageConfig], blindfold_witness: &BlindFoldWitness<Fr>) -> TestInstance {
         type F = Fr;
         let mut rng = thread_rng();
 
@@ -665,29 +587,13 @@ mod tests {
         type F = Fr;
 
         let configs = [StageConfig::new(1, 3)];
-        let round = RoundWitness::new(
-            vec![
-                F::from_u64(40),
-                F::from_u64(5),
-                F::from_u64(10),
-                F::from_u64(5),
-            ],
-            F::from_u64(3),
-        );
-        let blindfold_witness =
-            BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round])]);
+        let round =
+            RoundWitness::new(vec![F::from_u64(40), F::from_u64(5), F::from_u64(10), F::from_u64(5)], F::from_u64(3));
+        let blindfold_witness = BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round])]);
 
-        let (real_instance, real_witness, r1cs, gens, z) =
-            make_test_instance(&configs, &blindfold_witness);
+        let (real_instance, real_witness, r1cs, gens, z) = make_test_instance(&configs, &blindfold_witness);
 
-        let result = prove_and_verify(
-            &r1cs,
-            &gens,
-            &real_instance,
-            &real_witness,
-            &z,
-            b"BlindFold_test",
-        );
+        let result = prove_and_verify(&r1cs, &gens, &real_instance, &real_witness, &z, b"BlindFold_test");
         assert!(result.is_ok(), "Verification should succeed: {result:?}");
     }
 
@@ -696,20 +602,11 @@ mod tests {
         type F = Fr;
 
         let configs = [StageConfig::new(1, 3)];
-        let round = RoundWitness::new(
-            vec![
-                F::from_u64(40),
-                F::from_u64(5),
-                F::from_u64(10),
-                F::from_u64(5),
-            ],
-            F::from_u64(3),
-        );
-        let blindfold_witness =
-            BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round])]);
+        let round =
+            RoundWitness::new(vec![F::from_u64(40), F::from_u64(5), F::from_u64(10), F::from_u64(5)], F::from_u64(3));
+        let blindfold_witness = BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round])]);
 
-        let (real_instance, real_witness, r1cs, gens, z) =
-            make_test_instance(&configs, &blindfold_witness);
+        let (real_instance, real_witness, r1cs, gens, z) = make_test_instance(&configs, &blindfold_witness);
 
         let prover = BlindFoldProver::new(&gens, &r1cs, None);
         let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
@@ -731,10 +628,7 @@ mod tests {
         let result = verifier.verify(&proof, &verifier_input, &mut verifier_transcript);
 
         assert!(
-            matches!(
-                result,
-                Err(BlindFoldVerifyError::WrongSpartanProofLength { .. })
-            ),
+            matches!(result, Err(BlindFoldVerifyError::WrongSpartanProofLength { .. })),
             "Verification should fail with wrong proof length: {result:?}"
         );
     }
@@ -745,15 +639,8 @@ mod tests {
 
         let configs = [StageConfig::new(3, 3)];
 
-        let round1 = RoundWitness::new(
-            vec![
-                F::from_u64(20),
-                F::from_u64(5),
-                F::from_u64(7),
-                F::from_u64(3),
-            ],
-            F::from_u64(2),
-        );
+        let round1 =
+            RoundWitness::new(vec![F::from_u64(20), F::from_u64(5), F::from_u64(7), F::from_u64(3)], F::from_u64(2));
         let next1 = round1.evaluate(F::from_u64(2));
 
         let c0_2 = F::from_u64(30);
@@ -770,26 +657,13 @@ mod tests {
         let round3 = RoundWitness::new(vec![c0_3, c1_3, c2_3, c3_3], F::from_u64(6));
 
         let initial_claim = F::from_u64(55);
-        let blindfold_witness = BlindFoldWitness::new(
-            initial_claim,
-            vec![StageWitness::new(vec![round1, round2, round3])],
-        );
+        let blindfold_witness =
+            BlindFoldWitness::new(initial_claim, vec![StageWitness::new(vec![round1, round2, round3])]);
 
-        let (real_instance, real_witness, r1cs, gens, z) =
-            make_test_instance(&configs, &blindfold_witness);
+        let (real_instance, real_witness, r1cs, gens, z) = make_test_instance(&configs, &blindfold_witness);
 
-        let result = prove_and_verify(
-            &r1cs,
-            &gens,
-            &real_instance,
-            &real_witness,
-            &z,
-            b"BlindFold_multi",
-        );
-        assert!(
-            result.is_ok(),
-            "Multi-round verification should succeed: {result:?}"
-        );
+        let result = prove_and_verify(&r1cs, &gens, &real_instance, &real_witness, &z, b"BlindFold_multi");
+        assert!(result.is_ok(), "Multi-round verification should succeed: {result:?}");
     }
 
     #[test]
@@ -797,20 +671,11 @@ mod tests {
         type F = Fr;
 
         let configs = [StageConfig::new(1, 3)];
-        let round = RoundWitness::new(
-            vec![
-                F::from_u64(40),
-                F::from_u64(5),
-                F::from_u64(10),
-                F::from_u64(5),
-            ],
-            F::from_u64(3),
-        );
-        let blindfold_witness =
-            BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round])]);
+        let round =
+            RoundWitness::new(vec![F::from_u64(40), F::from_u64(5), F::from_u64(10), F::from_u64(5)], F::from_u64(3));
+        let blindfold_witness = BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round])]);
 
-        let (real_instance, real_witness, r1cs, gens, z) =
-            make_test_instance(&configs, &blindfold_witness);
+        let (real_instance, real_witness, r1cs, gens, z) = make_test_instance(&configs, &blindfold_witness);
 
         let prover = BlindFoldProver::new(&gens, &r1cs, None);
         let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
@@ -828,10 +693,7 @@ mod tests {
 
         let mut verifier_transcript = KeccakTranscript::new(b"BlindFold_test");
         let result = verifier.verify(&proof, &verifier_input, &mut verifier_transcript);
-        assert!(
-            result.is_err(),
-            "Tampered az_r should cause verification failure"
-        );
+        assert!(result.is_err(), "Tampered az_r should cause verification failure");
     }
 
     #[test]
@@ -839,20 +701,11 @@ mod tests {
         type F = Fr;
 
         let configs = [StageConfig::new(1, 3)];
-        let round = RoundWitness::new(
-            vec![
-                F::from_u64(40),
-                F::from_u64(5),
-                F::from_u64(10),
-                F::from_u64(5),
-            ],
-            F::from_u64(3),
-        );
-        let blindfold_witness =
-            BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round])]);
+        let round =
+            RoundWitness::new(vec![F::from_u64(40), F::from_u64(5), F::from_u64(10), F::from_u64(5)], F::from_u64(3));
+        let blindfold_witness = BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round])]);
 
-        let (real_instance, real_witness, r1cs, gens, z) =
-            make_test_instance(&configs, &blindfold_witness);
+        let (real_instance, real_witness, r1cs, gens, z) = make_test_instance(&configs, &blindfold_witness);
 
         let prover = BlindFoldProver::new(&gens, &r1cs, None);
         let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);
@@ -883,20 +736,11 @@ mod tests {
         type F = Fr;
 
         let configs = [StageConfig::new(1, 3)];
-        let round = RoundWitness::new(
-            vec![
-                F::from_u64(40),
-                F::from_u64(5),
-                F::from_u64(10),
-                F::from_u64(5),
-            ],
-            F::from_u64(3),
-        );
-        let blindfold_witness =
-            BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round])]);
+        let round =
+            RoundWitness::new(vec![F::from_u64(40), F::from_u64(5), F::from_u64(10), F::from_u64(5)], F::from_u64(3));
+        let blindfold_witness = BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round])]);
 
-        let (real_instance, real_witness, r1cs, gens, z) =
-            make_test_instance(&configs, &blindfold_witness);
+        let (real_instance, real_witness, r1cs, gens, z) = make_test_instance(&configs, &blindfold_witness);
 
         let prover = BlindFoldProver::new(&gens, &r1cs, None);
         let verifier = BlindFoldVerifier::new(&gens, &r1cs, None);

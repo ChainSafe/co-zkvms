@@ -15,13 +15,7 @@ use super::relaxed_r1cs::{RelaxedR1CSInstance, RelaxedR1CSWitness};
 ///
 ///   T = (AZ₁) ∘ (BZ₂) + (AZ₂) ∘ (BZ₁) - u₁*(CZ₂) - u₂*(CZ₁)
 #[tracing::instrument(skip_all, name = "BlindFold::compute_cross_term")]
-pub fn compute_cross_term<F: JoltField>(
-    r1cs: &VerifierR1CS<F>,
-    z1: &[F],
-    u1: F,
-    z2: &[F],
-    u2: F,
-) -> Vec<F> {
+pub fn compute_cross_term<F: JoltField>(r1cs: &VerifierR1CS<F>, z1: &[F], u1: F, z2: &[F], u2: F) -> Vec<F> {
     let az1 = r1cs.a.mul_vector(z1);
     let bz1 = r1cs.b.mul_vector(z1);
     let cz1 = r1cs.c.mul_vector(z1);
@@ -30,9 +24,7 @@ pub fn compute_cross_term<F: JoltField>(
     let bz2 = r1cs.b.mul_vector(z2);
     let cz2 = r1cs.c.mul_vector(z2);
 
-    (0..r1cs.num_constraints)
-        .map(|i| az1[i] * bz2[i] + az2[i] * bz1[i] - u1 * cz2[i] - u2 * cz1[i])
-        .collect()
+    (0..r1cs.num_constraints).map(|i| az1[i] * bz2[i] + az2[i] * bz1[i] - u1 * cz2[i] - u2 * cz1[i]).collect()
 }
 
 /// Commit rows of a flat vector interpreted as an R × C grid.
@@ -82,8 +74,7 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
     let mut eval_commitments: Vec<C::G1> = Vec::new();
 
     let oc_rows = hyrax.output_claims_rows;
-    let oc_opening_ids: std::collections::HashSet<_> =
-        r1cs.output_claims_opening_ids.iter().copied().collect();
+    let oc_opening_ids: std::collections::HashSet<_> = r1cs.output_claims_opening_ids.iter().copied().collect();
 
     // OC region: fill with random values
     let oc_start = R_coeff * hyrax_C;
@@ -104,11 +95,7 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
                 W[noncoeff_idx] = F::random(rng);
                 noncoeff_idx += 1;
             }
-            LayoutStep::ConstraintVars {
-                constraint,
-                aux_var_count,
-                ..
-            } => {
+            LayoutStep::ConstraintVars { constraint, aux_var_count, .. } => {
                 // Only allocate noncoeff vars for openings NOT in the OC region
                 for id in &constraint.required_openings {
                     if seen_openings.insert(*id) && !oc_opening_ids.contains(id) {
@@ -121,11 +108,7 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
                     noncoeff_idx += 1;
                 }
             }
-            LayoutStep::CoeffRow {
-                round_idx,
-                num_coeffs,
-                ..
-            } => {
+            LayoutStep::CoeffRow { round_idx, num_coeffs, .. } => {
                 for k in 0..*num_coeffs {
                     W[round_idx * hyrax_C + k] = F::random(rng);
                 }
@@ -140,9 +123,7 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
                 W[noncoeff_idx] = F::random(rng);
                 noncoeff_idx += 1;
             }
-            LayoutStep::LinearFinalOutput {
-                num_evaluations, ..
-            } => {
+            LayoutStep::LinearFinalOutput { num_evaluations, .. } => {
                 for _ in 0..*num_evaluations {
                     W[noncoeff_idx] = F::random(rng);
                     noncoeff_idx += 1;
@@ -154,11 +135,7 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
                     noncoeff_idx += 1;
                 }
             }
-            LayoutStep::ExtraConstraintVars {
-                constraint,
-                aux_var_count,
-                ..
-            } => {
+            LayoutStep::ExtraConstraintVars { constraint, aux_var_count, .. } => {
                 for id in &constraint.required_openings {
                     if seen_openings.insert(*id) && !oc_opening_ids.contains(id) {
                         W[noncoeff_idx] = F::random(rng);
@@ -218,23 +195,14 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
     z.push(u);
     z.extend_from_slice(&W);
 
-    assert_eq!(
-        z.len(),
-        r1cs.num_vars,
-        "z.len()={} != r1cs.num_vars={}. W.len()={}",
-        z.len(),
-        r1cs.num_vars,
-        W.len()
-    );
+    assert_eq!(z.len(), r1cs.num_vars, "z.len()={} != r1cs.num_vars={}. W.len()={}", z.len(), r1cs.num_vars, W.len());
 
     // Compute E to satisfy: E = (AZ) ∘ (BZ) - u*(CZ)
     let az = r1cs.a.mul_vector(&z);
     let bz = r1cs.b.mul_vector(&z);
     let cz = r1cs.c.mul_vector(&z);
 
-    let E: Vec<F> = (0..r1cs.num_constraints)
-        .map(|i| az[i] * bz[i] - u * cz[i])
-        .collect();
+    let E: Vec<F> = (0..r1cs.num_constraints).map(|i| az[i] * bz[i] - u * cz[i]).collect();
 
     // Commit E rows
     let (R_E, C_E) = hyrax.e_grid(r1cs.num_constraints);
@@ -255,12 +223,7 @@ pub fn sample_random_satisfying_pair<F: JoltField, C: JoltCurve, R: CryptoRngCor
         eval_commitments,
     };
 
-    let witness = RelaxedR1CSWitness {
-        E,
-        W,
-        w_row_blindings,
-        e_row_blindings,
-    };
+    let witness = RelaxedR1CSWitness { E, W, w_row_blindings, e_row_blindings };
 
     (instance, witness, z)
 }
@@ -311,30 +274,14 @@ mod tests {
         let builder = VerifierR1CSBuilder::<F>::new(&configs, &baked);
         let r1cs = builder.build();
 
-        let round1 = RoundWitness::new(
-            vec![
-                F::from_u64(40),
-                F::from_u64(5),
-                F::from_u64(10),
-                F::from_u64(5),
-            ],
-            F::from_u64(3),
-        );
-        let blindfold_witness1 =
-            BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round1])]);
+        let round1 =
+            RoundWitness::new(vec![F::from_u64(40), F::from_u64(5), F::from_u64(10), F::from_u64(5)], F::from_u64(3));
+        let blindfold_witness1 = BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round1])]);
         let z1 = blindfold_witness1.assign(&r1cs);
 
-        let round2 = RoundWitness::new(
-            vec![
-                F::from_u64(50),
-                F::from_u64(10),
-                F::from_u64(20),
-                F::from_u64(10),
-            ],
-            F::from_u64(5),
-        );
-        let blindfold_witness2 =
-            BlindFoldWitness::new(F::from_u64(140), vec![StageWitness::new(vec![round2])]);
+        let round2 =
+            RoundWitness::new(vec![F::from_u64(50), F::from_u64(10), F::from_u64(20), F::from_u64(10)], F::from_u64(5));
+        let blindfold_witness2 = BlindFoldWitness::new(F::from_u64(140), vec![StageWitness::new(vec![round2])]);
         let z2 = blindfold_witness2.assign(&r1cs);
 
         r1cs.check_satisfaction(&z1).unwrap();
@@ -396,11 +343,7 @@ mod tests {
         for (row, com) in instance.noncoeff_row_commitments.iter().enumerate() {
             let start = R_coeff * hyrax_C + row * hyrax_C;
             let end = (start + hyrax_C).min(witness.W.len());
-            assert!(gens.verify(
-                com,
-                &witness.W[start..end],
-                &witness.w_row_blindings[R_coeff + row]
-            ));
+            assert!(gens.verify(com, &witness.W[start..end], &witness.w_row_blindings[R_coeff + row]));
         }
     }
 
@@ -420,17 +363,9 @@ mod tests {
 
         let gens = PedersenGenerators::<Bn254Curve>::deterministic(r1cs.hyrax.C + 1);
 
-        let round1 = RoundWitness::new(
-            vec![
-                F::from_u64(40),
-                F::from_u64(5),
-                F::from_u64(10),
-                F::from_u64(5),
-            ],
-            F::from_u64(3),
-        );
-        let blindfold_witness1 =
-            BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round1])]);
+        let round1 =
+            RoundWitness::new(vec![F::from_u64(40), F::from_u64(5), F::from_u64(10), F::from_u64(5)], F::from_u64(3));
+        let blindfold_witness1 = BlindFoldWitness::new(F::from_u64(100), vec![StageWitness::new(vec![round1])]);
         let z1 = blindfold_witness1.assign(&r1cs);
 
         let w1_vec: Vec<F> = z1[1..].to_vec();
@@ -454,11 +389,7 @@ mod tests {
         let z_folded: Vec<F> = z1.iter().zip(&z2).map(|(a, b)| *a + r * *b).collect();
         let u_folded = u1 + r * u2;
         let E_folded: Vec<F> =
-            w1.E.iter()
-                .zip(T.iter())
-                .zip(&w2.E)
-                .map(|((e1, t), e2)| *e1 + r * *t + r_sq * *e2)
-                .collect();
+            w1.E.iter().zip(T.iter()).zip(&w2.E).map(|((e1, t), e2)| *e1 + r * *t + r_sq * *e2).collect();
 
         let az = r1cs.a.mul_vector(&z_folded);
         let bz = r1cs.b.mul_vector(&z_folded);

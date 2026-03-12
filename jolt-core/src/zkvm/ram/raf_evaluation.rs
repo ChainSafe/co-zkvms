@@ -12,9 +12,7 @@ use crate::{
     field::JoltField,
     poly::{
         identity_poly::UnmapRamAddressPolynomial,
-        multilinear_polynomial::{
-            BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
-        },
+        multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation},
         opening_proof::{OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN},
     },
     subprotocols::sumcheck::SumcheckInstance,
@@ -63,19 +61,8 @@ impl<F: JoltField> RafEvaluationSumcheck<F> {
     }
 
     /// Construct a verifier instance from pre-extracted parts.
-    pub fn new_verifier_from_parts(
-        input_claim: F,
-        log_K: usize,
-        start_address: u64,
-        ra_claim: F,
-    ) -> Self {
-        Self {
-            input_claim,
-            log_K,
-            start_address,
-            prover_state: None,
-            cached_claim: Some(ra_claim),
-        }
+    pub fn new_verifier_from_parts(input_claim: F, log_K: usize, start_address: u64, ra_claim: F) -> Self {
+        Self { input_claim, log_K, start_address, prover_state: None, cached_claim: Some(ra_claim) }
     }
 }
 
@@ -89,11 +76,7 @@ impl<F: JoltField> RafEvaluationSumcheck<F> {
     }
 
     pub fn ra_final_claim(&self) -> F {
-        self.prover_state
-            .as_ref()
-            .expect("prover state missing")
-            .ra
-            .final_sumcheck_claim()
+        self.prover_state.as_ref().expect("prover state missing").ra.final_sumcheck_claim()
     }
 
     pub fn degree(&self) -> usize {
@@ -110,29 +93,18 @@ impl<F: JoltField> RafEvaluationSumcheck<F> {
 
     #[tracing::instrument(skip_all, name = "RamRafEvaluationSumcheck::compute_prover_message")]
     pub fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
-        let ps = self
-            .prover_state
-            .as_ref()
-            .expect("Prover state not initialized");
+        let ps = self.prover_state.as_ref().expect("Prover state not initialized");
         const DEGREE: usize = 2;
 
         (0..ps.ra.len() / 2)
             .into_par_iter()
             .map(|i| {
-                let ra_evals = ps
-                    .ra
-                    .sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
+                let ra_evals = ps.ra.sumcheck_evals_array::<DEGREE>(i, BindingOrder::HighToLow);
                 let unmap_evals = ps.unmap.sumcheck_evals(i, DEGREE, BindingOrder::HighToLow);
 
-                [
-                    ra_evals[0].mul_unreduced::<9>(unmap_evals[0]),
-                    ra_evals[1].mul_unreduced::<9>(unmap_evals[1]),
-                ]
+                [ra_evals[0].mul_unreduced::<9>(unmap_evals[0]), ra_evals[1].mul_unreduced::<9>(unmap_evals[1])]
             })
-            .reduce(
-                || [F::Unreduced::zero(); DEGREE],
-                |running, new| [running[0] + new[0], running[1] + new[1]],
-            )
+            .reduce(|| [F::Unreduced::zero(); DEGREE], |running, new| [running[0] + new[0], running[1] + new[1]])
             .into_iter()
             .map(F::from_montgomery_reduce)
             .collect()
@@ -143,19 +115,12 @@ impl<F: JoltField> RafEvaluationSumcheck<F> {
         if let Some(prover_state) = &mut self.prover_state {
             rayon::join(
                 || prover_state.ra.bind_parallel(r_j, BindingOrder::HighToLow),
-                || {
-                    prover_state
-                        .unmap
-                        .bind_parallel(r_j, BindingOrder::HighToLow)
-                },
+                || prover_state.unmap.bind_parallel(r_j, BindingOrder::HighToLow),
             );
         }
     }
 
-    pub fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    pub fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.to_vec())
     }
 }
@@ -177,18 +142,14 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RafEvaluationSumche
         r: &[F::Challenge],
     ) -> F {
         // Compute unmap evaluation at r
-        let unmap_eval =
-            UnmapRamAddressPolynomial::<F>::new(self.log_K, self.start_address).evaluate(r);
+        let unmap_eval = UnmapRamAddressPolynomial::<F>::new(self.log_K, self.start_address).evaluate(r);
 
         // Return unmap(r) * ra(r)
         let ra_claim = self.cached_claim.expect("ra_claim not cached");
         unmap_eval * ra_claim
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         self.normalize_opening_point(opening_point)
     }
 
@@ -202,8 +163,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RafEvaluationSumche
             .borrow()
             .get_virtual_polynomial_opening(VirtualPolynomial::RamAddress, SumcheckId::SpartanOuter)
             .0;
-        let ra_opening_point =
-            OpeningPoint::new([r_address.r.as_slice(), r_cycle.r.as_slice()].concat());
+        let ra_opening_point = OpeningPoint::new([r_address.r.as_slice(), r_cycle.r.as_slice()].concat());
         accumulator.borrow_mut().append_virtual(
             transcript,
             VirtualPolynomial::RamRa,
@@ -214,29 +174,20 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RafEvaluationSumche
 
     #[cfg(feature = "zk")]
     fn input_claim_constraint(&self) -> InputClaimConstraint {
-        InputClaimConstraint::direct(OpeningId::Virtual(
-            VirtualPolynomial::RamAddress,
-            SumcheckId::SpartanOuter,
-        ))
+        InputClaimConstraint::direct(OpeningId::Virtual(VirtualPolynomial::RamAddress, SumcheckId::SpartanOuter))
     }
 
     #[cfg(feature = "zk")]
     fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
         Some(OutputClaimConstraint::product(vec![
             ValueSource::challenge(0),
-            ValueSource::opening(OpeningId::Virtual(
-                VirtualPolynomial::RamRa,
-                SumcheckId::RamRafEvaluation,
-            )),
+            ValueSource::opening(OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation)),
         ]))
     }
 
     #[cfg(feature = "zk")]
     fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
-        vec![
-            UnmapRamAddressPolynomial::<F>::new(self.log_K, self.start_address)
-                .evaluate(sumcheck_challenges),
-        ]
+        vec![UnmapRamAddressPolynomial::<F>::new(self.log_K, self.start_address).evaluate(sumcheck_challenges)]
     }
 }
 

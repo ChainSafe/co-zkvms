@@ -55,18 +55,13 @@ impl JoltField for ark_bn254::Fr {
 
     fn compute_lookup_tables() -> Self::SmallValueLookupTables {
         // These two lookup tables correspond to the two 16-bit limbs of a u64
-        let mut lookup_tables = [
-            unsafe_allocate_zero_vec(1 << 16),
-            unsafe_allocate_zero_vec(1 << 16),
-        ];
+        let mut lookup_tables = [unsafe_allocate_zero_vec(1 << 16), unsafe_allocate_zero_vec(1 << 16)];
 
         for i in 0..2 {
             let bitshift = 16 * i;
             let unit = <Self as JoltField>::from_u64(1 << bitshift);
-            lookup_tables[i] = (0..(1 << 16))
-                .into_par_iter()
-                .map(|j| unit * <Self as JoltField>::from_u64(j))
-                .collect();
+            lookup_tables[i] =
+                (0..(1 << 16)).into_par_iter().map(|j| unit * <Self as JoltField>::from_u64(j)).collect();
         }
 
         lookup_tables
@@ -258,8 +253,7 @@ impl JoltField for ark_bn254::Fr {
 
     #[inline]
     fn mul_u128_unreduced(self, other: u128) -> BigInt<6> {
-        self.0
-            .mul_trunc::<2, 6>(&BigInt::new([other as u64, (other >> 64) as u64]))
+        self.0.mul_trunc::<2, 6>(&BigInt::new([other as u64, (other >> 64) as u64]))
     }
 
     #[inline]
@@ -318,11 +312,7 @@ impl<const N: usize> FmaddTrunc for BigInt<N> {
     type Other<const M: usize> = BigInt<M>;
     type Acc<const P: usize> = BigInt<P>;
 
-    fn fmadd_trunc<const M: usize, const P: usize>(
-        &self,
-        other: &Self::Other<M>,
-        acc: &mut Self::Acc<P>,
-    ) {
+    fn fmadd_trunc<const M: usize, const P: usize>(&self, other: &Self::Other<M>, acc: &mut Self::Acc<P>) {
         self.fmadd_trunc(other, acc)
     }
 }
@@ -357,19 +347,13 @@ mod tests {
         let mut rng = test_rng();
         for _ in 0..256 {
             let x = rng.next_u64();
-            assert_eq!(
-                <Fr as JoltField>::from_u64(x),
-                JoltField::mul_u64(&Fr::one(), x)
-            );
+            assert_eq!(<Fr as JoltField>::from_u64(x), JoltField::mul_u64(&Fr::one(), x));
         }
 
         for _ in 0..256 {
             let x = rng.next_u64();
             let y = Fr::random(&mut rng);
-            assert_eq!(
-                y * <Fr as JoltField>::from_u64(x),
-                JoltField::mul_u64(&y, x)
-            );
+            assert_eq!(y * <Fr as JoltField>::from_u64(x), JoltField::mul_u64(&y, x));
         }
     }
 }

@@ -112,7 +112,10 @@ fn public_operand_indices(cycle: &tracer::instruction::Cycle) -> &'static [usize
 /// Extracts operand values directly from the vanilla Cycle, generates binary
 /// shares, and builds 3 Rep3Cycles via `from_cycle_shared`.
 /// Operands at indices returned by `public_operand_indices` are kept public.
-fn share_cycle(cycle: &tracer::instruction::Cycle, rng: &mut (impl rand::Rng + rand::CryptoRng)) -> (Rep3Cycle, Rep3Cycle, Rep3Cycle) {
+fn share_cycle(
+    cycle: &tracer::instruction::Cycle,
+    rng: &mut (impl rand::Rng + rand::CryptoRng),
+) -> (Rep3Cycle, Rep3Cycle, Rep3Cycle) {
     let mut copied_cycle = cycle.clone();
     let values = Rep3Cycle::extract_operand_values(&copied_cycle);
     let public_indices = public_operand_indices(cycle);
@@ -130,7 +133,10 @@ fn share_cycle(cycle: &tracer::instruction::Cycle, rng: &mut (impl rand::Rng + r
                 let op = Rep3Operand::Public(v as i128);
                 [op, op, op]
             } else {
-                let s = rep3_ring::share_ring_element_binary(rep3_ring::ring::ring_impl::RingElement(v as jolt_common::constants::XlenInt), rng);
+                let s = rep3_ring::share_ring_element_binary(
+                    rep3_ring::ring::ring_impl::RingElement(v as jolt_common::constants::XlenInt),
+                    rng,
+                );
                 [Rep3Operand::from_binary(s[0]), Rep3Operand::from_binary(s[1]), Rep3Operand::from_binary(s[2])]
             }
         })

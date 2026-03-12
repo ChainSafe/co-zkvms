@@ -32,16 +32,14 @@ declare_riscv_instr!(
 
 impl LW {
     fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LW as RISCVInstruction>::RAMAccess) {
-        cpu.x[self.operands.rd as usize] = match cpu
-            .mmu
-            .load_word(cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64)
-        {
-            Ok((word, memory_read)) => {
-                *ram_access = memory_read;
-                word as i32 as i64
-            }
-            Err(_) => panic!("MMU load error"),
-        };
+        cpu.x[self.operands.rd as usize] =
+            match cpu.mmu.load_word(cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64) {
+                Ok((word, memory_read)) => {
+                    *ram_access = memory_read;
+                    word as i32 as i64
+                }
+                Err(_) => panic!("MMU load error"),
+            };
     }
 }
 
@@ -55,11 +53,7 @@ impl RISCVTrace for LW {
     }
 
     /// Load word (32-bit) from aligned memory.    
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         match xlen {
             Xlen::Bit32 => self.inline_sequence_32(allocator),
             #[cfg(feature = "rv64")]
@@ -73,11 +67,7 @@ impl RISCVTrace for LW {
 impl LW {
     fn inline_sequence_32(&self, allocator: &VirtualRegisterAllocator) -> Vec<Instruction> {
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, Xlen::Bit32, allocator);
-        asm.emit_i::<VirtualLW>(
-            self.operands.rd,
-            self.operands.rs1,
-            self.operands.imm as u64,
-        );
+        asm.emit_i::<VirtualLW>(self.operands.rd, self.operands.rs1, self.operands.imm as u64);
         asm.finalize()
     }
 

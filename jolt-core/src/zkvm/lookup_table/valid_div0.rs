@@ -48,11 +48,7 @@ impl<const XLEN: usize> JoltLookupTable for ValidDiv0Table<XLEN> {
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for ValidDiv0Table<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
-        vec![
-            Suffixes::One,
-            Suffixes::LeftOperandIsZero,
-            Suffixes::DivByZero,
-        ]
+        vec![Suffixes::One, Suffixes::LeftOperandIsZero, Suffixes::DivByZero]
     }
 
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
@@ -65,8 +61,7 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for ValidDiv0Table<XLEN>
         //
         // If the divisor *is* zero, returns 1 (on the Boolean hypercube)
         // iff the quotient is valid (i.e. 2^XLEN - 1).
-        one - prefixes[Prefixes::LeftOperandIsZero] * left_operand_is_zero
-            + prefixes[Prefixes::DivByZero] * div_by_zero
+        one - prefixes[Prefixes::LeftOperandIsZero] * left_operand_is_zero + prefixes[Prefixes::DivByZero] * div_by_zero
     }
 }
 

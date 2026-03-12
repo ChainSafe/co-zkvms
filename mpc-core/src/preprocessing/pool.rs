@@ -3,12 +3,12 @@ use std::path::Path;
 use super::backing_store;
 use super::dabits::{DaBitBatch, LazyDaBits};
 use super::edabits::{EdaBitsBatch, EdaBitsRingBatch, LazyEdaBits, LazyEdaBitsRing};
+use crate::field::PrimeField;
 use crate::protocols::rep3::PartyID;
 use crate::protocols::rep3::network::Rep3RawFieldTransport;
 use crate::protocols::rep3::network::{IoContext, IoContextPool, Rep3Network, Rep3NetworkWorker};
-use eyre::Ok;
-use crate::field::PrimeField;
 use crate::protocols::rep3_ring::ring::int_ring::IntRing2k;
+use eyre::Ok;
 use rand::RngCore;
 use rand::distributions::Standard;
 use rand::prelude::Distribution;
@@ -176,10 +176,7 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
 
     /// Generic ring-edaBits drain, dispatched by `TypeId`.
     #[tracing::instrument(skip(self), level = "trace")]
-    pub fn take_ring_edabits<T: IntRing2k>(
-        &mut self,
-        n: usize,
-    ) -> eyre::Result<EdaBitsRingBatch<T>>
+    pub fn take_ring_edabits<T: IntRing2k>(&mut self, n: usize) -> eyre::Result<EdaBitsRingBatch<T>>
     where
         Standard: Distribution<T>,
     {
@@ -192,10 +189,7 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             let v = self.ring_edabits_u128.take_batch(n)?;
             Ok(unsafe { std::mem::transmute::<EdaBitsRingBatch<u128>, EdaBitsRingBatch<T>>(v) })
         } else {
-            eyre::bail!(
-                "PreprocessingPool::take_ring_edabits: unsupported ring type u{}",
-                T::K
-            );
+            eyre::bail!("PreprocessingPool::take_ring_edabits: unsupported ring type u{}", T::K);
         }
     }
 
@@ -367,9 +361,7 @@ fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
     use crate::protocols::rep3::rngs::Rep3Rand;
 
     let party_id = io.party_id();
-    let fb = usize::try_from(F::MODULUS_BIT_SIZE)
-        .expect("u32 fits into usize")
-        .div_ceil(8);
+    let fb = usize::try_from(F::MODULUS_BIT_SIZE).expect("u32 fits into usize").div_ceil(8);
 
     // Phase 1: Fork 6 Rep3Rands and snapshot seeds (local, no communication).
     let mut rands: [Rep3Rand; 6] = std::array::from_fn(|_| io.main().rngs.rand.fork());
@@ -377,11 +369,7 @@ fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
 
     // Helper: compute edaBit α₂ for P0 given a forked Rep3Rand.
     #[tracing::instrument(skip(eda_rand))]
-    fn edabit_alpha2_p0<T: IntRing2k, Fp: PrimeField>(
-        num: usize,
-        eda_rand: &mut Rep3Rand,
-        fb: usize,
-    ) -> Vec<Fp>
+    fn edabit_alpha2_p0<T: IntRing2k, Fp: PrimeField>(num: usize, eda_rand: &mut Rep3Rand, fb: usize) -> Vec<Fp>
     where
         Standard: Distribution<T>,
     {
@@ -395,28 +383,22 @@ fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
         let (all1, g2) = {
             let mut a = vec![0u8; num * stride];
             let mut b = vec![0u8; gamma_total];
-            rayon::join(
-                || eda_rand.rng1.fill_bytes(&mut a),
-                || eda_rand.rng2.fill_bytes(&mut b),
-            );
+            rayon::join(|| eda_rand.rng1.fill_bytes(&mut a), || eda_rand.rng2.fill_bytes(&mut b));
             (a, b)
         };
         let mut out = vec![Fp::zero(); num * k];
-        out.par_chunks_mut(k)
-            .enumerate()
-            .with_min_len(256)
-            .for_each(|(i, chunk)| {
-                let base = i * stride;
-                let g1v = T::from_le_bytes(&all1[base..base + t_bytes]);
-                let g2v = T::from_le_bytes(&g2[i * t_bytes..(i + 1) * t_bytes]);
-                let gamma = g1v ^ g2v;
-                for j in 0..k {
-                    let s = base + t_bytes + j * fb;
-                    let alpha1 = dabits::parse_field::<Fp>(&all1, s);
-                    let gbit = ((gamma >> j) & T::one()) == T::one();
-                    chunk[j] = Fp::from(gbit as u64) - alpha1;
-                }
-            });
+        out.par_chunks_mut(k).enumerate().with_min_len(256).for_each(|(i, chunk)| {
+            let base = i * stride;
+            let g1v = T::from_le_bytes(&all1[base..base + t_bytes]);
+            let g2v = T::from_le_bytes(&g2[i * t_bytes..(i + 1) * t_bytes]);
+            let gamma = g1v ^ g2v;
+            for j in 0..k {
+                let s = base + t_bytes + j * fb;
+                let alpha1 = dabits::parse_field::<Fp>(&all1, s);
+                let gbit = ((gamma >> j) & T::one()) == T::one();
+                chunk[j] = Fp::from(gbit as u64) - alpha1;
+            }
+        });
         out
     }
 
@@ -458,34 +440,25 @@ fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
             };
 
             // Round 1: P0 → P2 — distribute across parallel fork channels
-            let mut combined: Vec<F> = Vec::with_capacity(
-                ea0.len() + ea1.len() + ea2.len() + ea3.len() + ea4.len() + da_alpha2.len(),
-            );
+            let mut combined: Vec<F> =
+                Vec::with_capacity(ea0.len() + ea1.len() + ea2.len() + ea3.len() + ea4.len() + da_alpha2.len());
             combined.extend_from_slice(&ea0);
             combined.extend_from_slice(&ea1);
             combined.extend_from_slice(&ea2);
             combined.extend_from_slice(&ea3);
             combined.extend_from_slice(&ea4);
             combined.extend_from_slice(&da_alpha2);
-            io.par_chunks(
-                combined.into_par_iter(),
-                None,
-                |chunk: Vec<F>, ctx| -> eyre::Result<Vec<()>> {
-                    ctx.network.send_many(PartyID::ID2, &chunk)?;
-                    Ok(vec![])
-                },
-            )?;
+            io.par_chunks(combined.into_par_iter(), None, |chunk: Vec<F>, ctx| -> eyre::Result<Vec<()>> {
+                ctx.network.send_many(PartyID::ID2, &chunk)?;
+                Ok(vec![])
+            })?;
 
             // Round 2: P0 ← P2 receives daBit s₂₀ across fork channels
             let s20: Vec<F> = if num_dabits > 0 {
                 let _span = info_span!("resv_s20").entered();
-                io.par_chunks(
-                    0..num_dabits,
-                    None,
-                    |_: Vec<usize>, ctx| -> eyre::Result<Vec<F>> {
-                        Ok(ctx.network.recv_many::<F>(PartyID::ID2)?)
-                    },
-                )?
+                io.par_chunks(0..num_dabits, None, |_: Vec<usize>, ctx| -> eyre::Result<Vec<F>> {
+                    Ok(ctx.network.recv_many::<F>(PartyID::ID2)?)
+                })?
             } else {
                 Vec::new()
             };
@@ -577,22 +550,15 @@ fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
             }
 
             // Round 1: receive combined α₂ from P0 + s₁₂ from P1
-            let total_eda = counts
-                .iter()
-                .enumerate()
-                .map(|(i, &c)| c * [u8::K, u16::K, u32::K, u64::K, u128::K][i])
-                .sum::<usize>();
+            let total_eda =
+                counts.iter().enumerate().map(|(i, &c)| c * [u8::K, u16::K, u32::K, u64::K, u128::K][i]).sum::<usize>();
             let total_recv = total_eda + num_dabits;
 
             let combined: Vec<F> = if total_recv > 0 {
                 let _span = info_span!("resv_combined").entered();
-                io.par_chunks(
-                    0..total_recv,
-                    None,
-                    |_: Vec<usize>, ctx| -> eyre::Result<Vec<F>> {
-                        Ok(ctx.network.recv_many::<F>(PartyID::ID0)?)
-                    },
-                )?
+                io.par_chunks(0..total_recv, None, |_: Vec<usize>, ctx| -> eyre::Result<Vec<F>> {
+                    Ok(ctx.network.recv_many::<F>(PartyID::ID0)?)
+                })?
             } else {
                 Vec::new()
             };
@@ -640,14 +606,10 @@ fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
                 }
 
                 // Round 2: P2 → P0 sends s₂₀ across fork channels
-                io.par_chunks(
-                    s20.into_par_iter(),
-                    None,
-                    |chunk: Vec<F>, ctx| -> eyre::Result<Vec<()>> {
-                        ctx.network.send_many(PartyID::ID0, &chunk)?;
-                        Ok(vec![])
-                    },
-                )?;
+                io.par_chunks(s20.into_par_iter(), None, |chunk: Vec<F>, ctx| -> eyre::Result<Vec<()>> {
+                    ctx.network.send_many(PartyID::ID0, &chunk)?;
+                    Ok(vec![])
+                })?;
 
                 stored
             } else {
@@ -681,10 +643,7 @@ fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
 }
 
 fn env_usize(name: &str, default: usize) -> usize {
-    std::env::var(name)
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(default)
+    std::env::var(name).ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(default)
 }
 
 fn preproc_max_msg_mb() -> usize {
@@ -708,12 +667,7 @@ fn configured_transport_lanes() -> usize {
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|&v| v > 0)
-        .or_else(|| {
-            std::env::var("NETWORK_FORKS")
-                .ok()
-                .and_then(|v| v.parse::<usize>().ok())
-                .filter(|&v| v > 0)
-        })
+        .or_else(|| std::env::var("NETWORK_FORKS").ok().and_then(|v| v.parse::<usize>().ok()).filter(|&v| v > 0))
         .unwrap_or(8)
 }
 
@@ -721,33 +675,21 @@ fn preproc_max_elems_per_msg<F: PrimeField>() -> usize {
     let mb = preproc_max_msg_mb();
     let bytes = mb.saturating_mul(1024 * 1024);
     let elem = std::mem::size_of::<F>();
-    if elem == 0 {
-        1
-    } else {
-        bytes.div_ceil(elem).max(1)
-    }
+    if elem == 0 { 1 } else { bytes.div_ceil(elem).max(1) }
 }
 
 fn preproc_store_batch_elems<F: PrimeField>() -> usize {
     let mb = preproc_store_batch_mb();
     let bytes = mb.saturating_mul(1024 * 1024);
     let elem = std::mem::size_of::<F>();
-    if elem == 0 {
-        1
-    } else {
-        bytes.div_ceil(elem).max(1)
-    }
+    if elem == 0 { 1 } else { bytes.div_ceil(elem).max(1) }
 }
 
 fn preproc_segment_elems<F: PrimeField>() -> usize {
     let mb = preproc_segment_mb();
     let bytes = mb.saturating_mul(1024 * 1024);
     let elem = std::mem::size_of::<F>();
-    if elem == 0 {
-        1
-    } else {
-        bytes.div_ceil(elem).max(1)
-    }
+    if elem == 0 { 1 } else { bytes.div_ceil(elem).max(1) }
 }
 
 #[derive(Clone, Copy)]
@@ -771,11 +713,7 @@ fn build_segment_plans(total_items: usize, segment_items: usize) -> Vec<SegmentP
     out
 }
 
-fn par_segment_plans<N, MapFn>(
-    forks: &mut [IoContext<N>],
-    plans: Vec<SegmentPlan>,
-    map: MapFn,
-) -> eyre::Result<()>
+fn par_segment_plans<N, MapFn>(forks: &mut [IoContext<N>], plans: Vec<SegmentPlan>, map: MapFn) -> eyre::Result<()>
 where
     N: Rep3NetworkWorker,
     MapFn: Fn(SegmentPlan, &mut IoContext<N>) -> eyre::Result<()> + Sync + Send,
@@ -937,9 +875,7 @@ fn recv_field_messages_collect_ctx<F: PrimeField, N: Rep3Network + Rep3RawFieldT
     }
 
     if expected_len <= max_msg_elems.max(1) {
-        return Ok(io
-            .network
-            .recv_field_vec_raw_owned::<F>(from, expected_len)?);
+        return Ok(io.network.recv_field_vec_raw_owned::<F>(from, expected_len)?);
     }
 
     let bytes = recv_field_bytes_collect_ctx::<F, _>(from, expected_len, io, max_msg_elems)?;
@@ -955,10 +891,7 @@ fn recv_field_messages_collect<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFiel
     recv_field_messages_collect_ctx(from, expected_len, io.main(), max_msg_elems)
 }
 
-fn recv_field_messages_into_store<
-    F: PrimeField + Copy,
-    N: Rep3NetworkWorker + Rep3RawFieldTransport,
->(
+fn recv_field_messages_into_store<F: PrimeField + Copy, N: Rep3NetworkWorker + Rep3RawFieldTransport>(
     from: PartyID,
     start_elem: usize,
     expected_len: usize,
@@ -990,8 +923,7 @@ fn recv_field_messages_into_store<
     while received < expected_len {
         let chunk_elems = (expected_len - received).min(buf_elems);
         let chunk_bytes = chunk_elems * elem_size;
-        io.network()
-            .recv_field_bytes_bulk_into::<F>(from, &mut buf[..chunk_bytes])?;
+        io.network().recv_field_bytes_bulk_into::<F>(from, &mut buf[..chunk_bytes])?;
         write_bytes_to_store(store, write_elem_offset, &buf[..chunk_bytes])?;
         write_elem_offset += chunk_elems;
         received += chunk_elems;
@@ -1023,10 +955,7 @@ fn receive_field_writer_batch_ctx<F: PrimeField + Copy, N: Rep3Network + Rep3Raw
     recv_field_messages_into_writer_ctx(from, start_elem, expected_len, io, max_msg_elems, writer)
 }
 
-fn recv_field_messages_into_writer_ctx<
-    F: PrimeField + Copy,
-    N: Rep3Network + Rep3RawFieldTransport,
->(
+fn recv_field_messages_into_writer_ctx<F: PrimeField + Copy, N: Rep3Network + Rep3RawFieldTransport>(
     from: PartyID,
     start_elem: usize,
     expected_len: usize,
@@ -1058,8 +987,7 @@ fn recv_field_messages_into_writer_ctx<
     while received < expected_len {
         let chunk_elems = (expected_len - received).min(buf_elems);
         let chunk_bytes = chunk_elems * elem_size;
-        io.network
-            .recv_field_bytes_bulk_into::<F>(from, &mut buf[..chunk_bytes])?;
+        io.network.recv_field_bytes_bulk_into::<F>(from, &mut buf[..chunk_bytes])?;
         let _span = tracing::trace_span!(
             "append_to_store",
             start_elem = write_elem_offset,
@@ -1098,13 +1026,9 @@ fn write_bytes_to_store<F: PrimeField + Copy>(
 ) -> eyre::Result<()> {
     let elem_size = std::mem::size_of::<F>();
     debug_assert_eq!(bytes.len() % elem_size, 0);
-    let _span = tracing::trace_span!(
-        "append_to_store",
-        start_elem,
-        elems = bytes.len() / elem_size,
-        bytes = bytes.len()
-    )
-    .entered();
+    let _span =
+        tracing::trace_span!("append_to_store", start_elem, elems = bytes.len() / elem_size, bytes = bytes.len())
+            .entered();
     store.write_bytes_at(start_elem, bytes)?;
     Ok(())
 }
@@ -1127,8 +1051,7 @@ fn field_vec_from_raw_bytes<F: PrimeField>(bytes: &[u8]) -> eyre::Result<Vec<F>>
 
     let mut out: Vec<std::mem::MaybeUninit<F>> = Vec::with_capacity(elems);
     unsafe { out.set_len(elems) };
-    let out_bytes =
-        unsafe { std::slice::from_raw_parts_mut(out.as_mut_ptr() as *mut u8, bytes.len()) };
+    let out_bytes = unsafe { std::slice::from_raw_parts_mut(out.as_mut_ptr() as *mut u8, bytes.len()) };
     out_bytes.copy_from_slice(bytes);
     let out: Vec<F> = unsafe { std::mem::transmute(out) };
     Ok(out)
@@ -1151,8 +1074,7 @@ fn read_file_backed_range<F: PrimeField + Copy>(
     // SAFETY: same contract as BackingStore::read_file_backed_range.
     let mut out: Vec<std::mem::MaybeUninit<F>> = Vec::with_capacity(count);
     unsafe { out.set_len(count) };
-    let out_bytes =
-        unsafe { std::slice::from_raw_parts_mut(out.as_mut_ptr() as *mut u8, byte_len) };
+    let out_bytes = unsafe { std::slice::from_raw_parts_mut(out.as_mut_ptr() as *mut u8, byte_len) };
 
     #[cfg(unix)]
     {
@@ -1198,16 +1120,12 @@ where
     std::fs::create_dir_all(dir)?;
 
     let party_id = io.party_id();
-    let fb = usize::try_from(F::MODULUS_BIT_SIZE)
-        .expect("u32 fits into usize")
-        .div_ceil(8);
+    let fb = usize::try_from(F::MODULUS_BIT_SIZE).expect("u32 fits into usize").div_ceil(8);
     let max_msg_elems = preproc_max_elems_per_msg::<F>();
     let store_batch_elems = preproc_store_batch_elems::<F>();
     let segment_elems = preproc_segment_elems::<F>();
-    let active_edabit_lanes = preproc_lanes()
-        .max(1)
-        .min(io.max_forks().max(1))
-        .min(configured_transport_lanes().max(1));
+    let active_edabit_lanes =
+        preproc_lanes().max(1).min(io.max_forks().max(1)).min(configured_transport_lanes().max(1));
     let active_dabit_lanes = 1; // daBits benefit more from intra-chunk rayon parallelism than from lane splitting
 
     // Phase 1: Fork 6 Rep3Rands and snapshot seeds (local, no communication).
@@ -1259,10 +1177,7 @@ where
             }
         };
         if parallel {
-            out.par_chunks_mut(k)
-                .enumerate()
-                .with_min_len(256)
-                .for_each(fill_chunk);
+            out.par_chunks_mut(k).enumerate().with_min_len(256).for_each(fill_chunk);
         } else {
             out.chunks_mut(k).enumerate().for_each(fill_chunk);
         }
@@ -1291,11 +1206,7 @@ where
             Fp::from(gbit as u64) - alpha1
         };
         if parallel {
-            (0..num)
-                .into_par_iter()
-                .with_min_len(256)
-                .map(compute)
-                .collect()
+            (0..num).into_par_iter().with_min_len(256).map(compute).collect()
         } else {
             (0..num).map(compute).collect()
         }
@@ -1316,12 +1227,7 @@ where
         }
         let da_stride = 1 + 2 * fb;
         let theta_bytes = dabits::seek_and_generate(theta_seed, theta_pos, start_item, num);
-        let s2 = dabits::seek_and_generate(
-            interleaved_seed,
-            interleaved_pos,
-            start_item * da_stride,
-            num * da_stride,
-        );
+        let s2 = dabits::seek_and_generate(interleaved_seed, interleaved_pos, start_item * da_stride, num * da_stride);
         let compute = |i: usize| {
             let theta = (theta_bytes[i] & 1) != 0;
             let neg1_theta = if theta { -Fp::one() } else { Fp::one() };
@@ -1330,11 +1236,7 @@ where
             neg1_theta * alpha1 - r1_val
         };
         if parallel {
-            (0..num)
-                .into_par_iter()
-                .with_min_len(256)
-                .map(compute)
-                .collect()
+            (0..num).into_par_iter().with_min_len(256).map(compute).collect()
         } else {
             (0..num).map(compute).collect()
         }
@@ -1357,11 +1259,7 @@ where
             neg1_theta * *alpha2_i
         };
         if parallel {
-            alpha2
-                .par_iter()
-                .zip(theta_buf.par_iter())
-                .map(compute)
-                .collect()
+            alpha2.par_iter().zip(theta_buf.par_iter()).map(compute).collect()
         } else {
             alpha2.iter().zip(theta_buf.iter()).map(compute).collect()
         }
@@ -1512,51 +1410,44 @@ where
             };
 
             // Collect active (non-zero) edaBit types.
-            let active_types: Vec<(usize, usize)> = counts
-                .iter()
-                .copied()
-                .enumerate()
-                .filter(|(_i, c)| *c > 0)
-                .collect();
+            let active_types: Vec<(usize, usize)> =
+                counts.iter().copied().enumerate().filter(|(_i, c)| *c > 0).collect();
 
             if active_types.len() > 1 && active_edabit_lanes >= active_types.len() {
                 // Pipeline: each edaBit type runs on its own fork in parallel.
                 let forks = io.forks(active_types.len());
-                active_types
-                    .into_par_iter()
-                    .zip(forks.par_iter_mut())
-                    .try_for_each(|((idx, num), ctx)| {
-                        let _span = info_span!("edabits_send_alphas", k = idx, n = num).entered();
-                        let k: usize = [u8::K, u16::K, u32::K, u64::K, u128::K][idx];
-                        let seeds = snaps[idx];
-                        let max_items_per_msg: usize = (max_msg_elems / k).max(1);
-                        let mut done = 0usize;
-                        while done < num {
-                            let items = (num - done).min(max_items_per_msg);
-                            let alpha2 = match idx {
-                                0 => edabit_alpha2_seed_chunk::<u8, F>(
-                                    seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb, true,
-                                ),
-                                1 => edabit_alpha2_seed_chunk::<u16, F>(
-                                    seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb, true,
-                                ),
-                                2 => edabit_alpha2_seed_chunk::<u32, F>(
-                                    seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb, true,
-                                ),
-                                3 => edabit_alpha2_seed_chunk::<u64, F>(
-                                    seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb, true,
-                                ),
-                                4 => edabit_alpha2_seed_chunk::<u128, F>(
-                                    seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb, true,
-                                ),
-                                _ => unreachable!(),
-                            };
-                            debug_assert_eq!(alpha2.len(), items * k);
-                            send_field_superchunk_ctx(alpha2, PartyID::ID2, ctx, max_msg_elems)?;
-                            done += items;
-                        }
-                        eyre::Result::<()>::Ok(())
-                    })?;
+                active_types.into_par_iter().zip(forks.par_iter_mut()).try_for_each(|((idx, num), ctx)| {
+                    let _span = info_span!("edabits_send_alphas", k = idx, n = num).entered();
+                    let k: usize = [u8::K, u16::K, u32::K, u64::K, u128::K][idx];
+                    let seeds = snaps[idx];
+                    let max_items_per_msg: usize = (max_msg_elems / k).max(1);
+                    let mut done = 0usize;
+                    while done < num {
+                        let items = (num - done).min(max_items_per_msg);
+                        let alpha2 = match idx {
+                            0 => edabit_alpha2_seed_chunk::<u8, F>(
+                                seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb, true,
+                            ),
+                            1 => edabit_alpha2_seed_chunk::<u16, F>(
+                                seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb, true,
+                            ),
+                            2 => edabit_alpha2_seed_chunk::<u32, F>(
+                                seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb, true,
+                            ),
+                            3 => edabit_alpha2_seed_chunk::<u64, F>(
+                                seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb, true,
+                            ),
+                            4 => edabit_alpha2_seed_chunk::<u128, F>(
+                                seeds.0, seeds.1, seeds.2, seeds.3, done, items, fb, true,
+                            ),
+                            _ => unreachable!(),
+                        };
+                        debug_assert_eq!(alpha2.len(), items * k);
+                        send_field_superchunk_ctx(alpha2, PartyID::ID2, ctx, max_msg_elems)?;
+                        done += items;
+                    }
+                    eyre::Result::<()>::Ok(())
+                })?;
             } else {
                 send_edabit_type(0, counts[0])?;
                 send_edabit_type(1, counts[1])?;
@@ -1564,16 +1455,13 @@ where
                 send_edabit_type(3, counts[3])?;
                 send_edabit_type(4, counts[4])?;
             }
-            let _span =
-                tracing::trace_span!("edabits_to_dabits_sync", party_id = ?party_id).entered();
+            let _span = tracing::trace_span!("edabits_to_dabits_sync", party_id = ?party_id).entered();
             io.sync_with_parties()?;
 
             let (ds1, dp1, ds2, dp2) = snaps[5];
             let dabits_store_path = dir.join("dabits.stored");
-            let mut dabits_store = backing_store::BackingStore::create_file_backed_sized(
-                &dabits_store_path,
-                num_dabits,
-            )?;
+            let mut dabits_store =
+                backing_store::BackingStore::create_file_backed_sized(&dabits_store_path, num_dabits)?;
             if num_dabits > 0 {
                 let max_items_per_msg = max_msg_elems.max(1);
                 let segment_items = segment_elems.max(max_items_per_msg);
@@ -1597,12 +1485,7 @@ where
                                     fb,
                                     chunk_parallel,
                                 );
-                                send_field_superchunk_ctx(
-                                    da_alpha2,
-                                    PartyID::ID2,
-                                    ctx,
-                                    max_msg_elems,
-                                )?;
+                                send_field_superchunk_ctx(da_alpha2, PartyID::ID2, ctx, max_msg_elems)?;
                                 recv_field_messages_into_writer_ctx::<F, _>(
                                     PartyID::ID2,
                                     start_item,
@@ -1619,16 +1502,8 @@ where
                         let mut offset = 0usize;
                         while offset < num_dabits {
                             let items = (num_dabits - offset).min(max_items_per_msg);
-                            let da_alpha2 = dabit_alpha2_seed_chunk::<F>(
-                                ds1,
-                                dp1,
-                                ds2,
-                                dp2,
-                                offset,
-                                items,
-                                fb,
-                                chunk_parallel,
-                            );
+                            let da_alpha2 =
+                                dabit_alpha2_seed_chunk::<F>(ds1, dp1, ds2, dp2, offset, items, fb, chunk_parallel);
                             send_field_superchunk(da_alpha2, PartyID::ID2, io, max_msg_elems)?;
 
                             recv_field_messages_into_store::<F, _>(
@@ -1657,16 +1532,14 @@ where
             let (s1, p1, s2, p2) = mk(4);
             let e4 = LazyEdaBits::<u128, F>::new(s1, p1, s2, p2, counts[4], Vec::new(), party_id);
 
-            let d =
-                LazyDaBits::new_with_store(ds1, dp1, ds2, dp2, num_dabits, dabits_store, party_id);
+            let d = LazyDaBits::new_with_store(ds1, dp1, ds2, dp2, num_dabits, dabits_store, party_id);
             let pool = PreprocessingPool::new(party_id, e0, e1, e2, e3, e4, d);
             pool.save(dir)?;
             Ok(pool)
         }
         PartyID::ID1 => {
             // P1 only sends daBit s₁₂ to P2 (edaBits are local-only for P1).
-            let _span =
-                tracing::trace_span!("edabits_to_dabits_sync", party_id = ?party_id).entered();
+            let _span = tracing::trace_span!("edabits_to_dabits_sync", party_id = ?party_id).entered();
             io.sync_with_parties()?;
             if num_dabits > 0 {
                 let _span = info_span!("dabits_send_thetas", n = num_dabits).entered();
@@ -1740,37 +1613,21 @@ where
                 let suffix = [u8::K, u16::K, u32::K, u64::K, u128::K][idx];
                 let path = dir.join(format!("edabits_{suffix}.alpha2"));
                 let total = counts[idx] * suffix;
-                eda_stores_vec.push(backing_store::BackingStore::create_file_backed_sized(
-                    &path, total,
-                )?);
+                eda_stores_vec.push(backing_store::BackingStore::create_file_backed_sized(&path, total)?);
             }
             let mut eda_stores_iter = eda_stores_vec.into_iter();
             let mut eda_stores: [backing_store::BackingStore<F>; 5] = [
-                eda_stores_iter
-                    .next()
-                    .expect("eda store vec must have len=5"),
-                eda_stores_iter
-                    .next()
-                    .expect("eda store vec must have len=5"),
-                eda_stores_iter
-                    .next()
-                    .expect("eda store vec must have len=5"),
-                eda_stores_iter
-                    .next()
-                    .expect("eda store vec must have len=5"),
-                eda_stores_iter
-                    .next()
-                    .expect("eda store vec must have len=5"),
+                eda_stores_iter.next().expect("eda store vec must have len=5"),
+                eda_stores_iter.next().expect("eda store vec must have len=5"),
+                eda_stores_iter.next().expect("eda store vec must have len=5"),
+                eda_stores_iter.next().expect("eda store vec must have len=5"),
+                eda_stores_iter.next().expect("eda store vec must have len=5"),
             ];
             debug_assert!(eda_stores_iter.next().is_none());
 
             // Collect active (non-zero) edaBit types with their writers.
-            let active_types: Vec<(usize, usize)> = counts
-                .iter()
-                .copied()
-                .enumerate()
-                .filter(|(_i, c)| *c > 0)
-                .collect();
+            let active_types: Vec<(usize, usize)> =
+                counts.iter().copied().enumerate().filter(|(_i, c)| *c > 0).collect();
 
             if active_types.len() > 1 && active_edabit_lanes >= active_types.len() {
                 // Pipeline: each edaBit type receives on its own fork in parallel.
@@ -1779,16 +1636,12 @@ where
                     .map(|(idx, _)| eda_stores[*idx].writer())
                     .collect::<std::io::Result<Vec<_>>>()?;
                 let forks = io.forks(active_types.len());
-                active_types
-                    .into_par_iter()
-                    .zip(writers.into_par_iter())
-                    .zip(forks.par_iter_mut())
-                    .try_for_each(|(((idx, c), writer), ctx)| {
+                active_types.into_par_iter().zip(writers.into_par_iter()).zip(forks.par_iter_mut()).try_for_each(
+                    |(((idx, c), writer), ctx)| {
                         let _span = info_span!("edabits_resv_store", k = idx, n = c).entered();
                         let k: usize = [u8::K, u16::K, u32::K, u64::K, u128::K][idx];
                         let max_items_per_msg: usize = (max_msg_elems / k).max(1);
-                        let store_batch_items: usize =
-                            (store_batch_elems / k).max(max_items_per_msg);
+                        let store_batch_items: usize = (store_batch_elems / k).max(max_items_per_msg);
                         if let Some(writer) = writer {
                             let mut done = 0usize;
                             while done < c {
@@ -1805,7 +1658,8 @@ where
                             }
                         }
                         eyre::Result::<()>::Ok(())
-                    })?;
+                    },
+                )?;
             } else {
                 for (idx, &c) in counts.iter().enumerate() {
                     let _span = info_span!("edabits_resv_store", k = idx, n = c).entered();
@@ -1821,27 +1675,23 @@ where
                     let plans = build_segment_plans(c, segment_items);
                     if let Some(writer) = eda_stores[idx].writer()? {
                         if active_edabit_lanes > 1 && plans.len() > 1 {
-                            par_segment_plans(
-                                io.forks(active_edabit_lanes),
-                                plans,
-                                |plan, ctx| {
-                                    let mut offset = 0usize;
-                                    while offset < plan.items {
-                                        let items = (plan.items - offset).min(store_batch_items);
-                                        let start_item = plan.start_item + offset;
-                                        recv_field_messages_into_writer_ctx::<F, _>(
-                                            PartyID::ID0,
-                                            start_item * k,
-                                            items * k,
-                                            ctx,
-                                            max_msg_elems,
-                                            &writer,
-                                        )?;
-                                        offset += items;
-                                    }
-                                    Ok(())
-                                },
-                            )?;
+                            par_segment_plans(io.forks(active_edabit_lanes), plans, |plan, ctx| {
+                                let mut offset = 0usize;
+                                while offset < plan.items {
+                                    let items = (plan.items - offset).min(store_batch_items);
+                                    let start_item = plan.start_item + offset;
+                                    recv_field_messages_into_writer_ctx::<F, _>(
+                                        PartyID::ID0,
+                                        start_item * k,
+                                        items * k,
+                                        ctx,
+                                        max_msg_elems,
+                                        &writer,
+                                    )?;
+                                    offset += items;
+                                }
+                                Ok(())
+                            })?;
                         } else {
                             let mut write_elem_offset = 0usize;
                             let mut remaining = c;
@@ -1863,8 +1713,7 @@ where
                     }
                 }
             }
-            let _span =
-                tracing::trace_span!("edabits_to_dabits_sync", party_id = ?party_id).entered();
+            let _span = tracing::trace_span!("edabits_to_dabits_sync", party_id = ?party_id).entered();
             io.sync_with_parties()?;
 
             // daBits: receive alpha2 from P0 and s12 from P1 in matching chunks, compute s20,
@@ -1885,17 +1734,14 @@ where
                     let chunk_parallel = active_dabit_lanes == 1;
                     if active_dabit_lanes > 1 && plans.len() > 1 {
                         par_segment_plans(io.forks(active_dabit_lanes), plans, |plan, ctx| {
-                            let mut buffered_s20 =
-                                Vec::with_capacity(plan.items.min(store_batch_elems));
-                            let mut buffered_s12 =
-                                Vec::with_capacity(plan.items.min(store_batch_elems));
+                            let mut buffered_s20 = Vec::with_capacity(plan.items.min(store_batch_elems));
+                            let mut buffered_s12 = Vec::with_capacity(plan.items.min(store_batch_elems));
                             let mut pending_pair_start = plan.start_item;
                             let mut offset = 0usize;
                             while offset < plan.items {
                                 let items = (plan.items - offset).min(max_items_per_msg);
                                 let start_item = plan.start_item + offset;
-                                let alpha2 =
-                                    recv_field_chunk_ctx::<F, _>(PartyID::ID0, items, ctx)?;
+                                let alpha2 = recv_field_chunk_ctx::<F, _>(PartyID::ID0, items, ctx)?;
                                 let s12 = recv_field_chunk_ctx::<F, _>(PartyID::ID1, items, ctx)?;
                                 let _span_chunk = tracing::trace_span!(
                                     "dabit_s20_forward_chunk",
@@ -1923,11 +1769,7 @@ where
                                         bytes = buffered_s20.len() * 2 * std::mem::size_of::<F>()
                                     )
                                     .entered();
-                                    writer.write_interleaved_at(
-                                        pending_pair_start,
-                                        &buffered_s20,
-                                        &buffered_s12,
-                                    )?;
+                                    writer.write_interleaved_at(pending_pair_start, &buffered_s20, &buffered_s12)?;
                                     buffered_s20.clear();
                                     buffered_s12.clear();
                                 }
@@ -1942,11 +1784,7 @@ where
                                     bytes = buffered_s20.len() * 2 * std::mem::size_of::<F>()
                                 )
                                 .entered();
-                                writer.write_interleaved_at(
-                                    pending_pair_start,
-                                    &buffered_s20,
-                                    &buffered_s12,
-                                )?;
+                                writer.write_interleaved_at(pending_pair_start, &buffered_s20, &buffered_s12)?;
                             }
                             Ok(())
                         })?;
@@ -1992,11 +1830,9 @@ where
             let (s1, p1, s2, p2) = mk(3);
             let e3 = LazyEdaBits::<u64, F>::new_with_store(s1, p1, s2, p2, counts[3], a3, party_id);
             let (s1, p1, s2, p2) = mk(4);
-            let e4 =
-                LazyEdaBits::<u128, F>::new_with_store(s1, p1, s2, p2, counts[4], a4, party_id);
+            let e4 = LazyEdaBits::<u128, F>::new_with_store(s1, p1, s2, p2, counts[4], a4, party_id);
             let (ds1, dp1, ds2, dp2) = snaps[5];
-            let d =
-                LazyDaBits::new_with_store(ds1, dp1, ds2, dp2, num_dabits, dabits_store, party_id);
+            let d = LazyDaBits::new_with_store(ds1, dp1, ds2, dp2, num_dabits, dabits_store, party_id);
 
             let pool = PreprocessingPool::new(party_id, e0, e1, e2, e3, e4, d);
             pool.save(dir)?;
@@ -2023,9 +1859,7 @@ fn extend_pool_batched_base<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTr
     use super::dabits;
 
     let party_id = io.party_id();
-    let fb = usize::try_from(F::MODULUS_BIT_SIZE)
-        .expect("u32 fits into usize")
-        .div_ceil(8);
+    let fb = usize::try_from(F::MODULUS_BIT_SIZE).expect("u32 fits into usize").div_ceil(8);
     let max_msg_elems = preproc_max_elems_per_msg::<F>();
     let forks_cap = io.max_forks().max(1);
 
@@ -2052,31 +1886,23 @@ fn extend_pool_batched_base<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTr
         let g2 = dabits::seek_and_generate(seed2, pos2, start_item * t_bytes, n * t_bytes);
 
         let mut out = vec![Fp::zero(); n * k];
-        out.par_chunks_mut(k)
-            .enumerate()
-            .with_min_len(256)
-            .for_each(|(i, chunk)| {
-                let base = i * stride;
-                let g1v = T::from_le_bytes(&all1[base..base + t_bytes]);
-                let g2v = T::from_le_bytes(&g2[i * t_bytes..(i + 1) * t_bytes]);
-                let gamma = g1v ^ g2v;
-                for j in 0..k {
-                    let s = base + t_bytes + j * fb;
-                    let alpha1 = dabits::parse_field::<Fp>(&all1, s);
-                    let gbit = ((gamma >> j) & T::one()) == T::one();
-                    chunk[j] = Fp::from(gbit as u64) - alpha1;
-                }
-            });
+        out.par_chunks_mut(k).enumerate().with_min_len(256).for_each(|(i, chunk)| {
+            let base = i * stride;
+            let g1v = T::from_le_bytes(&all1[base..base + t_bytes]);
+            let g2v = T::from_le_bytes(&g2[i * t_bytes..(i + 1) * t_bytes]);
+            let gamma = g1v ^ g2v;
+            for j in 0..k {
+                let s = base + t_bytes + j * fb;
+                let alpha1 = dabits::parse_field::<Fp>(&all1, s);
+                let gbit = ((gamma >> j) & T::one()) == T::one();
+                chunk[j] = Fp::from(gbit as u64) - alpha1;
+            }
+        });
         out
     }
 
     // Collect active edaBit types with their metadata.
-    let active_types: Vec<(
-        usize,
-        usize,
-        usize,
-        ([u8; crate::SEED_SIZE], u128, [u8; crate::SEED_SIZE], u128),
-    )> = {
+    let active_types: Vec<(usize, usize, usize, ([u8; crate::SEED_SIZE], u128, [u8; crate::SEED_SIZE], u128))> = {
         let ks = [u8::K, u16::K, u32::K, u64::K, u128::K];
         let totals = [
             pool.edabits_u8.total(),
@@ -2092,15 +1918,9 @@ fn extend_pool_batched_base<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTr
             pool.edabits_u64.extension_seeds(),
             pool.edabits_u128.extension_seeds(),
         ];
-        (0..5)
-            .filter(|&i| deficit_counts[i] > 0)
-            .map(|i| (i, ks[i], totals[i], seeds[i]))
-            .collect()
+        (0..5).filter(|&i| deficit_counts[i] > 0).map(|i| (i, ks[i], totals[i], seeds[i])).collect()
     };
-    let active_edabit_lanes = preproc_lanes()
-        .max(1)
-        .min(forks_cap)
-        .min(configured_transport_lanes().max(1));
+    let active_edabit_lanes = preproc_lanes().max(1).min(forks_cap).min(configured_transport_lanes().max(1));
     let segment_elems = preproc_segment_elems::<F>();
 
     match party_id {
@@ -2121,21 +1941,11 @@ fn extend_pool_batched_base<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTr
                             let items = (plan.items - done).min(max_items_per_msg);
                             let start = old_total + plan.start_item + done;
                             let alpha2 = match ty {
-                                0 => edabit_alpha2_ext_chunk::<u8, F>(
-                                    seed1, pos1, seed2, pos2, start, items, fb,
-                                ),
-                                1 => edabit_alpha2_ext_chunk::<u16, F>(
-                                    seed1, pos1, seed2, pos2, start, items, fb,
-                                ),
-                                2 => edabit_alpha2_ext_chunk::<u32, F>(
-                                    seed1, pos1, seed2, pos2, start, items, fb,
-                                ),
-                                3 => edabit_alpha2_ext_chunk::<u64, F>(
-                                    seed1, pos1, seed2, pos2, start, items, fb,
-                                ),
-                                4 => edabit_alpha2_ext_chunk::<u128, F>(
-                                    seed1, pos1, seed2, pos2, start, items, fb,
-                                ),
+                                0 => edabit_alpha2_ext_chunk::<u8, F>(seed1, pos1, seed2, pos2, start, items, fb),
+                                1 => edabit_alpha2_ext_chunk::<u16, F>(seed1, pos1, seed2, pos2, start, items, fb),
+                                2 => edabit_alpha2_ext_chunk::<u32, F>(seed1, pos1, seed2, pos2, start, items, fb),
+                                3 => edabit_alpha2_ext_chunk::<u64, F>(seed1, pos1, seed2, pos2, start, items, fb),
+                                4 => edabit_alpha2_ext_chunk::<u128, F>(seed1, pos1, seed2, pos2, start, items, fb),
                                 _ => unreachable!(),
                             };
                             send_field_superchunk_ctx(alpha2, PartyID::ID2, ctx, max_msg_elems)?;
@@ -2149,21 +1959,11 @@ fn extend_pool_batched_base<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTr
                         let items = (deficit - done).min(max_items_per_msg);
                         let start = old_total + done;
                         let alpha2 = match ty {
-                            0 => edabit_alpha2_ext_chunk::<u8, F>(
-                                seed1, pos1, seed2, pos2, start, items, fb,
-                            ),
-                            1 => edabit_alpha2_ext_chunk::<u16, F>(
-                                seed1, pos1, seed2, pos2, start, items, fb,
-                            ),
-                            2 => edabit_alpha2_ext_chunk::<u32, F>(
-                                seed1, pos1, seed2, pos2, start, items, fb,
-                            ),
-                            3 => edabit_alpha2_ext_chunk::<u64, F>(
-                                seed1, pos1, seed2, pos2, start, items, fb,
-                            ),
-                            4 => edabit_alpha2_ext_chunk::<u128, F>(
-                                seed1, pos1, seed2, pos2, start, items, fb,
-                            ),
+                            0 => edabit_alpha2_ext_chunk::<u8, F>(seed1, pos1, seed2, pos2, start, items, fb),
+                            1 => edabit_alpha2_ext_chunk::<u16, F>(seed1, pos1, seed2, pos2, start, items, fb),
+                            2 => edabit_alpha2_ext_chunk::<u32, F>(seed1, pos1, seed2, pos2, start, items, fb),
+                            3 => edabit_alpha2_ext_chunk::<u64, F>(seed1, pos1, seed2, pos2, start, items, fb),
+                            4 => edabit_alpha2_ext_chunk::<u128, F>(seed1, pos1, seed2, pos2, start, items, fb),
                             _ => unreachable!(),
                         };
                         send_field_superchunk(alpha2, PartyID::ID2, io, max_msg_elems)?;
@@ -2186,8 +1986,7 @@ fn extend_pool_batched_base<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTr
                 while done < deficit_dabits {
                     let items = (deficit_dabits - done).min(max_items_per_msg);
                     let start = old_total + done;
-                    let s1_buf =
-                        dabits::seek_and_generate(ds1, dp1, start * da_stride, items * da_stride);
+                    let s1_buf = dabits::seek_and_generate(ds1, dp1, start * da_stride, items * da_stride);
                     let g2_buf = dabits::seek_and_generate(ds2, dp2, start, items);
                     let da_alpha2 = (0..items)
                         .into_par_iter()
@@ -2202,28 +2001,18 @@ fn extend_pool_batched_base<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTr
                     send_field_superchunk(da_alpha2, PartyID::ID2, io, max_msg_elems)?;
                     // Interleaved recv: must drain s20 each iteration to prevent
                     // circular buffer deadlock (P0 blocked sending, P2 blocked sending back).
-                    let s20 = recv_field_messages_collect::<F, _>(
-                        PartyID::ID2,
-                        items,
-                        io,
-                        max_msg_elems,
-                    )?;
+                    let s20 = recv_field_messages_collect::<F, _>(PartyID::ID2, items, io, max_msg_elems)?;
                     pool.dabits.apply_extension(items, s20);
                     done += items;
                 }
             }
 
             // Apply edaBits total extensions (P0 stores no α₂).
-            pool.edabits_u8
-                .apply_extension(deficit_counts[0], Vec::new());
-            pool.edabits_u16
-                .apply_extension(deficit_counts[1], Vec::new());
-            pool.edabits_u32
-                .apply_extension(deficit_counts[2], Vec::new());
-            pool.edabits_u64
-                .apply_extension(deficit_counts[3], Vec::new());
-            pool.edabits_u128
-                .apply_extension(deficit_counts[4], Vec::new());
+            pool.edabits_u8.apply_extension(deficit_counts[0], Vec::new());
+            pool.edabits_u16.apply_extension(deficit_counts[1], Vec::new());
+            pool.edabits_u32.apply_extension(deficit_counts[2], Vec::new());
+            pool.edabits_u64.apply_extension(deficit_counts[3], Vec::new());
+            pool.edabits_u128.apply_extension(deficit_counts[4], Vec::new());
         }
         PartyID::ID1 => {
             // Barrier: all parties must finish edaBit phase before daBit phase.
@@ -2239,8 +2028,7 @@ fn extend_pool_batched_base<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTr
                 while done < deficit_dabits {
                     let items = (deficit_dabits - done).min(max_items_per_msg);
                     let start = old_total + done;
-                    let s2_buf =
-                        dabits::seek_and_generate(ds2, dp2, start * da_stride, items * da_stride);
+                    let s2_buf = dabits::seek_and_generate(ds2, dp2, start * da_stride, items * da_stride);
                     let theta_buf = dabits::seek_and_generate(ds1, dp1, start, items);
                     let s12: Vec<F> = (0..items)
                         .into_par_iter()
@@ -2260,16 +2048,11 @@ fn extend_pool_batched_base<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTr
                 pool.dabits.apply_extension(deficit_dabits, Vec::new());
             }
             // Apply edaBits total extensions (P1 stores no α₂).
-            pool.edabits_u8
-                .apply_extension(deficit_counts[0], Vec::new());
-            pool.edabits_u16
-                .apply_extension(deficit_counts[1], Vec::new());
-            pool.edabits_u32
-                .apply_extension(deficit_counts[2], Vec::new());
-            pool.edabits_u64
-                .apply_extension(deficit_counts[3], Vec::new());
-            pool.edabits_u128
-                .apply_extension(deficit_counts[4], Vec::new());
+            pool.edabits_u8.apply_extension(deficit_counts[0], Vec::new());
+            pool.edabits_u16.apply_extension(deficit_counts[1], Vec::new());
+            pool.edabits_u32.apply_extension(deficit_counts[2], Vec::new());
+            pool.edabits_u64.apply_extension(deficit_counts[3], Vec::new());
+            pool.edabits_u128.apply_extension(deficit_counts[4], Vec::new());
         }
         PartyID::ID2 => {
             // Receive edaBit α₂ extensions per type, using intra-type lane
@@ -2351,18 +2134,8 @@ fn extend_pool_batched_base<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTr
                 let mut done = 0usize;
                 while done < deficit_dabits {
                     let items = (deficit_dabits - done).min(max_items_per_msg);
-                    let alpha2 = recv_field_messages_collect::<F, _>(
-                        PartyID::ID0,
-                        items,
-                        io,
-                        max_msg_elems,
-                    )?;
-                    let s12 = recv_field_messages_collect::<F, _>(
-                        PartyID::ID1,
-                        items,
-                        io,
-                        max_msg_elems,
-                    )?;
+                    let alpha2 = recv_field_messages_collect::<F, _>(PartyID::ID0, items, io, max_msg_elems)?;
+                    let s12 = recv_field_messages_collect::<F, _>(PartyID::ID1, items, io, max_msg_elems)?;
                     let theta_buf = dabits::seek_and_generate(ds2, dp2, old_total + done, items);
 
                     let _span = tracing::trace_span!(
@@ -2418,16 +2191,10 @@ where
 {
     let mut pool = preprocess_pool_base(dir, counts, num_dabits, io)?;
     if num_ring_edabits_u64 > 0 {
-        pool.set_ring_edabits_u64(super::edabits::random_edabits_ring_lazy::<u64, _>(
-            num_ring_edabits_u64,
-            io,
-        )?);
+        pool.set_ring_edabits_u64(super::edabits::random_edabits_ring_lazy::<u64, _>(num_ring_edabits_u64, io)?);
     }
     if num_ring_edabits_u128 > 0 {
-        pool.set_ring_edabits_u128(super::edabits::random_edabits_ring_lazy::<u128, _>(
-            num_ring_edabits_u128,
-            io,
-        )?);
+        pool.set_ring_edabits_u128(super::edabits::random_edabits_ring_lazy::<u128, _>(num_ring_edabits_u128, io)?);
     }
     pool.save(dir)?;
     Ok(pool)
@@ -2451,28 +2218,16 @@ where
 {
     let mut pool = preprocess_pool_base(dir, counts, num_dabits, io)?;
     if num_wrap_masks > 0 {
-        pool.set_wrap_masks(super::wrap_mask::generate_wrap_masks_lazy(
-            num_wrap_masks,
-            io.main(),
-        )?);
+        pool.set_wrap_masks(super::wrap_mask::generate_wrap_masks_lazy(num_wrap_masks, io.main())?);
     }
     if num_ring_edabits_u66 > 0 {
-        pool.set_ring_edabits_u66(super::edabits::random_edabits_ring_lazy::<U66, _>(
-            num_ring_edabits_u66,
-            io,
-        )?);
+        pool.set_ring_edabits_u66(super::edabits::random_edabits_ring_lazy::<U66, _>(num_ring_edabits_u66, io)?);
     }
     if num_ring_edabits_u64 > 0 {
-        pool.set_ring_edabits_u64(super::edabits::random_edabits_ring_lazy::<u64, _>(
-            num_ring_edabits_u64,
-            io,
-        )?);
+        pool.set_ring_edabits_u64(super::edabits::random_edabits_ring_lazy::<u64, _>(num_ring_edabits_u64, io)?);
     }
     if num_ring_edabits_u128 > 0 {
-        pool.set_ring_edabits_u128(super::edabits::random_edabits_ring_lazy::<u128, _>(
-            num_ring_edabits_u128,
-            io,
-        )?);
+        pool.set_ring_edabits_u128(super::edabits::random_edabits_ring_lazy::<u128, _>(num_ring_edabits_u128, io)?);
     }
     pool.save(dir)?;
     Ok(pool)
@@ -2490,16 +2245,10 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTra
 ) -> eyre::Result<()> {
     extend_pool_batched_base(pool, deficit_counts, deficit_dabits, io)?;
     if deficit_ring_edabits_u64 > 0 {
-        pool.set_ring_edabits_u64(super::edabits::random_edabits_ring_lazy::<u64, _>(
-            deficit_ring_edabits_u64,
-            io,
-        )?);
+        pool.set_ring_edabits_u64(super::edabits::random_edabits_ring_lazy::<u64, _>(deficit_ring_edabits_u64, io)?);
     }
     if deficit_ring_edabits_u128 > 0 {
-        pool.set_ring_edabits_u128(super::edabits::random_edabits_ring_lazy::<u128, _>(
-            deficit_ring_edabits_u128,
-            io,
-        )?);
+        pool.set_ring_edabits_u128(super::edabits::random_edabits_ring_lazy::<u128, _>(deficit_ring_edabits_u128, io)?);
     }
     Ok(())
 }
@@ -2518,28 +2267,16 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTra
 ) -> eyre::Result<()> {
     extend_pool_batched_base(pool, deficit_counts, deficit_dabits, io)?;
     if deficit_wrap_masks > 0 {
-        pool.set_wrap_masks(super::wrap_mask::generate_wrap_masks_lazy(
-            deficit_wrap_masks,
-            io.main(),
-        )?);
+        pool.set_wrap_masks(super::wrap_mask::generate_wrap_masks_lazy(deficit_wrap_masks, io.main())?);
     }
     if deficit_ring_edabits_u66 > 0 {
-        pool.set_ring_edabits_u66(super::edabits::random_edabits_ring_lazy::<U66, _>(
-            deficit_ring_edabits_u66,
-            io,
-        )?);
+        pool.set_ring_edabits_u66(super::edabits::random_edabits_ring_lazy::<U66, _>(deficit_ring_edabits_u66, io)?);
     }
     if deficit_ring_edabits_u64 > 0 {
-        pool.set_ring_edabits_u64(super::edabits::random_edabits_ring_lazy::<u64, _>(
-            deficit_ring_edabits_u64,
-            io,
-        )?);
+        pool.set_ring_edabits_u64(super::edabits::random_edabits_ring_lazy::<u64, _>(deficit_ring_edabits_u64, io)?);
     }
     if deficit_ring_edabits_u128 > 0 {
-        pool.set_ring_edabits_u128(super::edabits::random_edabits_ring_lazy::<u128, _>(
-            deficit_ring_edabits_u128,
-            io,
-        )?);
+        pool.set_ring_edabits_u128(super::edabits::random_edabits_ring_lazy::<u128, _>(deficit_ring_edabits_u128, io)?);
     }
     Ok(())
 }

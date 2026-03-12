@@ -30,16 +30,14 @@ declare_riscv_instr!(
 
 impl LB {
     fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LB as RISCVInstruction>::RAMAccess) {
-        cpu.x[self.operands.rd as usize] = match cpu
-            .mmu
-            .load(cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64)
-        {
-            Ok((byte, memory_read)) => {
-                *ram_access = memory_read;
-                byte as i8 as i64
-            }
-            Err(_) => panic!("MMU load error"),
-        };
+        cpu.x[self.operands.rd as usize] =
+            match cpu.mmu.load(cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64) {
+                Ok((byte, memory_read)) => {
+                    *ram_access = memory_read;
+                    byte as i8 as i64
+                }
+                Err(_) => panic!("MMU load error"),
+            };
     }
 }
 
@@ -59,11 +57,7 @@ impl RISCVTrace for LB {
     /// The byte is then sign-extended to fill the destination register.
     ///
     /// Different implementations for RV32 and RV64 due to different word sizes.
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         match xlen {
             Xlen::Bit32 => self.inline_sequence_32(allocator),
             #[cfg(feature = "rv64")]

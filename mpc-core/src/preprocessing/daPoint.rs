@@ -11,15 +11,15 @@
 
 use std::path::PathBuf;
 
+use crate::preprocessing::backing_store;
 use crate::protocols::rep3::PartyID;
 use crate::protocols::rep3::network::{IoContext, IoContextPool, Rep3Network, Rep3NetworkWorker};
-use crate::preprocessing::backing_store;
-use ark_ec::CurveGroup;
-use itertools::izip;
 use crate::protocols::rep3_ring::Rep3RingShare;
 use crate::protocols::rep3_ring::ring::bit::Bit;
 use crate::protocols::rep3_ring::ring::int_ring::IntRing2k;
 use crate::protocols::rep3_ring::ring::ring_impl::RingElement;
+use ark_ec::CurveGroup;
+use itertools::izip;
 use rand::Rng;
 
 // ---------------------------------------------------------------------------
@@ -101,20 +101,14 @@ impl<C: CurveGroup> LazyDaPoints<C> {
         );
 
         if n == 0 {
-            return Ok(DaPointsBatch {
-                gammas: Vec::new(),
-                alphas: Vec::new(),
-            });
+            return Ok(DaPointsBatch { gammas: Vec::new(), alphas: Vec::new() });
         }
 
         let start = self.cursor;
         let end = start + n;
 
-        let gammas = if self.party_id == PartyID::ID0 {
-            self.gammas[start..end].to_vec()
-        } else {
-            vec![Bit::new(false); n]
-        };
+        let gammas =
+            if self.party_id == PartyID::ID0 { self.gammas[start..end].to_vec() } else { vec![Bit::new(false); n] };
 
         let alphas = if self.party_id != PartyID::ID0 {
             let slice = self.alphas.as_slice();
@@ -203,10 +197,10 @@ mod tests {
     use super::*;
     use crate::protocols::rep3::pointshare::dot_product_dapoints;
     use crate::protocols::rep3::test_utils::run_rep3_local_test_with_coordinator;
+    use crate::protocols::rep3_ring::ring::ring_impl::RingElement;
     use ark_bn254::{Fr, G1Projective};
     use ark_std::UniformRand;
     use ark_std::Zero;
-    use crate::protocols::rep3_ring::ring::ring_impl::RingElement;
     use rand::RngCore;
     use rand::SeedableRng;
     use rand_chacha::ChaCha12Rng;
@@ -240,11 +234,7 @@ mod tests {
             let gamma = gammas_p0[i];
             let a1 = alphas_p1[i];
             let a2 = alphas_p2[i];
-            let expected = if gamma.convert() {
-                qs[i]
-            } else {
-                G1Projective::zero()
-            };
+            let expected = if gamma.convert() { qs[i] } else { G1Projective::zero() };
             assert_eq!(a1 + a2, expected, "A1[{i}] + A2[{i}] != gamma[{i}]*Q[{i}]");
         }
     }
@@ -270,46 +260,24 @@ mod tests {
 
         // Verify consistency: A1 + A2 == gamma * Q
         for i in 0..n {
-            let expected = if gammas_plain[i] {
-                qs[i]
-            } else {
-                G1Projective::zero()
-            };
+            let expected = if gammas_plain[i] { qs[i] } else { G1Projective::zero() };
             assert_eq!(a1_points[i] + a2_points[i], expected);
         }
 
         let bit_shares_per_item: Vec<[Rep3RingShare<Bit>; 3]> = bits_plain
             .iter()
-            .map(|&b| {
-                crate::protocols::rep3_ring::share_ring_element_binary(
-                    RingElement(Bit::new(b)),
-                    &mut rng,
-                )
-            })
+            .map(|&b| crate::protocols::rep3_ring::share_ring_element_binary(RingElement(Bit::new(b)), &mut rng))
             .collect();
 
-        let bits_by_party: [Vec<Rep3RingShare<Bit>>; 3] = std::array::from_fn(|pid| {
-            bit_shares_per_item
-                .iter()
-                .map(|s| s[pid])
-                .collect::<Vec<_>>()
-        });
+        let bits_by_party: [Vec<Rep3RingShare<Bit>>; 3] =
+            std::array::from_fn(|pid| bit_shares_per_item.iter().map(|s| s[pid]).collect::<Vec<_>>());
 
         // Build per-party batches
         let gammas_for_p0: Vec<Bit> = gammas_plain.iter().map(|&g| Bit::new(g)).collect();
         let batches: [DaPointsBatch<G1Projective>; 3] = [
-            DaPointsBatch {
-                gammas: gammas_for_p0,
-                alphas: vec![G1Projective::zero(); n],
-            },
-            DaPointsBatch {
-                gammas: vec![Bit::new(false); n],
-                alphas: a1_points.clone(),
-            },
-            DaPointsBatch {
-                gammas: vec![Bit::new(false); n],
-                alphas: a2_points.clone(),
-            },
+            DaPointsBatch { gammas: gammas_for_p0, alphas: vec![G1Projective::zero(); n] },
+            DaPointsBatch { gammas: vec![Bit::new(false); n], alphas: a1_points.clone() },
+            DaPointsBatch { gammas: vec![Bit::new(false); n], alphas: a2_points.clone() },
         ];
 
         let outs: [G1Projective; 3] = run_rep3_local_test_with_coordinator(
@@ -351,20 +319,11 @@ mod tests {
 
         let bit_shares_per_item: Vec<[Rep3RingShare<Bit>; 3]> = bits_plain
             .iter()
-            .map(|&b| {
-                crate::protocols::rep3_ring::share_ring_element_binary(
-                    RingElement(Bit::new(b)),
-                    &mut rng,
-                )
-            })
+            .map(|&b| crate::protocols::rep3_ring::share_ring_element_binary(RingElement(Bit::new(b)), &mut rng))
             .collect();
 
-        let bits_by_party: [Vec<Rep3RingShare<Bit>>; 3] = std::array::from_fn(|pid| {
-            bit_shares_per_item
-                .iter()
-                .map(|s| s[pid])
-                .collect::<Vec<_>>()
-        });
+        let bits_by_party: [Vec<Rep3RingShare<Bit>>; 3] =
+            std::array::from_fn(|pid| bit_shares_per_item.iter().map(|s| s[pid]).collect::<Vec<_>>());
 
         let outs: [G1Projective; 3] = run_rep3_local_test_with_coordinator(
             1,
@@ -399,20 +358,11 @@ mod tests {
 
         let bit_shares_per_item: Vec<[Rep3RingShare<Bit>; 3]> = bits_plain
             .iter()
-            .map(|&b| {
-                crate::protocols::rep3_ring::share_ring_element_binary(
-                    RingElement(Bit::new(b)),
-                    &mut rng,
-                )
-            })
+            .map(|&b| crate::protocols::rep3_ring::share_ring_element_binary(RingElement(Bit::new(b)), &mut rng))
             .collect();
 
-        let bits_by_party: [Vec<Rep3RingShare<Bit>>; 3] = std::array::from_fn(|pid| {
-            bit_shares_per_item
-                .iter()
-                .map(|s| s[pid])
-                .collect::<Vec<_>>()
-        });
+        let bits_by_party: [Vec<Rep3RingShare<Bit>>; 3] =
+            std::array::from_fn(|pid| bit_shares_per_item.iter().map(|s| s[pid]).collect::<Vec<_>>());
 
         let outs: [G1Projective; 3] = run_rep3_local_test_with_coordinator(
             1,
@@ -428,11 +378,7 @@ mod tests {
         .0;
 
         let rec = outs[0] + outs[1] + outs[2];
-        assert_eq!(
-            rec,
-            G1Projective::zero(),
-            "all-zero bits should give identity"
-        );
+        assert_eq!(rec, G1Projective::zero(), "all-zero bits should give identity");
     }
 
     #[test]
@@ -445,20 +391,11 @@ mod tests {
 
         let bit_shares_per_item: Vec<[Rep3RingShare<Bit>; 3]> = bits_plain
             .iter()
-            .map(|&b| {
-                crate::protocols::rep3_ring::share_ring_element_binary(
-                    RingElement(Bit::new(b)),
-                    &mut rng,
-                )
-            })
+            .map(|&b| crate::protocols::rep3_ring::share_ring_element_binary(RingElement(Bit::new(b)), &mut rng))
             .collect();
 
-        let bits_by_party: [Vec<Rep3RingShare<Bit>>; 3] = std::array::from_fn(|pid| {
-            bit_shares_per_item
-                .iter()
-                .map(|s| s[pid])
-                .collect::<Vec<_>>()
-        });
+        let bits_by_party: [Vec<Rep3RingShare<Bit>>; 3] =
+            std::array::from_fn(|pid| bit_shares_per_item.iter().map(|s| s[pid]).collect::<Vec<_>>());
 
         let outs: [G1Projective; 3] = run_rep3_local_test_with_coordinator(
             1,

@@ -24,10 +24,7 @@ impl<T: IntRing2k> Default for Rep3RingShare<T> {
 impl<T: IntRing2k> Rep3RingShare<T> {
     /// Constructs the type from two additive shares.
     pub fn new(a: T, b: T) -> Self {
-        Self {
-            a: RingElement(a),
-            b: RingElement(b),
-        }
+        Self { a: RingElement(a), b: RingElement(b) }
     }
 
     /// Constructs a new share from two ring elements
@@ -37,10 +34,7 @@ impl<T: IntRing2k> Rep3RingShare<T> {
 
     /// Constructs a zero share.
     pub fn zero_share() -> Self {
-        Self {
-            a: RingElement::zero(),
-            b: RingElement::zero(),
-        }
+        Self { a: RingElement::zero(), b: RingElement::zero() }
     }
 
     /// Unwraps the type into two additive shares.
@@ -78,10 +72,7 @@ impl<T: IntRing2k> Rep3RingShare<T> {
     {
         assert!(T::K >= U::K);
 
-        Rep3RingShare {
-            a: RingElement(self.a.0.as_()),
-            b: RingElement(self.b.0.as_()),
-        }
+        Rep3RingShare { a: RingElement(self.a.0.as_()), b: RingElement(self.b.0.as_()) }
     }
 
     pub fn is_even(&self) -> Rep3RingShare<Bit> {
@@ -112,10 +103,7 @@ impl<T: IntRing2k> Rep3RingShare<T> {
             b_bytes[i] = byte_share.b.0;
         }
 
-        Self {
-            a: RingElement(T::from_le_bytes(&a_bytes)),
-            b: RingElement(T::from_le_bytes(&b_bytes)),
-        }
+        Self { a: RingElement(T::from_le_bytes(&a_bytes)), b: RingElement(T::from_le_bytes(&b_bytes)) }
     }
 }
 
@@ -143,20 +131,14 @@ impl<T: IntRing2k> std::ops::Add for Rep3RingShare<T> {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
-        Rep3RingShare {
-            a: self.a + rhs.a,
-            b: self.b + rhs.b,
-        }
+        Rep3RingShare { a: self.a + rhs.a, b: self.b + rhs.b }
     }
 }
 impl<T: IntRing2k> std::ops::Add<&Rep3RingShare<T>> for &'_ Rep3RingShare<T> {
     type Output = Rep3RingShare<T>;
 
     fn add(self, rhs: &Rep3RingShare<T>) -> Self::Output {
-        Rep3RingShare {
-            a: self.a + rhs.a,
-            b: self.b + rhs.b,
-        }
+        Rep3RingShare { a: self.a + rhs.a, b: self.b + rhs.b }
     }
 }
 
@@ -178,10 +160,7 @@ impl<T: IntRing2k> std::ops::Sub for Rep3RingShare<T> {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        Rep3RingShare {
-            a: self.a - rhs.a,
-            b: self.b - rhs.b,
-        }
+        Rep3RingShare { a: self.a - rhs.a, b: self.b - rhs.b }
     }
 }
 
@@ -189,10 +168,7 @@ impl<T: IntRing2k> std::ops::Sub<&Rep3RingShare<T>> for &'_ Rep3RingShare<T> {
     type Output = Rep3RingShare<T>;
 
     fn sub(self, rhs: &Rep3RingShare<T>) -> Self::Output {
-        Rep3RingShare {
-            a: self.a - rhs.a,
-            b: self.b - rhs.b,
-        }
+        Rep3RingShare { a: self.a - rhs.a, b: self.b - rhs.b }
     }
 }
 
@@ -216,10 +192,7 @@ impl<T: IntRing2k> std::ops::Mul<RingElement<T>> for Rep3RingShare<T> {
     type Output = Rep3RingShare<T>;
 
     fn mul(self, rhs: RingElement<T>) -> Self::Output {
-        Self::Output {
-            a: self.a * rhs,
-            b: self.b * rhs,
-        }
+        Self::Output { a: self.a * rhs, b: self.b * rhs }
     }
 }
 
@@ -227,10 +200,7 @@ impl<T: IntRing2k> std::ops::Mul<RingElement<T>> for &Rep3RingShare<T> {
     type Output = Rep3RingShare<T>;
 
     fn mul(self, rhs: RingElement<T>) -> Self::Output {
-        Self::Output {
-            a: self.a * rhs,
-            b: self.b * rhs,
-        }
+        Self::Output { a: self.a * rhs, b: self.b * rhs }
     }
 }
 
@@ -254,25 +224,17 @@ impl<T: IntRing2k> std::ops::Neg for Rep3RingShare<T> {
     type Output = Rep3RingShare<T>;
 
     fn neg(self) -> Self::Output {
-        Rep3RingShare {
-            a: -self.a,
-            b: -self.b,
-        }
+        Rep3RingShare { a: -self.a, b: -self.b }
     }
 }
 
 impl<T: IntRing2k> ark_ff::Zero for Rep3RingShare<T> {
     fn zero() -> Self {
-        Self {
-            a: RingElement::zero(),
-            b: RingElement::zero(),
-        }
+        Self { a: RingElement::zero(), b: RingElement::zero() }
     }
 
     fn is_zero(&self) -> bool {
-        panic!(
-            "is_zero is not a meaningful operation for Rep3PrimeFieldShare, use interative zero check instead"
-        );
+        panic!("is_zero is not a meaningful operation for Rep3PrimeFieldShare, use interative zero check instead");
     }
 }
 
@@ -282,10 +244,7 @@ impl<T: IntRing2k> std::ops::BitXor for Rep3RingShare<T> {
     type Output = Rep3RingShare<T>;
 
     fn bitxor(self, rhs: Self) -> Self::Output {
-        Self::Output {
-            a: self.a ^ rhs.a,
-            b: self.b ^ rhs.b,
-        }
+        Self::Output { a: self.a ^ rhs.a, b: self.b ^ rhs.b }
     }
 }
 
@@ -293,10 +252,7 @@ impl<T: IntRing2k> std::ops::BitXor<&Rep3RingShare<T>> for &'_ Rep3RingShare<T> 
     type Output = Rep3RingShare<T>;
 
     fn bitxor(self, rhs: &Rep3RingShare<T>) -> Self::Output {
-        Self::Output {
-            a: self.a ^ rhs.a,
-            b: self.b ^ rhs.b,
-        }
+        Self::Output { a: self.a ^ rhs.a, b: self.b ^ rhs.b }
     }
 }
 
@@ -304,10 +260,7 @@ impl<T: IntRing2k> std::ops::BitXor<RingElement<T>> for Rep3RingShare<T> {
     type Output = Rep3RingShare<T>;
 
     fn bitxor(self, rhs: RingElement<T>) -> Self::Output {
-        Self::Output {
-            a: self.a ^ rhs,
-            b: self.b ^ rhs,
-        }
+        Self::Output { a: self.a ^ rhs, b: self.b ^ rhs }
     }
 }
 
@@ -315,10 +268,7 @@ impl<T: IntRing2k> std::ops::BitXor<&RingElement<T>> for &Rep3RingShare<T> {
     type Output = Rep3RingShare<T>;
 
     fn bitxor(self, rhs: &RingElement<T>) -> Self::Output {
-        Self::Output {
-            a: self.a ^ rhs,
-            b: self.b ^ rhs,
-        }
+        Self::Output { a: self.a ^ rhs, b: self.b ^ rhs }
     }
 }
 
@@ -354,10 +304,7 @@ impl<T: IntRing2k> std::ops::BitAnd<RingElement<T>> for Rep3RingShare<T> {
     type Output = Rep3RingShare<T>;
 
     fn bitand(self, rhs: RingElement<T>) -> Self::Output {
-        Rep3RingShare {
-            a: self.a & rhs,
-            b: self.b & rhs,
-        }
+        Rep3RingShare { a: self.a & rhs, b: self.b & rhs }
     }
 }
 
@@ -365,10 +312,7 @@ impl<T: IntRing2k> std::ops::BitAnd<&RingElement<T>> for &Rep3RingShare<T> {
     type Output = Rep3RingShare<T>;
 
     fn bitand(self, rhs: &RingElement<T>) -> Self::Output {
-        Rep3RingShare {
-            a: self.a & rhs,
-            b: self.b & rhs,
-        }
+        Rep3RingShare { a: self.a & rhs, b: self.b & rhs }
     }
 }
 
@@ -413,10 +357,7 @@ impl<T: IntRing2k> std::ops::Shl<usize> for Rep3RingShare<T> {
     type Output = Self;
 
     fn shl(self, rhs: usize) -> Self::Output {
-        Rep3RingShare {
-            a: self.a << rhs,
-            b: self.b << rhs,
-        }
+        Rep3RingShare { a: self.a << rhs, b: self.b << rhs }
     }
 }
 
@@ -424,10 +365,7 @@ impl<T: IntRing2k> std::ops::Shl<usize> for &Rep3RingShare<T> {
     type Output = Rep3RingShare<T>;
 
     fn shl(self, rhs: usize) -> Self::Output {
-        Rep3RingShare {
-            a: self.a << rhs,
-            b: self.b << rhs,
-        }
+        Rep3RingShare { a: self.a << rhs, b: self.b << rhs }
     }
 }
 
@@ -435,10 +373,7 @@ impl<T: IntRing2k> std::ops::Shr<usize> for Rep3RingShare<T> {
     type Output = Rep3RingShare<T>;
 
     fn shr(self, rhs: usize) -> Self::Output {
-        Rep3RingShare {
-            a: self.a >> rhs,
-            b: self.b >> rhs,
-        }
+        Rep3RingShare { a: self.a >> rhs, b: self.b >> rhs }
     }
 }
 
@@ -446,10 +381,7 @@ impl<T: IntRing2k> std::ops::Shr<usize> for &Rep3RingShare<T> {
     type Output = Rep3RingShare<T>;
 
     fn shr(self, rhs: usize) -> Self::Output {
-        Rep3RingShare {
-            a: self.a >> rhs,
-            b: self.b >> rhs,
-        }
+        Rep3RingShare { a: self.a >> rhs, b: self.b >> rhs }
     }
 }
 
@@ -457,10 +389,7 @@ impl<T: IntRing2k> std::ops::Not for Rep3RingShare<T> {
     type Output = Self;
 
     fn not(self) -> Self::Output {
-        Rep3RingShare {
-            a: !self.a,
-            b: !self.b,
-        }
+        Rep3RingShare { a: !self.a, b: !self.b }
     }
 }
 
@@ -468,10 +397,6 @@ impl<T: IntRing2k> std::ops::Not for &Rep3RingShare<T> {
     type Output = Rep3RingShare<T>;
 
     fn not(self) -> Self::Output {
-        Rep3RingShare {
-            a: !self.a,
-            b: !self.b,
-        }
+        Rep3RingShare { a: !self.a, b: !self.b }
     }
 }
-

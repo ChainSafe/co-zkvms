@@ -26,12 +26,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let poly1 = ArkworksPolynomial::new(coeffs_poly1.clone());
     let poly2 = ArkworksPolynomial::new(coeffs_poly2.clone());
 
-    let commitment1 = poly1
-        .commit::<BN254, Transparent, G1Routines>(2, 2, &prover_setup)
-        .unwrap();
-    let commitment2 = poly2
-        .commit::<BN254, Transparent, G1Routines>(1, 1, &prover_setup)
-        .unwrap();
+    let commitment1 = poly1.commit::<BN254, Transparent, G1Routines>(2, 2, &prover_setup).unwrap();
+    let commitment2 = poly2.commit::<BN254, Transparent, G1Routines>(1, 1, &prover_setup).unwrap();
 
     let coeff_scalars = [ArkFr::random(), ArkFr::random()];
 
@@ -72,9 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let eval1 = poly1.evaluate(&point);
     let eval2 = padded_poly2.evaluate(&point);
-    let eval3 = poly2.evaluate(&[point[0], point[2]])
-        * (ArkFr::one() - point[1])
-        * (ArkFr::one() - point[3]);
+    let eval3 = poly2.evaluate(&[point[0], point[2]]) * (ArkFr::one() - point[1]) * (ArkFr::one() - point[3]);
     assert_eq!(eval3, eval2);
     let mut expected = ArkFr::zero();
     expected = expected + coeff_scalars[0].mul(&eval1);
@@ -103,9 +97,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &mut verifier_transcript,
     )?;
 
-    let padded_poly_commitment = padded_poly2
-        .commit::<BN254, Transparent, G1Routines>(2, 2, &prover_setup)
-        .unwrap();
+    let padded_poly_commitment = padded_poly2.commit::<BN254, Transparent, G1Routines>(2, 2, &prover_setup).unwrap();
     assert_eq!(padded_poly_commitment.0, commitment2.0);
 
     Ok(())

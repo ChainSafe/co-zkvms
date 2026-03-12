@@ -54,11 +54,7 @@ pub trait Valid {
 /// Serializer in little endian format.
 pub trait DorySerialize {
     /// Serialize with customization flags.
-    fn serialize_with_mode<W: Write>(
-        &self,
-        writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError>;
+    fn serialize_with_mode<W: Write>(&self, writer: W, compress: Compress) -> Result<(), SerializationError>;
 
     /// Returns the serialized size in bytes for the given compression mode.
     fn serialized_size(&self, compress: Compress) -> usize;
@@ -192,11 +188,7 @@ mod primitive_impls {
     }
 
     impl DorySerialize for usize {
-        fn serialize_with_mode<W: Write>(
-            &self,
-            mut writer: W,
-            _compress: Compress,
-        ) -> Result<(), SerializationError> {
+        fn serialize_with_mode<W: Write>(&self, mut writer: W, _compress: Compress) -> Result<(), SerializationError> {
             writer.write_all(&(*self as u64).to_le_bytes())?;
             Ok(())
         }
@@ -225,11 +217,7 @@ mod primitive_impls {
     }
 
     impl DorySerialize for bool {
-        fn serialize_with_mode<W: Write>(
-            &self,
-            mut writer: W,
-            _compress: Compress,
-        ) -> Result<(), SerializationError> {
+        fn serialize_with_mode<W: Write>(&self, mut writer: W, _compress: Compress) -> Result<(), SerializationError> {
             writer.write_all(&[*self as u8])?;
             Ok(())
         }
@@ -250,9 +238,7 @@ mod primitive_impls {
             match byte[0] {
                 0 => Ok(false),
                 1 => Ok(true),
-                _ => Err(SerializationError::InvalidData(
-                    "Invalid bool value".to_string(),
-                )),
+                _ => Err(SerializationError::InvalidData("Invalid bool value".to_string())),
             }
         }
     }
@@ -267,11 +253,7 @@ mod primitive_impls {
     }
 
     impl<T: DorySerialize> DorySerialize for Vec<T> {
-        fn serialize_with_mode<W: Write>(
-            &self,
-            mut writer: W,
-            compress: Compress,
-        ) -> Result<(), SerializationError> {
+        fn serialize_with_mode<W: Write>(&self, mut writer: W, compress: Compress) -> Result<(), SerializationError> {
             (self.len() as u64).serialize_with_mode(&mut writer, compress)?;
             for item in self {
                 item.serialize_with_mode(&mut writer, compress)?;

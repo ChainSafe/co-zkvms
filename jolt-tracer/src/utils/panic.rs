@@ -65,22 +65,14 @@ pub fn resolve_frame(loader: &addr2line::Loader, frame: &CallFrame) -> Option<Re
         }
 
         if let Some((name, location)) = primary_frame {
-            return Some(ResolvedFrame {
-                function_name: name,
-                location,
-                inlined_frames: inlined,
-            });
+            return Some(ResolvedFrame { function_name: name, location, inlined_frames: inlined });
         }
     }
 
     // Fallback to just symbol name
     if let Some(sym_name) = loader.find_symbol(addr) {
         let demangled = addr2line::demangle_auto(std::borrow::Cow::Borrowed(sym_name), None);
-        return Some(ResolvedFrame {
-            function_name: demangled.to_string(),
-            location: None,
-            inlined_frames: vec![],
-        });
+        return Some(ResolvedFrame { function_name: demangled.to_string(), location: None, inlined_frames: vec![] });
     }
 
     None
@@ -124,17 +116,11 @@ pub fn display_panic_backtrace(emulator_state: &EmulatorState) {
 
     if call_stack.is_empty() || emulator_state.elf_path.is_none() {
         println!("  <no backtrace available>");
-        println!(
-            "note: run `trace_and_analyze` with `JOLT_BACKTRACE=1` environment variable to enable backtraces"
-        );
+        println!("note: run `trace_and_analyze` with `JOLT_BACKTRACE=1` environment variable to enable backtraces");
         return;
     }
 
-    let loader = match emulator_state
-        .elf_path
-        .as_ref()
-        .and_then(|path| addr2line::Loader::new(path).ok())
-    {
+    let loader = match emulator_state.elf_path.as_ref().and_then(|path| addr2line::Loader::new(path).ok()) {
         Some(loader) => loader,
         None => {
             println!("  <failed to load symbols>");
@@ -146,8 +132,7 @@ pub fn display_panic_backtrace(emulator_state: &EmulatorState) {
     let panic_info = if !call_stack.is_empty() && emulator_state.elf_path.is_some() {
         if let Ok(loader) = addr2line::Loader::new(emulator_state.elf_path.as_ref().unwrap()) {
             let last_frame = call_stack.back().unwrap();
-            resolve_frame(&loader, last_frame)
-                .map(|resolved| (resolved.function_name, resolved.location))
+            resolve_frame(&loader, last_frame).map(|resolved| (resolved.function_name, resolved.location))
         } else {
             None
         }
@@ -156,18 +141,12 @@ pub fn display_panic_backtrace(emulator_state: &EmulatorState) {
     };
 
     if let Some((func, Some(loc))) = &panic_info {
-        println!(
-            "Guest Program panicked in \"{}\" at \"{}\"",
-            func,
-            loc.fmt_short()
-        );
+        println!("Guest Program panicked in \"{}\" at \"{}\"", func, loc.fmt_short());
     }
 
     println!("stack backtrace:");
 
-    let full_backtrace = std::env::var("JOLT_BACKTRACE")
-        .map(|v| v.eq_ignore_ascii_case("full"))
-        .unwrap_or(false);
+    let full_backtrace = std::env::var("JOLT_BACKTRACE").map(|v| v.eq_ignore_ascii_case("full")).unwrap_or(false);
 
     for (frame_num, frame) in call_stack.iter().rev().enumerate() {
         print!("{:4}: {:#08x} - ", frame_num, frame.call_site);
@@ -184,9 +163,7 @@ pub fn display_panic_backtrace(emulator_state: &EmulatorState) {
     }
 
     if panic_info.is_none() {
-        println!(
-            "note: run with `JOLT_BACKTRACE=1` environment variable to symbolize the backtrace"
-        );
+        println!("note: run with `JOLT_BACKTRACE=1` environment variable to symbolize the backtrace");
     } else if !full_backtrace {
         println!("note: run with `JOLT_BACKTRACE=full` environment variable to display extended emulator state info");
     }

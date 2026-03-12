@@ -27,8 +27,7 @@ impl<const XLEN: usize> JoltLookupTable for XorTable<XLEN> {
         for i in 0..XLEN {
             let x_i = r[2 * i];
             let y_i = r[2 * i + 1];
-            result += F::from_u64(1u64 << (XLEN - 1 - i))
-                * ((F::one() - x_i) * y_i + x_i * (F::one() - y_i));
+            result += F::from_u64(1u64 << (XLEN - 1 - i)) * ((F::one() - x_i) * y_i + x_i * (F::one() - y_i));
         }
         result
     }

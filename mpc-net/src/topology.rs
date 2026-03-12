@@ -1,16 +1,13 @@
 use std::collections::BTreeMap;
 
+use crate::id::PartyID;
 use crate::Result;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use crate::id::PartyID;
 use serde::{de::DeserializeOwned, Serialize};
 
 pub trait MpcStarNetCoordinator: Sized {
-    fn receive_responses<T: CanonicalSerialize + CanonicalDeserialize>(&mut self)
-        -> Result<Vec<T>>;
-    fn receive_responses_from_subnets<T: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-    ) -> Result<Vec<Vec<T>>>;
+    fn receive_responses<T: CanonicalSerialize + CanonicalDeserialize>(&mut self) -> Result<Vec<T>>;
+    fn receive_responses_from_subnets<T: CanonicalSerialize + CanonicalDeserialize>(&mut self) -> Result<Vec<Vec<T>>>;
     fn receive_response<T: CanonicalSerialize + CanonicalDeserialize>(
         &mut self,
         party_id: PartyID,
@@ -20,29 +17,17 @@ pub trait MpcStarNetCoordinator: Sized {
         &mut self,
         party_id: PartyID,
     ) -> Result<Vec<T>>;
-    fn broadcast_request<T: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-        data: T,
-    ) -> Result<()>;
-    fn send_requests<T: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-        data: Vec<T>,
-    ) -> Result<()>;
+    fn broadcast_request<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: T) -> Result<()>;
+    fn send_requests<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: Vec<T>) -> Result<()>;
     fn send_request_to_workers<T: CanonicalSerialize + CanonicalDeserialize + Clone>(
         &mut self,
         party_id: PartyID,
         data: T,
     ) -> Result<()>;
 
-    fn send_requests_to_workers<T: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-        data: Vec<T>,
-    ) -> Result<()>;
+    fn send_requests_to_workers<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: Vec<T>) -> Result<()>;
 
-    fn send_requests_blocking<T: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-        data: Vec<T>,
-    ) -> Result<()>;
+    fn send_requests_blocking<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: Vec<T>) -> Result<()>;
 
     fn send_request<T: CanonicalSerialize + CanonicalDeserialize>(
         &mut self,
@@ -69,10 +54,7 @@ pub trait MpcStarNetCoordinator: Sized {
 }
 
 pub trait MpcStarNetWorker: Sized + Clone {
-    fn send_response<T: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-        data: T,
-    ) -> Result<()>;
+    fn send_response<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: T) -> Result<()>;
     fn receive_request<T: CanonicalSerialize + CanonicalDeserialize>(&mut self) -> Result<T>;
 
     fn log_num_workers(&self) -> usize;
