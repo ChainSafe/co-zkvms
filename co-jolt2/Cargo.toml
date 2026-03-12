@@ -88,6 +88,12 @@ required-features = ["test-utils"]
 name = "fwht"
 harness = false
 
+[[bench]]
+name = "dory_commit"
+harness = false
+required-features = ["ring-msm"]
+
+
 [features]
 default = ["std", "debug", "zk"]
 std = [

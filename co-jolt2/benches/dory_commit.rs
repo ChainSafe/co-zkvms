@@ -23,6 +23,7 @@ const N: usize = 1 << 18;
 const ITERS: usize = 10;
 const WARMUP: usize = 3;
 
+#[cfg(feature = "ring-msm")]
 fn main() {
     let mut rng = ChaCha12Rng::seed_from_u64(0);
 
@@ -42,10 +43,8 @@ fn main() {
 
     // Generate ring-share polynomials (arith + bin, one per party)
     use jolt_common::constants::{ArithmeticWideInt, XlenInt};
-    let all_arith: Vec<_> = values
-        .iter()
-        .map(|&v| rep3_ring::share_ring_element(RingElement(v as ArithmeticWideInt), &mut rng))
-        .collect();
+    let all_arith: Vec<_> =
+        values.iter().map(|&v| rep3_ring::share_ring_element(RingElement(v as ArithmeticWideInt), &mut rng)).collect();
     let all_bin: Vec<_> =
         values.iter().map(|&v| rep3_ring::share_ring_element_binary(RingElement(v as XlenInt), &mut rng)).collect();
     let polys_u64: [Rep3MultilinearPolynomial<Fr>; 3] = std::array::from_fn(|pid| {
