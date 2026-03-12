@@ -1,6 +1,6 @@
-.artifacts/
-.traces/
-.preprocessing/
+.artifacts*
+.traces*
+.preprocessing*
 
 
 /examples/*.toml

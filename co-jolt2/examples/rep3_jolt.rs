@@ -1,4 +1,6 @@
+use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::time::Duration;
 
 #[cfg(feature = "tracy-mem")]
 #[global_allocator]
@@ -10,18 +12,19 @@ static GLOBAL: tracy_client::ProfiledAllocator<tikv_jemallocator::Jemalloc> =
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 use ark_bn254::Fr;
-use ark_std::test_rng;
+use ark_serialize::CanonicalDeserialize;
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
 use mpc_net::config::{NetworkConfig, NetworkConfigFile};
 use mpc_net::rep3::quic::{Rep3QuicMpcNetWorker, Rep3QuicNetCoordinator};
+use mpc_net::rep3::tls::worker_listener::TlsWorkerListener;
 use mpc_net::topology::{MpcStarNetCoordinator, MpcStarNetWorker};
 use serde::{Deserialize, Serialize};
 use tracing::{info, info_span, trace_span, warn};
 
+use co_jolt2::client::ProvingClient;
 use co_jolt2::host::jolt_device::Rep3ProgramIOInput;
 use co_jolt2::host::memory::Rep3Memory;
-use co_jolt2::host::program::Rep3Program;
 use co_jolt2::utils::compute_ram_k;
 use co_jolt2::utils::memory::start_jemalloc_monitor;
 use co_jolt2::utils::tracing::init_tracing_bench;
@@ -29,14 +32,19 @@ use co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget;
 use co_jolt2::zkvm::instruction::Rep3Cycle;
 use co_jolt2::zkvm::JoltArch;
 use co_jolt2::zkvm::Rep3JoltWorker;
-use co_jolt_coordinator::zkvm::Rep3Jolt;
+use co_jolt_coordinator::proving::coordinate_once;
+use co_jolt_coordinator::transport::ephemeral_identity::EphemeralIdentity;
+use co_jolt_coordinator::transport::tcp_tls::TcpTlsCoordinator;
+use co_jolt_coordinator::types::ProofRequest;
 use jolt_core::host::Program;
+use jolt_core::curve::Bn254Curve;
 use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
 use jolt_core::transcripts::Blake2bTranscript;
 use jolt_core::zkvm::bytecode::BytecodePreprocessing;
 use jolt_core::zkvm::dag::jolt_dag::JoltDAG;
 use jolt_core::zkvm::dag::state_manager::StateManager as VanillaStateManager;
 use jolt_core::zkvm::ram::RAMPreprocessing;
+use jolt_core::zkvm::Jolt;
 use jolt_core::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials, DTH_ROOT_OF_K};
 use jolt_core::zkvm::{JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing, JoltVerifierPreprocessing};
 use mpc_core::protocols::rep3::network::IoContextPool;
@@ -251,12 +259,79 @@ fn build_inputs(num_iters: u32) -> Vec<u8> {
     inputs
 }
 
+fn worker_addrs() -> [SocketAddr; 3] {
+    let base_port: u16 = std::env::var("USER_LISTEN_BASE_PORT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(30000);
+
+    [
+        SocketAddr::from(([127, 0, 0, 1], base_port)),
+        SocketAddr::from(([127, 0, 0, 1], base_port + 1)),
+        SocketAddr::from(([127, 0, 0, 1], base_port + 2)),
+    ]
+}
+
+fn connect_client_with_retry(worker_addrs: [SocketAddr; 3]) -> eyre::Result<ProvingClient> {
+    let attempts = 50;
+    let delay = Duration::from_millis(200);
+    let mut last_err = None;
+
+    for _ in 0..attempts {
+        match ProvingClient::connect(worker_addrs) {
+            Ok(client) => return Ok(client),
+            Err(err) => {
+                last_err = Some(err);
+                std::thread::sleep(delay);
+            }
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| eyre::eyre!("failed to connect to workers")))
+}
+
 fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     let file = format!("trace_coordinator_sha2-chain-{}_{}CPU.json", args.num_iters, num_cpus::get(),);
     let _tracing_guard = init_tracing_bench(&file, &args.trace_dir);
 
-    info!("creating coordinator network");
-    let mut network = Rep3QuicNetCoordinator::new(config, 0)?;
+    if args.preprocess_only.unwrap_or(false) {
+        return Err(eyre::eyre!("--preprocess-only is not supported by rep3_jolt.rs after the client/worker split"));
+    }
+    if args.repeat_proofs > 1 {
+        return Err(eyre::eyre!("--repeat-proofs is not supported by rep3_jolt.rs after the client/worker split"));
+    }
+
+    let worker_addrs = worker_addrs();
+    info!(?worker_addrs, "connecting proving client to workers");
+    let num_iters = args.num_iters;
+    let proof_thread = std::thread::spawn(move || -> eyre::Result<Vec<u8>> {
+        let mut client = connect_client_with_retry(worker_addrs)?;
+        let mut program = build_program();
+        let inputs = build_inputs(num_iters);
+        client.delegate(&mut program, &inputs, &[], &[])
+    });
+
+    let coordinator_protocol = config
+        .coordinator
+        .as_ref()
+        .map(|coordinator| coordinator.protocol)
+        .unwrap_or_default();
+    match coordinator_protocol {
+        mpc_net::config::CoordinatorProtocol::Quic => {
+            info!("creating QUIC coordinator network");
+            let mut network = Rep3QuicNetCoordinator::new(config, 0)?;
+            coordinate_once(&mut network)?;
+        }
+        mpc_net::config::CoordinatorProtocol::Tls => {
+            info!("creating TLS coordinator network");
+            let identity = EphemeralIdentity::generate().context("generating coordinator TLS identity")?;
+            let mut network = TcpTlsCoordinator::accept(config.bind_addr, &identity, None)
+                .context("accepting TLS coordinator connections")?;
+            coordinate_once(&mut network)?;
+        }
+    }
+    let proof_bytes = proof_thread.join().map_err(|_| eyre::eyre!("proving client thread panicked"))??;
+    info!(proof_len = proof_bytes.len(), "received proof bytes from worker relay");
 
     let mut program = build_program();
     let inputs = build_inputs(args.num_iters);
@@ -264,8 +339,6 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
 
     info!("tracing guest program");
     let (mut vanilla_trace, _memory, mut io_device) = program.trace(&inputs, &[], &[]);
-
-    // Match Jolt's public I/O normalization before proving / verifying.
     io_device.outputs.truncate(io_device.outputs.iter().rposition(|&b| b != 0).map_or(0, |pos| pos + 1));
 
     let padded_len = (vanilla_trace.len() + 1).next_power_of_two();
@@ -280,70 +353,12 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     let ram_k = compute_ram_k(&vanilla_trace, &shared);
     info!(ram_k, "computed ram_K");
 
-    if args.preprocess_only.unwrap_or(false) {
-        let budget = compute_edabit_budget(padded_len);
-        let pp = PreprocPayload {
-            trace_len: padded_len,
-            edabit_counts: [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
-            dabits: budget.dabits,
-        };
-        let msg = CoordToWorkerMsg::PreprocOnly(pp);
-        let payload = bincode::serialize(&msg).context("serializing PreprocOnly")?;
-        let worker_payloads = vec![payload; 3];
-        info!("preprocess-only: sending PreprocOnly to workers");
-        network.send_requests_blocking(worker_payloads).context("sending PreprocOnly payloads")?;
-        use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
-        network.sync_with_parties()?;
-        info!("preprocess-only: done");
-        return Ok(());
-    }
-
-    info!("generating trace shares");
-    let mut rng = test_rng();
-    let shares = program.generate_trace_shares(&inputs, &[], &[], &mut rng);
-
-    let preprocessing: JoltProverPreprocessing<F, PCS> = <JoltArch as Rep3JoltWorker<F, PCS, _>>::preprocess(
-        bytecode.clone(),
-        io_device.memory_layout.clone(),
-        memory_init.clone(),
-        padded_len,
-    );
+    let preprocessing: JoltProverPreprocessing<F, PCS> =
+        <JoltArch as Jolt<F, PCS, FS>>::prover_preprocess(bytecode, io_device.memory_layout.clone(), memory_init, padded_len);
     let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
 
-    let worker_payloads: Vec<Vec<u8>> = shares
-        .into_iter()
-        .map(|(trace, memory, program_io_share)| {
-            let payload = WorkerPayload {
-                trace,
-                memory,
-                program_io_share,
-                bytecode: bytecode.clone(),
-                memory_init: memory_init.clone(),
-                padded_len,
-                ram_k,
-            };
-            let msg = CoordToWorkerMsg::Full(payload);
-            bincode::serialize(&msg)
-        })
-        .collect::<bincode::Result<Vec<_>>>()
-        .context("serializing worker payloads")?;
-
-    network.send_requests_blocking(worker_payloads).context("sending worker payloads")?;
-
-    let _guard = (
-        DoryGlobals::initialize(DTH_ROOT_OF_K, padded_len),
-        AllCommittedPolynomials::initialize(compute_d_parameter(ram_k), preprocessing.shared.bytecode.d),
-    );
-
-    let proof = <JoltArch as Rep3Jolt<F, PCS, _>>::prove(
-        &verifier_preprocessing,
-        &preprocessing.generators,
-        io_device.clone(),
-        &mut network,
-        ram_k,
-        padded_len,
-    )?;
-    info!(proof_size = std::mem::size_of_val(&proof), "coordinator proof complete");
+    let proof: jolt_core::zkvm::dag::proof_serialization::JoltProof<F, Bn254Curve, PCS, FS> =
+        CanonicalDeserialize::deserialize_compressed(&proof_bytes[..]).context("deserializing proof")?;
 
     let twist_switch = proof.twist_sumcheck_switch_index;
     let verifier_program_io = JoltDevice {
@@ -372,151 +387,55 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     let file = format!("trace_party-{}_sha2-chain-{}_{}CPU.json", my_id, args.num_iters, num_cpus::get(),);
     let _tracing_guard = init_tracing_bench(&file, &args.trace_dir);
 
-    // Create worker network
+    if args.preprocess_only.unwrap_or(false) {
+        return Err(eyre::eyre!("--preprocess-only is not supported by rep3_jolt.rs after the client/worker split"));
+    }
+    if args.repeat_proofs > 1 {
+        return Err(eyre::eyre!("--repeat-proofs is not supported by rep3_jolt.rs after the client/worker split"));
+    }
+
+    let user_listen_addr =
+        config.user_listen_addr.ok_or_else(|| eyre::eyre!("worker config must have user_listen_addr"))?;
+    let user_listener =
+        TlsWorkerListener::bind(user_listen_addr, config.parties[my_id].cert.clone(), config.key.clone_key())?;
+    info!(%user_listen_addr, "TLS user listener started");
+
     info!("creating worker network");
-    let mut network = Rep3QuicMpcNetWorker::new(config, 0)?;
+    let network = Rep3QuicMpcNetWorker::new(config, 0)?;
+    let num_forks = args.network_forks;
+    let mut io_ctx = IoContextPool::init(network, num_forks)?;
 
-    if args.repeat_proofs > 1 && !cfg!(feature = "reuse-preproc") {
-        return Err(eyre::eyre!("--repeat-proofs > 1 requires building with --features reuse-preproc"));
-    }
+    info!("waiting for user connection...");
+    let mut user_conn = user_listener.accept()?;
+    info!(peer = %user_conn.peer_addr(), "accepted user connection");
 
-    // Receive initial request from coordinator.
-    info!("receiving request from coordinator");
-    let first_payload_bytes: Vec<u8> = network.receive_request()?;
-    let first_msg: CoordToWorkerMsg =
-        bincode::deserialize(&first_payload_bytes).context("deserializing coordinator message")?;
+    let payload_bytes = user_conn.recv()?;
+    let payload: WorkerPayload = bincode::deserialize(&payload_bytes).context("deserializing WorkerPayload")?;
 
-    if let CoordToWorkerMsg::PreprocOnly(pp) = first_msg {
-        // Wrap network in IoContextPool (required for preprocessing network rounds).
-        let num_forks = args.network_forks;
-        let mut io_ctx = IoContextPool::init(network, num_forks)?;
-        let party_id = io_ctx.party_id();
+    let WorkerPayload { mut trace, memory, program_io_share, bytecode, memory_init, padded_len, ram_k } = payload;
+    let trace_len = trace.len();
+    tracing::info!("trace length: {}", trace_len);
 
-        let _span = info_span!("preprocessing", party_id = io_ctx.party_idx()).entered();
-        let counts = pp.edabit_counts;
-        let num_dabits = pp.dabits;
-        log_preproc_size_estimates(counts, num_dabits);
-        #[cfg(feature = "ring-msm")]
-        let budget = {
-            use co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget;
-            compute_edabit_budget(pp.trace_len)
-        };
+    io_ctx.sync_with_coordinator()?;
 
-        {
-            let pool_dir = args.preproc_dir.join(format!("party_{}", my_id));
-            use mpc_core::protocols::rep3_ring::edabits;
-
-            let pool = match edabits::PreprocessingPool::load(&pool_dir, party_id) {
-                Ok(mut pool) => {
-                    let (rem_eda, rem_da) = pool.remaining_counts();
-                    let deficit_counts: [usize; 5] = std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
-                    let deficit_dabits = num_dabits.saturating_sub(rem_da);
-                    #[cfg(feature = "ring-msm")]
-                    let (deficit_wm, deficit_re) = (
-                        budget.wrap_masks.saturating_sub(pool.remaining_wrap_masks()),
-                        budget.ring_edabits_u66.saturating_sub(pool.remaining_ring_edabits_u66()),
-                    );
-
-                    let need_extend = deficit_counts.iter().any(|&d| d > 0) || deficit_dabits > 0;
-                    #[cfg(feature = "ring-msm")]
-                    let need_extend = need_extend || deficit_wm > 0 || deficit_re > 0;
-
-                    if need_extend {
-                        info!(
-                            "preprocess-only: extending pool: deficit edabits={:?}, dabits={}",
-                            deficit_counts, deficit_dabits
-                        );
-                        #[cfg(not(feature = "ring-msm"))]
-                        edabits::extend_pool_batched(
-                            &mut pool,
-                            deficit_counts,
-                            deficit_dabits,
-                            0,
-                            0,
-                            &mut io_ctx,
-                        )?;
-                        #[cfg(feature = "ring-msm")]
-                        edabits::extend_pool_batched(
-                            &mut pool,
-                            deficit_counts,
-                            deficit_dabits,
-                            deficit_wm,
-                            deficit_re,
-                            0,
-                            0,
-                            &mut io_ctx,
-                        )?;
-                        match pool.save(&pool_dir) {
-                            Ok(()) => info!("saved extended pool to {:?}", pool_dir),
-                            Err(e) => tracing::warn!("failed to save extended pool: {e}"),
-                        }
-                    } else {
-                        info!("preprocess-only: reusing preprocessing from {:?}", pool_dir);
-                    }
-                    pool
-                }
-                Err(e) => {
-                    info!("preprocess-only: no cached preprocessing ({e}); creating pool into {:?}", pool_dir);
-                    #[cfg(not(feature = "ring-msm"))]
-                    {
-                        edabits::preprocess_pool::<F, _>(
-                            &pool_dir,
-                            counts,
-                            num_dabits,
-                            0,
-                            0,
-                            &mut io_ctx,
-                        )?
-                    }
-                    #[cfg(feature = "ring-msm")]
-                    {
-                        edabits::preprocess_pool::<F, _>(
-                            &pool_dir,
-                            counts,
-                            num_dabits,
-                            budget.wrap_masks,
-                            budget.ring_edabits_u66,
-                            0,
-                            0,
-                            &mut io_ctx,
-                        )?
-                    }
-                }
-            };
-
-            io_ctx.sync_with_parties()?;
-            io_ctx.sync_with_coordinator()?;
-            let _drop_span = trace_span!("drop_preprocessing_pool").entered();
-            drop(pool);
-            return Ok(());
-        }
-    }
-
-    let CoordToWorkerMsg::Full(first_payload) = first_msg else {
-        unreachable!("handled PreprocOnly above");
-    };
-
-    let WorkerPayload {
-        trace: first_trace,
-        memory: first_memory,
-        program_io_share: first_program_io_share,
-        bytecode,
-        memory_init,
+    let proof_request = ProofRequest {
+        bytecode: bytecode.clone(),
+        memory_init: memory_init.clone(),
         padded_len,
         ram_k,
-    } = first_payload;
-    let mut first_trace = Some(first_trace);
-    let mut first_memory = Some(first_memory);
-    let mut first_program_io_share = Some(first_program_io_share);
-
-    let trace_len = first_trace.as_ref().expect("worker trace present").len();
-    tracing::info!("trace length: {}", trace_len);
+        memory_layout: program_io_share.memory_layout.clone(),
+        inputs: program_io_share.inputs.clone(),
+        outputs: program_io_share.outputs.clone(),
+        panic: program_io_share.panic,
+    };
+    let request_bytes = bincode::serialize(&proof_request).context("serializing ProofRequest")?;
+    io_ctx.network().send_response(request_bytes)?;
 
     // Build prover preprocessing
     info!("building preprocessing");
     let preprocessing: JoltProverPreprocessing<F, PCS> = <JoltArch as Rep3JoltWorker<F, PCS, _>>::preprocess(
         bytecode,
-        first_program_io_share.as_ref().expect("missing first program_io_share").memory_layout.clone(),
+        program_io_share.memory_layout.clone(),
         memory_init,
         padded_len,
     );
@@ -530,11 +449,6 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     let bytecode_d = preprocessing.shared.bytecode.d;
     let ram_d = compute_d_parameter(ram_k);
     let _poly_guard = AllCommittedPolynomials::initialize(ram_d, bytecode_d);
-
-    // Wrap network in IoContextPool
-    let num_forks = args.network_forks;
-
-    let mut io_ctx = IoContextPool::init(network, num_forks)?;
 
     // Preprocessing: create EdaBits pool for B2A conversions.
     //
@@ -566,20 +480,18 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                 let (rem_eda, rem_da) = pool.remaining_counts();
                 let deficit_counts: [usize; 5] = std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
                 let deficit_dabits = num_dabits.saturating_sub(rem_da);
-                let deficit_re64 = budget
-                    .ring_edabits_u64
-                    .saturating_sub(pool.remaining_ring_edabits_u64());
-                let deficit_re128 = budget
-                    .ring_edabits_u128
-                    .saturating_sub(pool.remaining_ring_edabits_u128());
+                let deficit_re64 = budget.ring_edabits_u64.saturating_sub(pool.remaining_ring_edabits_u64());
+                let deficit_re128 = budget.ring_edabits_u128.saturating_sub(pool.remaining_ring_edabits_u128());
                 #[cfg(feature = "ring-msm")]
                 let (deficit_wm, deficit_re) = (
                     budget.wrap_masks.saturating_sub(pool.remaining_wrap_masks()),
                     budget.ring_edabits_u66.saturating_sub(pool.remaining_ring_edabits_u66()),
                 );
 
-                let need_extend = deficit_counts.iter().any(|&d| d > 0) || deficit_dabits > 0
-                    || deficit_re64 > 0 || deficit_re128 > 0;
+                let need_extend = deficit_counts.iter().any(|&d| d > 0)
+                    || deficit_dabits > 0
+                    || deficit_re64 > 0
+                    || deficit_re128 > 0;
                 #[cfg(feature = "ring-msm")]
                 let need_extend = need_extend || deficit_wm > 0 || deficit_re > 0;
 
@@ -661,65 +573,35 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     }
     drop(_span);
 
-    if args.preprocess_only.unwrap_or(false) {
-        io_ctx.sync_with_parties()?;
-        let _drop_span = trace_span!("drop_preprocessing_pool").entered();
-        drop(preproc);
-        return Ok(());
+    trace.resize(padded_len, Rep3Cycle::NoOp);
+
+    info!("starting worker prove");
+    <JoltArch as Rep3JoltWorker<F, PCS, _>>::prove(
+        &preprocessing,
+        trace,
+        program_io_share,
+        memory,
+        &mut io_ctx,
+        ram_k,
+        &mut preproc,
+    )?;
+
+    let (rem_eda, rem_da) = preproc.remaining_counts();
+    info!(
+        u8 = rem_eda[0],
+        u16 = rem_eda[1],
+        u32 = rem_eda[2],
+        u64 = rem_eda[3],
+        u128 = rem_eda[4],
+        dabits = rem_da,
+        "remaining preprocessing"
+    );
+
+    if my_id == 0 {
+        let proof_bytes: Vec<u8> = io_ctx.network().receive_request()?;
+        info!(proof_len = proof_bytes.len(), "received proof from coordinator");
+        user_conn.send(&proof_bytes)?;
     }
-
-    for iter in 0..args.repeat_proofs {
-        let (mut trace, memory, program_io_share) = if iter == 0 {
-            (
-                first_trace.take().expect("missing first trace"),
-                first_memory.take().expect("missing first memory"),
-                first_program_io_share.take().expect("missing first program_io_share"),
-            )
-        } else {
-            let payload_bytes: Vec<u8> = io_ctx.network().receive_request()?;
-            let msg: CoordToWorkerMsg =
-                bincode::deserialize(&payload_bytes).context("deserializing coordinator message")?;
-            let CoordToWorkerMsg::Full(payload) = msg else {
-                return Err(eyre::eyre!("unexpected PreprocOnly message during proving"));
-            };
-            (payload.trace, payload.memory, payload.program_io_share)
-        };
-
-        // Pad trace if needed (should already be padded by coordinator)
-        trace.resize(padded_len, Rep3Cycle::NoOp);
-
-        if iter > 0 {
-            #[cfg(feature = "reuse-preproc")]
-            preproc.reset_cursors_for_reuse();
-        }
-
-        info!(iter, total = args.repeat_proofs, "starting worker prove");
-        <JoltArch as Rep3JoltWorker<F, PCS, _>>::prove(
-            &preprocessing,
-            trace,
-            program_io_share,
-            memory,
-            &mut io_ctx,
-            ram_k,
-            &mut preproc,
-        )?;
-
-        let (rem_eda, rem_da) = preproc.remaining_counts();
-        info!(
-            iter,
-            u8 = rem_eda[0],
-            u16 = rem_eda[1],
-            u32 = rem_eda[2],
-            u64 = rem_eda[3],
-            u128 = rem_eda[4],
-            dabits = rem_da,
-            "remaining preprocessing"
-        );
-
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
-
-    io_ctx.network().log_connection_stats();
 
     Ok(())
 }

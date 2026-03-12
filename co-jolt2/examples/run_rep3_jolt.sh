@@ -44,6 +44,8 @@ REPEAT_PROOFS=${REPEAT_PROOFS:-1}
 PREPROC_LANES_EFFECTIVE=${PREPROC_LANES:-8}
 NETWORK_FORKS_EFFECTIVE=${NETWORK_FORKS:-8}
 MPC_QUIC_CONN_LANES_EFFECTIVE=${MPC_QUIC_CONN_LANES:-$NETWORK_FORKS_EFFECTIVE}
+USER_LISTEN_BASE_PORT=${USER_LISTEN_BASE_PORT:-30000}
+COORDINATOR_PROTOCOL=${COORDINATOR_PROTOCOL:-tls}
 TRACE_SUFFIX="${NUM_ITERS}_${PREPROC_LANES_EFFECTIVE}x${MPC_QUIC_CONN_LANES_EFFECTIVE}L"
 
 mkdir -p "$ARTIFACT_DIR"
@@ -125,16 +127,15 @@ cd "$REPO_DIR/mpc-net"
 cargo build --bin gen_configs --release
 cd "$CO_JOLT2_DIR"
 
-# Generate network configs (1 worker per party) — only if they don't exist yet.
-# Configs, certs, and keys all go into ARTIFACT_DIR.
-# The -c flag sets both where DER files are written AND the paths embedded in TOMLs.
-if [ ! -f "$ARTIFACT_DIR/config_coordinator.toml" ]; then
-  ../target/release/gen_configs \
-    -n 1 \
-    -o "$ARTIFACT_DIR" \
-    -c "$ARTIFACT_DIR" \
-    -k "$ARTIFACT_DIR"
-fi
+# Regenerate configs every run so the worker user-listener ports stay in sync.
+rm -f "$ARTIFACT_DIR"/config_*.toml "$ARTIFACT_DIR"/*.der
+../target/release/gen_configs \
+  -n 1 \
+  -o "$ARTIFACT_DIR" \
+  -c "$ARTIFACT_DIR" \
+  -k "$ARTIFACT_DIR" \
+  --user-listen-base-port "$USER_LISTEN_BASE_PORT" \
+  --coordinator-protocol "$COORDINATOR_PROTOCOL"
 
 # # Export RUST_LOG=trace for chrome tracing
 # export RUST_LOG=trace

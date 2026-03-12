@@ -74,11 +74,14 @@ fn build_inputs() -> Vec<u8> {
     }
 }
 
-fn build_dag_fixture(trace_file: &str) -> DagFixture {
-    let _test_guard = dag_test_lock();
-    let _tracing_guard = init_tracing(trace_file, std::path::Path::new("traces"));
-
-    // 1) Build and trace the guest program.
+fn build_public_fixture(trace_file: &str) -> (
+    [(Vec<Rep3Cycle>, co_jolt2::host::memory::Rep3Memory, co_jolt2::host::jolt_device::Rep3ProgramIOInput); 3],
+    JoltProverPreprocessing<F, PCS>,
+    JoltVerifierPreprocessing<F, PCS>,
+    tracer::JoltDevice,
+    usize,
+    usize,
+) {
     let mut program = build_program();
     let inputs = build_inputs();
     let (bytecode, memory_init, _) = program.decode();
@@ -114,6 +117,16 @@ fn build_dag_fixture(trace_file: &str) -> DagFixture {
 
     // 3) Compute ram_K from vanilla trace (must match both sides).
     let ram_K = compute_ram_k(&vanilla_trace, &shared);
+
+    (shares, preprocessing, verifier_preprocessing, io_device, ram_K, padded_len)
+}
+
+fn build_dag_fixture(trace_file: &str) -> DagFixture {
+    let _test_guard = dag_test_lock();
+    let _tracing_guard = init_tracing(trace_file, std::path::Path::new("traces"));
+
+    let (shares, preprocessing, verifier_preprocessing, io_device, ram_K, padded_len) =
+        build_public_fixture(trace_file);
 
     // 4) Rep3 MPC proof.
     let _dory_guard = DoryGlobals::initialize(DTH_ROOT_OF_K, padded_len);

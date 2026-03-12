@@ -1701,18 +1701,9 @@ mod tests {
             move |poly, mut io_ctx| {
                 use mpc_core::protocols::rep3_ring::edabits;
 
-                let pool_dir =
-                    std::env::temp_dir().join(format!("co-jolt2-dory-test-{}", io_ctx.party_idx()));
-                let mut preproc = edabits::preprocess_pool::<Fr, _>(
-                    &pool_dir,
-                    [0, 0, 0, 0, 0],
-                    0,
-                    len,
-                    len,
-                    0,
-                    0,
-                    &mut io_ctx,
-                )?;
+                let pool_dir = std::env::temp_dir().join(format!("co-jolt2-dory-test-{}", io_ctx.party_idx()));
+                let mut preproc =
+                    edabits::preprocess_pool::<Fr, _>(&pool_dir, [0, 0, 0, 0, 0], 0, len, len, 0, 0, &mut io_ctx)?;
 
                 // daPoints for Dory wrap correction (depend on SRS)
                 let qs = precompute_dapoint_qs(&setup, len, num_columns);
@@ -1832,18 +1823,9 @@ mod tests {
             move |poly, mut io_ctx| {
                 use mpc_core::protocols::rep3_ring::edabits;
 
-                let pool_dir = std::env::temp_dir()
-                    .join(format!("co-jolt2-dory-test2-{}", io_ctx.party_idx()));
-                let mut preproc = edabits::preprocess_pool::<Fr, _>(
-                    &pool_dir,
-                    [0, 0, 0, 0, 0],
-                    0,
-                    len,
-                    len,
-                    0,
-                    0,
-                    &mut io_ctx,
-                )?;
+                let pool_dir = std::env::temp_dir().join(format!("co-jolt2-dory-test2-{}", io_ctx.party_idx()));
+                let mut preproc =
+                    edabits::preprocess_pool::<Fr, _>(&pool_dir, [0, 0, 0, 0, 0], 0, len, len, 0, 0, &mut io_ctx)?;
 
                 // daPoints (depend on SRS)
                 let qs = precompute_dapoint_qs(&setup, len, num_columns);
