@@ -9,7 +9,7 @@ use std::thread;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use color_eyre::eyre::{Context, Result, eyre};
-use mpc_types::field::PrimeField;
+use crate::field::PrimeField;
 
 use mpc_net::topology::{MpcStarNetCoordinator, MpcStarNetWorker};
 

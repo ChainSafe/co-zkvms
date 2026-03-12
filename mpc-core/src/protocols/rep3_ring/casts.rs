@@ -2,14 +2,13 @@
 //!
 //! Implements casts for sharings of different datatypes
 
-use super::{conversion, yao};
+use super::conversion;
 use crate::protocols::rep3::{
     self,
-    conversion::A2BType,
     network::{IoContext, Rep3Network},
 };
-use mpc_types::field::PrimeField;
-use mpc_types::protocols::{
+use crate::field::PrimeField;
+use crate::protocols::{
     rep3::{Rep3BigUintShare, Rep3PrimeFieldShare},
     rep3_ring::{
         Rep3RingShare, Rep3RingSignedShare,
@@ -22,7 +21,7 @@ use rand::{distributions::Standard, prelude::Distribution};
 use rayon::prelude::*;
 use std::any::TypeId;
 
-/// Depending on the `A2BType` of the io_context, this function selects the appropriate implementation for the ring cast. In case of a downcast, the excess bits are just truncated.
+/// Selects the appropriate implementation for the ring cast. In case of a downcast, the excess bits are just truncated.
 pub fn ring_cast_selector<T, U, N>(
     x: Rep3RingShare<T>,
     io_context: &mut IoContext<N>,
@@ -33,13 +32,10 @@ where
     N: Rep3Network,
     Standard: Distribution<T> + Distribution<U>,
 {
-    match io_context.a2b_type {
-        A2BType::Direct => cast_a2b(x, io_context),
-        A2BType::Yao => cast_gc(x, io_context),
-    }
+    cast_a2b(x, io_context)
 }
 
-/// Depending on the `A2BType` of the io_context, this function selects the appropriate implementation for the ring_to_field cast.
+/// Selects the appropriate implementation for the ring_to_field cast.
 pub fn ring_to_field_selector<T: IntRing2k, F: PrimeField, N: Rep3Network>(
     x: Rep3RingShare<T>,
     io_context: &mut IoContext<N>,
@@ -47,13 +43,10 @@ pub fn ring_to_field_selector<T: IntRing2k, F: PrimeField, N: Rep3Network>(
 where
     Standard: Distribution<T>,
 {
-    match io_context.a2b_type {
-        A2BType::Direct => ring_to_field_a2b(x, io_context),
-        A2BType::Yao => Ok(yao::ring_to_field_many(&[x], io_context)?[0]),
-    }
+    ring_to_field_a2b(x, io_context)
 }
 
-/// Depending on the `A2BType` of the io_context, this function selects the appropriate implementation for the ring_to_field cast.
+/// Selects the appropriate implementation for the ring_to_field cast.
 pub fn ring_to_field_many_selector<T: IntRing2k, F: PrimeField, N: Rep3Network>(
     x: &[Rep3RingShare<T>],
     io_context: &mut IoContext<N>,
@@ -61,13 +54,10 @@ pub fn ring_to_field_many_selector<T: IntRing2k, F: PrimeField, N: Rep3Network>(
 where
     Standard: Distribution<T>,
 {
-    match io_context.a2b_type {
-        A2BType::Direct => ring_to_field_a2b_many(x, io_context),
-        A2BType::Yao => Ok(yao::ring_to_field_many(x, io_context)?),
-    }
+    ring_to_field_a2b_many(x, io_context)
 }
 
-/// Depending on the `A2BType` of the io_context, this function selects the appropriate implementation for the field_to_ring cast.
+/// Selects the appropriate implementation for the field_to_ring cast.
 pub fn field_to_ring_selector<F: PrimeField, T: IntRing2k, N: Rep3Network>(
     x: Rep3PrimeFieldShare<F>,
     io_context: &mut IoContext<N>,
@@ -75,10 +65,7 @@ pub fn field_to_ring_selector<F: PrimeField, T: IntRing2k, N: Rep3Network>(
 where
     Standard: Distribution<T>,
 {
-    match io_context.a2b_type {
-        A2BType::Direct => field_to_ring_a2b(x, io_context),
-        A2BType::Yao => Ok(yao::field_to_ring_many(&[x], io_context)?[0]),
-    }
+    field_to_ring_a2b(x, io_context)
 }
 
 /// A downcast of a Rep3RingShare from a larger ring to a smaller ring, truncating the excess bits.
@@ -170,24 +157,6 @@ where
         Ok(downcast(share))
     } else {
         upcast_a2b(share, io_context)
-    }
-}
-
-/// A cast of a Rep3RingShare from a ring to another ring. In case of a downcast, the excess bits are just truncated.
-pub fn cast_gc<T, U, N>(
-    share: Rep3RingShare<T>,
-    io_context: &mut IoContext<N>,
-) -> std::io::Result<Rep3RingShare<U>>
-where
-    T: IntRing2k + AsPrimitive<U>,
-    U: IntRing2k,
-    N: Rep3Network,
-    Standard: Distribution<T> + Distribution<U>,
-{
-    if T::K >= U::K {
-        Ok(downcast(share))
-    } else {
-        Ok(yao::upcast_many(&[share], io_context)?[0])
     }
 }
 

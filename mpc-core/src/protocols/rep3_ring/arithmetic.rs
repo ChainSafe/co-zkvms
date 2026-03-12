@@ -2,6 +2,8 @@
 //!
 //! This module contains operations with arithmetic shares
 
+pub use super::types::{Rep3RingShare, Rep3RingSignedShare};
+
 use crate::{
     IoResult,
     protocols::{
@@ -13,12 +15,9 @@ use crate::{
     },
 };
 use itertools::{Itertools, izip};
-use mpc_types::protocols::{
+use crate::protocols::{
     rep3::id::PartyID,
-    rep3_ring::{
-        Rep3RingShare,
-        ring::{bit::Bit, int_ring::IntRing2k, ring_impl::RingElement},
-    },
+    rep3_ring::ring::{bit::Bit, int_ring::IntRing2k, ring_impl::RingElement},
 };
 use num_traits::{One, Zero};
 use rand::{Rng, distributions::Standard, prelude::Distribution};

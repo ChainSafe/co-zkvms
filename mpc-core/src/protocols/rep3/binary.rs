@@ -2,19 +2,21 @@
 //!
 //! This module contains operations with binary shares
 
+pub use super::types::binary::Rep3BigUintShare;
+
 use ark_ff::BigInteger;
 use ark_ff::One;
 use itertools;
 use itertools::{Itertools as _, izip};
-use mpc_types::field::PrimeField;
+use crate::field::PrimeField;
 use num_bigint::BigUint;
 use rand::Rng;
 
 use crate::{
     IoResult,
     protocols::rep3::{
-        PartyID, Rep3BigUintShare, Rep3PrimeFieldShare,
-        arithmetic::{self},
+        PartyID,
+        arithmetic::{self, Rep3PrimeFieldShare},
         conversion,
         network::Rep3Network,
     },

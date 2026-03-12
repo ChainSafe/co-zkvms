@@ -13,10 +13,10 @@ use crate::protocols::rep3::{
 };
 use crate::protocols::rep3_ring::arithmetic as rep3_ring_arith;
 use eyre::Ok;
-use mpc_types::field::PrimeField;
+use crate::field::PrimeField;
 use num_traits::AsPrimitive;
-use mpc_types::protocols::rep3_ring::ring::u66::U66;
-use mpc_types::protocols::rep3_ring::{
+use crate::protocols::rep3_ring::ring::u66::U66;
+use crate::protocols::rep3_ring::{
     Rep3RingShare,
     ring::{int_ring::IntRing2k, ring_impl::RingElement},
 };
@@ -1303,10 +1303,10 @@ mod tests {
     use super::*;
 
     use ark_bn254::Fr;
-    use mpc_types::protocols::rep3::{
+    use crate::protocols::rep3::{
         combine_field_element, combine_field_elements, share_field_element,
     };
-    use mpc_types::protocols::rep3_ring::{
+    use crate::protocols::rep3_ring::{
         combine_ring_element, combine_ring_element_binary, ring::bit::Bit as RingBit,
         share_ring_element, share_ring_element_binary,
     };
@@ -2026,7 +2026,7 @@ mod tests {
     fn ring_b2a_many_u66_correct() {
         use crate::protocols::rep3::network::IoContextPool;
         use crate::protocols::rep3::test_utils::LocalRep3TestWorkerNet;
-        use mpc_types::protocols::rep3_ring::ring::u66::U66;
+        use crate::protocols::rep3_ring::ring::u66::U66;
 
         let mut rng = ChaCha20Rng::seed_from_u64(0x66B2A);
         let n = 16;

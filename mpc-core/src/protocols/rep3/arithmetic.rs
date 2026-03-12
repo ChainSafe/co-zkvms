@@ -6,7 +6,7 @@ use core::panic;
 use num_traits::cast::ToPrimitive;
 
 use itertools::{Itertools, izip};
-use mpc_types::field::PrimeField;
+use crate::field::PrimeField;
 use num_bigint::BigUint;
 use num_traits::One;
 use num_traits::Zero;
@@ -16,7 +16,9 @@ use crate::protocols::rep3::rngs::Rep3Rand;
 use crate::protocols::rep3::{PartyID, detail, network::Rep3Network};
 use rayon::prelude::*;
 
-use super::{Rep3BigUintShare, Rep3PrimeFieldShare, binary, conversion, network::IoContext};
+use super::{binary, conversion, network::IoContext};
+use super::binary::Rep3BigUintShare;
+pub use super::types::arithmetic::Rep3PrimeFieldShare;
 
 use ark_linear_sumcheck::rng::FeedableRNG;
 use eyre::Context;

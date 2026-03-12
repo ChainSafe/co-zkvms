@@ -4,7 +4,7 @@ use crate::{
     protocols::rep3::network::{IoContext, Rep3Network},
 };
 use itertools::izip;
-use mpc_types::protocols::rep3_ring::{
+use crate::protocols::rep3_ring::{
     Rep3RingShare,
     ring::{bit::Bit, int_ring::IntRing2k, ring_impl::RingElement},
 };

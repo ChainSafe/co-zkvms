@@ -4,8 +4,8 @@
 
 use ark_ff::{One, Zero};
 use itertools::{Itertools, izip};
-use mpc_types::field::PrimeField;
-use mpc_types::protocols::{
+use crate::field::PrimeField;
+use crate::protocols::{
     rep3::{Rep3BigUintShare, Rep3PrimeFieldShare},
     rep3_ring::{
         Rep3RingShare,

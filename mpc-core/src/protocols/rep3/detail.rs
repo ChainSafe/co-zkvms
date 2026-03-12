@@ -8,7 +8,7 @@ use ark_ff::One;
 use ark_ff::Zero;
 use itertools::Itertools as _;
 use itertools::izip;
-use mpc_types::field::PrimeField;
+use crate::field::PrimeField;
 use num_bigint::BigUint;
 
 pub(crate) fn low_depth_binary_add_mod_p_many<'a, F: PrimeField, N: Rep3Network>(

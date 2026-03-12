@@ -1,6 +1,6 @@
 // mod network;
 
-use mpc_types::protocols::rep3::id::PartyID;
+use crate::id::PartyID;
 
 #[cfg(feature = "mpi")]
 pub mod mpi;

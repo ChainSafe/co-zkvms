@@ -9,7 +9,7 @@ use bytes::{Bytes, BytesMut};
 use bytesize::ByteSize;
 use color_eyre::eyre::{self, Report};
 use color_eyre::eyre::{bail, Context};
-use mpc_types::protocols::rep3::id::PartyID;
+use crate::id::PartyID;
 use quinn::{Connection, Endpoint, IdleTimeout, RecvStream, SendStream, TransportConfig, VarInt};
 use serde::{de::DeserializeOwned, Serialize};
 use std::io;

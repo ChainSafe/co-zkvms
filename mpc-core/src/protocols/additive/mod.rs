@@ -1,11 +1,13 @@
+pub mod types;
+pub use types::*;
+
 use crate::protocols::rep3::{
     PartyID,
     network::{IoContext, Rep3Network},
 };
 use ark_linear_sumcheck::rng::FeedableRNG;
 use eyre::Context;
-use mpc_types::field::PrimeField;
-use mpc_types::protocols::additive::AdditivePrimeFieldShare;
+use crate::field::PrimeField;
 use rand::RngCore;
 
 use crate::protocols::rep3::rngs::SSRandom;

@@ -13,8 +13,8 @@ use crate::protocols::rep3::{
     PartyID, Rep3PrimeFieldShare,
     network::{IoContext, Rep3Network},
 };
-use mpc_types::field::PrimeField;
-use mpc_types::protocols::rep3_ring::{Rep3RingShare, ring::bit::Bit};
+use crate::field::PrimeField;
+use crate::protocols::rep3_ring::{Rep3RingShare, ring::bit::Bit};
 use rand::{RngCore, SeedableRng};
 use rayon::prelude::*;
 
@@ -733,15 +733,15 @@ mod tests {
     use super::*;
     use crate::protocols::rep3::test_utils::run_rep3_local_test_with_coordinator;
     use ark_bn254::Fr;
-    use mpc_types::protocols::rep3::combine_field_elements;
-    use mpc_types::protocols::rep3_ring::{
+    use crate::protocols::rep3::combine_field_elements;
+    use crate::protocols::rep3_ring::{
         ring::{bit::Bit as RingBit, ring_impl::RingElement},
         share_ring_element,
     };
     use rand::SeedableRng;
     use rand_chacha::ChaCha20Rng;
 
-    type Rep3RingShare<T> = mpc_types::protocols::rep3_ring::Rep3RingShare<T>;
+    type Rep3RingShare<T> = crate::protocols::rep3_ring::Rep3RingShare<T>;
 
     #[test]
     fn random_dabits_lazy_roundtrip() {

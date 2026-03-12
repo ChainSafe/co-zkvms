@@ -16,10 +16,10 @@ use crate::protocols::rep3::network::{IoContext, IoContextPool, Rep3Network, Rep
 use crate::protocols::rep3_ring::preprocessing::backing_store;
 use ark_ec::CurveGroup;
 use itertools::izip;
-use mpc_types::protocols::rep3_ring::Rep3RingShare;
-use mpc_types::protocols::rep3_ring::ring::bit::Bit;
-use mpc_types::protocols::rep3_ring::ring::int_ring::IntRing2k;
-use mpc_types::protocols::rep3_ring::ring::ring_impl::RingElement;
+use crate::protocols::rep3_ring::Rep3RingShare;
+use crate::protocols::rep3_ring::ring::bit::Bit;
+use crate::protocols::rep3_ring::ring::int_ring::IntRing2k;
+use crate::protocols::rep3_ring::ring::ring_impl::RingElement;
 use rand::Rng;
 
 // ---------------------------------------------------------------------------

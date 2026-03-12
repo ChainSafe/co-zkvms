@@ -7,8 +7,8 @@ use crate::protocols::rep3::PartyID;
 use crate::protocols::rep3::network::Rep3RawFieldTransport;
 use crate::protocols::rep3::network::{IoContext, IoContextPool, Rep3Network, Rep3NetworkWorker};
 use eyre::Ok;
-use mpc_types::field::PrimeField;
-use mpc_types::protocols::rep3_ring::ring::int_ring::IntRing2k;
+use crate::field::PrimeField;
+use crate::protocols::rep3_ring::ring::int_ring::IntRing2k;
 use rand::RngCore;
 use rand::distributions::Standard;
 use rand::prelude::Distribution;
@@ -16,7 +16,7 @@ use rayon::prelude::*;
 use tracing::info_span;
 
 #[cfg(feature = "ring-msm")]
-use mpc_types::protocols::rep3_ring::ring::u66::U66;
+use crate::protocols::rep3_ring::ring::u66::U66;
 
 #[cfg(not(feature = "ring-msm"))]
 use std::marker::PhantomData;

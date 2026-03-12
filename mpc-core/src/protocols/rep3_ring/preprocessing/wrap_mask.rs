@@ -8,11 +8,11 @@ use crate::IoResult;
 use crate::protocols::rep3::PartyID;
 use crate::protocols::rep3::network::{IoContext, Rep3Network};
 use crate::protocols::rep3_ring::{arithmetic, binary, conversion};
-use mpc_types::protocols::rep3_ring::Rep3RingShare;
-use mpc_types::protocols::rep3_ring::ring::bit::Bit;
-use mpc_types::protocols::rep3_ring::ring::int_ring::IntRing2k;
-use mpc_types::protocols::rep3_ring::ring::ring_impl::RingElement;
-use mpc_types::protocols::rep3_ring::ring::u66::U66;
+use crate::protocols::rep3_ring::Rep3RingShare;
+use crate::protocols::rep3_ring::ring::bit::Bit;
+use crate::protocols::rep3_ring::ring::int_ring::IntRing2k;
+use crate::protocols::rep3_ring::ring::ring_impl::RingElement;
+use crate::protocols::rep3_ring::ring::u66::U66;
 use rand::{Rng, SeedableRng};
 
 use super::backing_store;
@@ -366,7 +366,7 @@ mod tests {
 
     #[test]
     fn wrap_mask_extraction_correct() {
-        use mpc_types::protocols::rep3_ring::{share_ring_element, share_ring_element_binary};
+        use crate::protocols::rep3_ring::{share_ring_element, share_ring_element_binary};
         use rand::SeedableRng;
 
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(42);

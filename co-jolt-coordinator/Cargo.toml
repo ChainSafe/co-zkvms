@@ -18,7 +18,6 @@ required-features = ["aws_nitro"]
 [dependencies]
 mpc-core = { path = "../mpc-core" }
 mpc-net = { path = "../mpc-net", features = ["tls"] }
-mpc-types = { path = "../mpc-types" }
 
 jolt-core.workspace = true
 jolt-common.workspace = true
