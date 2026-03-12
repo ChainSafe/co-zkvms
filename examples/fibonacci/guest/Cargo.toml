@@ -1,0 +1,12 @@
+[package]
+name = "fibonacci-guest"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[features]
+guest = []
+
+[dependencies]
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }

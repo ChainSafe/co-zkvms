@@ -2,19 +2,21 @@
 //!
 //! This module contains operations with binary shares
 
+pub use super::types::binary::Rep3BigUintShare;
+
 use ark_ff::BigInteger;
 use ark_ff::One;
 use itertools;
 use itertools::{Itertools as _, izip};
-use mpc_types::field::PrimeField;
+use crate::field::PrimeField;
 use num_bigint::BigUint;
 use rand::Rng;
 
 use crate::{
     IoResult,
     protocols::rep3::{
-        PartyID, Rep3BigUintShare, Rep3PrimeFieldShare,
-        arithmetic::{self},
+        PartyID,
+        arithmetic::{self, Rep3PrimeFieldShare},
         conversion,
         network::Rep3Network,
     },
@@ -203,7 +205,7 @@ pub fn shift_l_public_by_shared<F: PrimeField, N: Rep3Network>(
             (shared.a.clone() >> i) & BigUint::one(),
             (shared.b.clone() >> i) & BigUint::one(),
         );
-        individual_bit_shares.push(conversion::b2a_selector(&bit, context)?);
+        individual_bit_shares.push(conversion::b2a(&bit, context)?);
     }
     // v_i = 2^2^i * <b_i> + 1 - <b_i>
     let mut vs: Vec<_> = individual_bit_shares
@@ -459,21 +461,6 @@ pub fn share_rep3_binary<F: PrimeField, R: Rng>(
     let s3 = Rep3BigUintShare::new(a3, a1);
 
     [s1, s2, s3]
-}
-
-pub fn generate_shares_rep3<F: PrimeField, R: Rng>(
-    val: F,
-    rng: &mut R,
-) -> Vec<Rep3BigUintShare<F>> {
-    let val = BigUint::from_bytes_le(&val.into_bigint().to_bytes_le());
-    let t0 = BigUint::from(rng.r#gen::<u64>());
-    let t1 = BigUint::from(rng.r#gen::<u64>());
-    let t2 = (val ^ t0.clone()) ^ t1.clone();
-
-    let p_share_0 = Rep3BigUintShare::new(t0.clone(), t2.clone());
-    let p_share_1 = Rep3BigUintShare::new(t1.clone(), t0);
-    let p_share_2 = Rep3BigUintShare::new(t2, t1);
-    vec![p_share_0, p_share_1, p_share_2]
 }
 
 /// Reconstructs a vector of field elements from its binary replicated shares.

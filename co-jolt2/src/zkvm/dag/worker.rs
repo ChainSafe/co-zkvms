@@ -24,7 +24,7 @@ use jolt_core::zkvm::instruction_lookups::D;
 use jolt_core::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K};
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
-use mpc_core::protocols::rep3_ring::casts::binary_ring_to_field_many;
+use mpc_core::protocols::rep3_ring::casts::r2f_b2a_many;
 use rand::distributions::{Distribution, Standard};
 
 /// Worker side of the MPC DAG prover.
@@ -259,7 +259,7 @@ impl Rep3JoltDagWorker {
     {
         let mut coeffs = vec![Rep3PrimeFieldShare::zero_share(); max_size];
         let words = crate::host::jolt_device::Rep3ProgramIOInput::pack_advice_words(advice);
-        let field_words = binary_ring_to_field_many(&words, io_ctx.main())?;
+        let field_words = r2f_b2a_many(&words, io_ctx.main())?;
         for (i, share) in field_words.into_iter().enumerate() {
             coeffs[i + 1] = share;
         }

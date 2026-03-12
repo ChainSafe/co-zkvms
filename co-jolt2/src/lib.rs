@@ -13,5 +13,3 @@ pub mod poly;
 pub mod subprotocols;
 pub mod utils;
 pub mod zkvm;
-
-pub mod client;

@@ -65,8 +65,7 @@ impl MacroBuilder {
 
     fn build(&mut self) -> TokenStream {
         let memory_config_fn = self.make_memory_config_fn();
-        let build_prover_fn = self.make_build_prover_fn();
-        let build_verifier_fn = self.make_build_verifier_fn();
+        let build_delegate_fn = self.make_build_delegate_fn();
         let analyze_fn = self.make_analyze_function();
         let trace_to_file_fn = self.make_trace_to_file_func();
         let compile_fn = self.make_compile_func();
@@ -74,7 +73,7 @@ impl MacroBuilder {
         let preprocess_verifier_fn = self.make_preprocess_verifier_func();
         let verifier_preprocess_from_prover_fn = self.make_preprocess_from_prover_func();
         let commit_trusted_advice_fn = self.make_commit_trusted_advice_func();
-        let prove_fn = self.make_prove_func();
+        let delegate_fn = self.make_delegate_func();
 
         let attributes = parse_attributes(&self.attr);
         let mut execute_fn = quote! {};
@@ -94,8 +93,7 @@ impl MacroBuilder {
 
         quote! {
             #memory_config_fn
-            #build_prover_fn
-            #build_verifier_fn
+            #build_delegate_fn
             #execute_fn
             #analyze_fn
             #trace_to_file_fn
@@ -104,7 +102,7 @@ impl MacroBuilder {
             #preprocess_verifier_fn
             #verifier_preprocess_from_prover_fn
             #commit_trusted_advice_fn
-            #prove_fn
+            #delegate_fn
             #main_fn
         }
         .into()
@@ -142,12 +140,10 @@ impl MacroBuilder {
         }
     }
 
-    fn make_build_prover_fn(&self) -> TokenStream2 {
+    fn make_build_delegate_fn(&self) -> TokenStream2 {
         let fn_name = self.get_func_name();
-        let build_prover_fn_name = Ident::new(&format!("build_prover_{fn_name}"), fn_name.span());
-        let prove_output_ty = self.get_prove_output_type();
+        let build_delegate_fn_name = Ident::new(&format!("build_delegate_{fn_name}"), fn_name.span());
 
-        // Include public, trusted_advice, and untrusted_advice arguments for the prover
         let all_names: Vec<_> = self
             .pub_func_args
             .iter()
@@ -166,51 +162,22 @@ impl MacroBuilder {
 
         let inputs_vec: Vec<_> = self.func.sig.inputs.iter().collect();
         let inputs = quote! { #(#inputs_vec),* };
-        let prove_fn_name = Ident::new(&format!("prove_{fn_name}"), fn_name.span());
-        let imports = self.make_imports();
-
-        let has_trusted_advice = !self.trusted_func_args.is_empty();
-
-        let commitment_param_in_closure = if has_trusted_advice {
-            quote! { , trusted_advice_commitment: Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment> }
-        } else {
-            quote! {}
-        };
-
-        let commitment_arg_in_call = if has_trusted_advice {
-            quote! { , trusted_advice_commitment }
-        } else {
-            quote! {}
-        };
-
-        let return_type = if has_trusted_advice {
-            quote! {
-                impl Fn(#(#all_types),*, Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>) -> #prove_output_ty + Sync + Send
-            }
-        } else {
-            quote! {
-                impl Fn(#(#all_types),*) -> #prove_output_ty + Sync + Send
-            }
-        };
+        let delegate_fn_name = Ident::new(&format!("delegate_{fn_name}"), fn_name.span());
 
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #build_prover_fn_name(
+            pub fn #build_delegate_fn_name(
                 program: jolt::host::Program,
-                preprocessing: jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>,
-            ) -> #return_type
+            ) -> impl Fn(&mut jolt::Client, #(#all_types),*) -> jolt::eyre::Result<Vec<u8>> + Sync + Send
             {
-                #imports
                 let program = std::sync::Arc::new(program);
-                let preprocessing = std::sync::Arc::new(preprocessing);
 
-                let prove_closure = move |#inputs #commitment_param_in_closure| {
+                let delegate_closure = move |client: &mut jolt::Client, #inputs| {
                     let program = (*program).clone();
-                    let preprocessing = (*preprocessing).clone();
-                    #prove_fn_name(program, preprocessing, #(#all_names),* #commitment_arg_in_call)
+                    #delegate_fn_name(client, program, #(#all_names),*)
                 };
 
-                prove_closure
+                delegate_closure
             }
         }
     }
@@ -621,20 +588,7 @@ impl MacroBuilder {
         }
     }
 
-    fn make_prove_func(&self) -> TokenStream2 {
-        let prove_output_ty = self.get_prove_output_type();
-
-        let handle_return = match &self.func.sig.output {
-            ReturnType::Default => quote! {
-                let ret_val = ();
-            },
-            ReturnType::Type(_, ty) => quote! {
-                let mut outputs = io_device.outputs.clone();
-                outputs.resize(preprocessing.shared.memory_layout.max_output_size as usize, 0);
-                let ret_val = jolt::postcard::from_bytes::<#ty>(&outputs).unwrap();
-            },
-        };
-
+    fn make_delegate_func(&self) -> TokenStream2 {
         let set_program_args = self.pub_func_args.iter().map(|(name, _)| {
             quote! {
                 input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
@@ -654,34 +608,16 @@ impl MacroBuilder {
         let fn_name = self.get_func_name();
         let inputs_vec: Vec<_> = self.func.sig.inputs.iter().collect();
         let inputs = quote! { #(#inputs_vec),* };
-        let imports = self.make_imports();
 
-        let prove_fn_name = syn::Ident::new(&format!("prove_{fn_name}"), fn_name.span());
-
-        let has_trusted_advice = !self.trusted_func_args.is_empty();
-
-        let commitment_param = if has_trusted_advice {
-            quote! { , trusted_advice_commitment: Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment> }
-        } else {
-            quote! {}
-        };
-
-        let commitment_arg = if has_trusted_advice {
-            quote! { trusted_advice_commitment }
-        } else {
-            quote! { None }
-        };
+        let delegate_fn_name = syn::Ident::new(&format!("delegate_{fn_name}"), fn_name.span());
 
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #prove_fn_name(
+            pub fn #delegate_fn_name(
+                client: &mut jolt::Client,
                 mut program: jolt::host::Program,
-                preprocessing: jolt::JoltProverPreprocessing<jolt::F, jolt::PCS>,
                 #inputs
-                #commitment_param
-            ) -> #prove_output_ty {
-                #imports
-
+            ) -> jolt::eyre::Result<Vec<u8>> {
                 let mut input_bytes = vec![];
                 #(#set_program_args;)*
                 let mut untrusted_advice_bytes = vec![];
@@ -689,20 +625,12 @@ impl MacroBuilder {
                 let mut trusted_advice_bytes = vec![];
                 #(#set_program_trusted_advice_args;)*
 
-                let elf_contents_opt = program.get_elf_contents();
-                let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
-                let (jolt_proof, io_device, _, _) = JoltRV64IMAC::prove(
-                    &preprocessing,
-                    &elf_contents,
+                client.delegate(
+                    &mut program,
                     &input_bytes,
                     &untrusted_advice_bytes,
                     &trusted_advice_bytes,
-                    #commitment_arg,
-                );
-
-                #handle_return
-
-                (ret_val, jolt_proof, io_device)
+                )
             }
         }
     }
@@ -969,17 +897,6 @@ impl MacroBuilder {
             quote! {
                 program.set_std(false);
             }
-        }
-    }
-
-    fn get_prove_output_type(&self) -> TokenStream2 {
-        match &self.func.sig.output {
-            ReturnType::Default => quote! {
-                ((), jolt::RV64IMACJoltProof, jolt::JoltDevice)
-            },
-            ReturnType::Type(_, ty) => quote! {
-                (#ty, jolt::RV64IMACJoltProof, jolt::JoltDevice)
-            },
         }
     }
 

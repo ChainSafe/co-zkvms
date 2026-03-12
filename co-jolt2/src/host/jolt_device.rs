@@ -3,7 +3,6 @@ use mpc_core::protocols::rep3_ring::{self, Rep3RingShare};
 use serde::{Deserialize, Serialize};
 use tracer::JoltDevice;
 
-use crate::utils::transpose;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Rep3ProgramIOInput {
@@ -16,30 +15,26 @@ pub struct Rep3ProgramIOInput {
 }
 
 impl Rep3ProgramIOInput {
-    pub fn generate_secret_shares<R: rand::Rng>(program_io: JoltDevice, rng: &mut R) -> Vec<Self> {
+    pub fn generate_secret_shares<R: rand::Rng + rand::CryptoRng>(program_io: JoltDevice, rng: &mut R) -> Vec<Self> {
         let JoltDevice { inputs, trusted_advice, untrusted_advice, outputs, panic, memory_layout } = program_io;
 
-        let trusted_advice_shares = if trusted_advice.is_empty() {
-            vec![vec![]; 3]
-        } else {
-            transpose(
-                trusted_advice
-                    .into_iter()
-                    .map(|byte| rep3_ring::binary::generate_shares_rep3(byte, rng))
-                    .collect::<Vec<_>>(),
-            )
-        };
+        let mut trusted_advice_shares: [Vec<Rep3RingShare<u8>>; 3] =
+            std::array::from_fn(|_| Vec::with_capacity(trusted_advice.len()));
+        for byte in trusted_advice {
+            let [s0, s1, s2] = rep3_ring::share_ring_element_binary(rep3_ring::ring::ring_impl::RingElement(byte), rng);
+            trusted_advice_shares[0].push(s0);
+            trusted_advice_shares[1].push(s1);
+            trusted_advice_shares[2].push(s2);
+        }
 
-        let untrusted_advice_shares = if untrusted_advice.is_empty() {
-            vec![vec![]; 3]
-        } else {
-            transpose(
-                untrusted_advice
-                    .into_iter()
-                    .map(|byte| rep3_ring::binary::generate_shares_rep3(byte, rng))
-                    .collect::<Vec<_>>(),
-            )
-        };
+        let mut untrusted_advice_shares: [Vec<Rep3RingShare<u8>>; 3] =
+            std::array::from_fn(|_| Vec::with_capacity(untrusted_advice.len()));
+        for byte in untrusted_advice {
+            let [s0, s1, s2] = rep3_ring::share_ring_element_binary(rep3_ring::ring::ring_impl::RingElement(byte), rng);
+            untrusted_advice_shares[0].push(s0);
+            untrusted_advice_shares[1].push(s1);
+            untrusted_advice_shares[2].push(s2);
+        }
 
         itertools::izip!(trusted_advice_shares, untrusted_advice_shares)
             .map(|(trusted_advice, untrusted_advice)| Self {
@@ -60,8 +55,9 @@ impl Rep3ProgramIOInput {
 
 #[cfg(test)]
 mod tests {
-    use ark_std::test_rng;
     use mpc_core::protocols::rep3_ring::combine_ring_element_binary;
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha12Rng;
     use tracer::JoltDevice;
 
     use super::Rep3ProgramIOInput;
@@ -77,7 +73,7 @@ mod tests {
             memory_layout: Default::default(),
         };
 
-        let mut rng = test_rng();
+        let mut rng = ChaCha12Rng::seed_from_u64(0);
         let shares = Rep3ProgramIOInput::generate_secret_shares(program_io.clone(), &mut rng);
         let [share0, share1, share2]: [Rep3ProgramIOInput; 3] = shares.try_into().expect("expected 3 shares");
 

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::Result;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use mpc_types::protocols::rep3::id::PartyID;
+use crate::id::PartyID;
 use serde::{de::DeserializeOwned, Serialize};
 
 pub trait MpcStarNetCoordinator: Sized {

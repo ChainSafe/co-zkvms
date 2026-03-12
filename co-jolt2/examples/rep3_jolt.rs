@@ -22,7 +22,9 @@ use mpc_net::topology::{MpcStarNetCoordinator, MpcStarNetWorker};
 use serde::{Deserialize, Serialize};
 use tracing::{info, info_span, trace_span, warn};
 
-use co_jolt2::client::ProvingClient;
+#[path = "../../jolt-sdk/src/client.rs"]
+mod proving_client;
+
 use co_jolt2::host::jolt_device::Rep3ProgramIOInput;
 use co_jolt2::host::memory::Rep3Memory;
 use co_jolt2::utils::compute_ram_k;
@@ -50,6 +52,8 @@ use jolt_core::zkvm::{JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreproces
 use mpc_core::protocols::rep3::network::IoContextPool;
 use tracer::instruction::Cycle;
 use tracer::JoltDevice;
+
+use proving_client::Client as ProvingClient;
 
 type F = Fr;
 type PCS = DoryCommitmentScheme;

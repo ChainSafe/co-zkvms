@@ -25,6 +25,10 @@ host = [
     "dep:common",
     "dep:ark-ec",
     "dep:ark-bn254",
+    "dep:co-jolt2",
+    "dep:rustls",
+    "dep:bincode",
+    "dep:eyre",
     "postcard/use-std",
     "serde/std",
 ]
@@ -56,6 +60,10 @@ common = { path = "../jolt-common", package = "jolt-common", default-features = 
 jolt-core = { path = "../jolt-core", default-features = false, optional = true }
 tracer = { path = "../jolt-tracer", package = "jolt-tracer", default-features = false, optional = true }
 rand = { version = "0.8.5", default-features = false, features = ["std_rng"], optional = true }
+co-jolt2 = { path = "../co-jolt2", optional = true }
+rustls = { version = "0.23", features = ["aws_lc_rs"], optional = true }
+bincode = { version = "1.3", optional = true }
+eyre = { version = "0.6", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 getrandom_v02 = { version = "0.2.16", package = "getrandom", default-features = false, features = ["custom"], optional = true }
@@ -67,3 +75,10 @@ getrandom_v03 = { version = "0.3.3", package = "getrandom", default-features = f
 
 [dev-dependencies]
 hex-literal = "0.4.1"
+
+[patch.crates-io]
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", rev = "2b22f4959e89bd0656f4f261c3a854c29b87a7da" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", rev = "2b22f4959e89bd0656f4f261c3a854c29b87a7da" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", rev = "2b22f4959e89bd0656f4f261c3a854c29b87a7da", default-features = false }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", rev = "2b22f4959e89bd0656f4f261c3a854c29b87a7da" }
+allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }

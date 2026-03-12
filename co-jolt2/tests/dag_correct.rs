@@ -1,7 +1,8 @@
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use ark_bn254::Fr;
-use ark_std::test_rng;
+use rand::SeedableRng;
+use rand_chacha::ChaCha12Rng;
 
 use co_jolt2::host::program::Rep3Program;
 use co_jolt2::utils::compute_ram_k;
@@ -86,7 +87,7 @@ fn build_public_fixture(trace_file: &str) -> (
     let inputs = build_inputs();
     let (bytecode, memory_init, _) = program.decode();
 
-    let mut rng = test_rng();
+    let mut rng = ChaCha12Rng::seed_from_u64(0);
     let mut shares = program.generate_trace_shares(&inputs, &[], &[], &mut rng);
     let (mut vanilla_trace, _vanilla_memory, mut io_device) = program.trace(&inputs, &[], &[]);
 

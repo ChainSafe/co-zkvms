@@ -163,8 +163,8 @@ impl<F: JoltField> SuffixFutureBatch<F> {
         io_ctx: &mut IoContextPool<N>,
         pool: &mut PreprocessingPool<F>,
     ) -> eyre::Result<Vec<Rep3Value<F>>> {
-        use mpc_core::protocols::rep3_ring::dabits;
-        use mpc_core::protocols::rep3_ring::edabits;
+        use mpc_core::protocols::rep3_ring::conversion;
+        use mpc_core::protocols::rep3_ring::casts;
 
         let mut out = vec![Rep3Value::zero_share(); self.len];
 
@@ -185,7 +185,7 @@ impl<F: JoltField> SuffixFutureBatch<F> {
         if !self.bitinject.is_empty() {
             let dabits = pool.take_dabits(self.bitinject.len())?;
             let _span = tracing::info_span!("bit_inject_field_many", n = self.bitinject.len()).entered();
-            let fields = dabits::bit_inject_field_many(&self.bitinject, &dabits, io_ctx.main())?;
+            let fields = conversion::bit_inject_field_preproc_many(&self.bitinject, &dabits, io_ctx.main())?;
             drop(_span);
             scatter.extend(self.bitinject_idx.into_iter().enumerate().zip(fields.into_iter()).map(
                 |((pos, idx), f)| {
@@ -218,11 +218,11 @@ impl<F: JoltField> SuffixFutureBatch<F> {
                         let forks_effective = forks_by_size.clamp(1, max_forks_cap);
 
                         let fields = if io_ctx.max_forks() == 0 || forks_effective <= 1 {
-                            edabits::ring_to_field_b2a_many::<$ring, F, _>(&chunk_vals, &batch, io_ctx.main())?
+                            casts::r2f_b2a_preproc_many::<$ring, F, _>(&chunk_vals, &batch, io_ctx.main())?
                         } else {
                             let inner_chunk_size = chunk_len.div_ceil(forks_effective);
                             io_ctx.par_chunks_preproc(chunk_vals, batch, Some(inner_chunk_size), |xs, b, ctx| {
-                                edabits::ring_to_field_b2a_many::<$ring, F, _>(&xs, &b, ctx)
+                                casts::r2f_b2a_preproc_many::<$ring, F, _>(&xs, &b, ctx)
                             })?
                         };
                         drop(_span);

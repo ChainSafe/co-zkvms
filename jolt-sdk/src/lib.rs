@@ -7,6 +7,9 @@ pub mod host_utils;
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub use host_utils::*;
 
+#[cfg(feature = "host")]
+pub mod client;
+
 pub mod platform;
 pub use platform::*;
 pub use jolt_sdk_macros::provable;

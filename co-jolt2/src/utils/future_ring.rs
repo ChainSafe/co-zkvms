@@ -231,7 +231,7 @@ where
         // Cast
         if !buckets.cast_x.is_empty() {
             let c = io_ctx.par_chunks(buckets.cast_x, None, |xs, io_ctx| {
-                rep3_ring::casts::ring_to_field_many_selector(&xs, io_ctx)
+                rep3_ring::casts::r2f_many(&xs, io_ctx)
             })?;
             for k in 0..c.len() {
                 out[buckets.cast_idx[k]] = map(c[k], buckets.cast_args[k]);
@@ -241,7 +241,7 @@ where
         // Cast B2A
         if !buckets.b2a_x.is_empty() {
             let shares = io_ctx.par_chunks(buckets.b2a_x, None, |xs, io_ctx| {
-                rep3_ring::casts::binary_ring_to_field_many(&xs, io_ctx)
+                rep3_ring::casts::r2f_b2a_many(&xs, io_ctx)
             })?;
             for k in 0..shares.len() {
                 out[buckets.b2a_idx[k]] = map(shares[k], buckets.b2a_args[k]);
@@ -291,7 +291,7 @@ where
     N: Rep3NetworkWorker,
     MapFn: Fn(Rep3PrimeFieldShare<F>, Args) -> T + Send + Sync,
 {
-    use mpc_core::protocols::rep3_ring::{dabits, edabits};
+    use mpc_core::protocols::rep3_ring::{casts, conversion};
 
     let len = futures.len();
 
@@ -388,7 +388,7 @@ where
     if !buckets.bit_x.is_empty() {
         let batch = preproc.take_dabits(buckets.bit_x.len())?;
         let c = io_ctx.par_chunks_dabits(buckets.bit_x, batch, None, |xs, batch, ctx| {
-            dabits::bit_inject_field_many(&xs, &batch, ctx)
+            conversion::bit_inject_field_preproc_many(&xs, &batch, ctx)
         })?;
         for k in 0..c.len() {
             out[buckets.bit_idx[k]] = map(c[k], buckets.bit_args[k]);
@@ -406,7 +406,7 @@ where
         let batch = preproc.take_edabits::<R>(binary.len())?;
         let shares =
             io_ctx.par_chunks_preproc(binary, batch, None, |xs, batch, ctx| {
-                edabits::ring_to_field_b2a_many::<R, F, _>(&xs, &batch, ctx)
+                casts::r2f_b2a_preproc_many::<R, F, _>(&xs, &batch, ctx)
             })?;
         for k in 0..shares.len() {
             out[buckets.cast_idx[k]] = map(shares[k], buckets.cast_args[k]);
@@ -417,7 +417,7 @@ where
     if !buckets.b2a_x.is_empty() {
         let batch = preproc.take_edabits::<R>(buckets.b2a_x.len())?;
         let shares = io_ctx.par_chunks_preproc(buckets.b2a_x, batch, None, |xs, batch, ctx| {
-            edabits::ring_to_field_b2a_many::<R, F, _>(&xs, &batch, ctx)
+            casts::r2f_b2a_preproc_many::<R, F, _>(&xs, &batch, ctx)
         })?;
         for k in 0..shares.len() {
             out[buckets.b2a_idx[k]] = map(shares[k], buckets.b2a_args[k]);

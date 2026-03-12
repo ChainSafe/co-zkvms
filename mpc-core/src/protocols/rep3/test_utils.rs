@@ -9,7 +9,7 @@ use std::thread;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use color_eyre::eyre::{Context, Result, eyre};
-use mpc_types::field::PrimeField;
+use crate::field::PrimeField;
 
 use mpc_net::topology::{MpcStarNetCoordinator, MpcStarNetWorker};
 
@@ -203,7 +203,7 @@ impl Rep3RawFieldTransport for LocalRep3TestWorkerNet {
         target: PartyID,
         data: &[F],
     ) -> std::io::Result<()> {
-        use crate::protocols::rep3_ring::preprocessing::backing_store::assert_field_layout;
+        use crate::preprocessing::backing_store::assert_field_layout;
         const { assert_field_layout::<F>() };
         let bytes = unsafe {
             std::slice::from_raw_parts(data.as_ptr() as *const u8, std::mem::size_of_val(data))
@@ -216,7 +216,7 @@ impl Rep3RawFieldTransport for LocalRep3TestWorkerNet {
         from: PartyID,
         elems: usize,
     ) -> std::io::Result<Vec<u8>> {
-        use crate::protocols::rep3_ring::preprocessing::backing_store::assert_field_layout;
+        use crate::preprocessing::backing_store::assert_field_layout;
         const { assert_field_layout::<F>() };
         let bytes = self.ring_recv_bytes(from)?;
         let expected = elems.saturating_mul(std::mem::size_of::<F>());

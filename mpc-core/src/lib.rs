@@ -1,8 +1,12 @@
-pub mod lut;
+pub mod field;
+pub mod network;
+pub mod preprocessing;
 pub mod protocols;
+pub mod serde_compat;
+pub mod utils;
 
-pub use mpc_types::serde_compat::{ark_de, ark_se};
-pub use mpc_types::utils::MaybeShared;
+pub use serde_compat::{ark_de, ark_se};
+pub use utils::MaybeShared;
 
 pub(crate) type RngType = rand_chacha::ChaCha12Rng;
 pub(crate) type IoResult<T> = std::io::Result<T>;

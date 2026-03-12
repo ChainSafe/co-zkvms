@@ -18,7 +18,7 @@ use jolt_core::zkvm::{instruction_lookups, JoltProverPreprocessing};
 use mpc_core::protocols::rep3::network::{IoContext, IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{arithmetic::promote_to_trivial_share, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
-use mpc_core::protocols::rep3_ring::preprocessing::edabits;
+use mpc_core::protocols::rep3_ring::casts;
 use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use rand::distributions::{Distribution, Standard};
@@ -101,7 +101,7 @@ where
 
         let batch = preproc.take_edabits::<XlenInt>(n)?;
         let casted = io_ctx.par_chunks_preproc(shares, batch, None, |xs, batch, ctx| {
-            edabits::ring_to_field_b2a_many::<XlenInt, F, _>(&xs, &batch, ctx)
+            casts::r2f_b2a_preproc_many::<XlenInt, F, _>(&xs, &batch, ctx)
         })?;
 
         debug_assert_eq!(casted.len(), targets.len());
@@ -867,11 +867,11 @@ where
 
                     let batch_eda = preproc.take_edabits::<XlenInt>(2 * chunk_len)?;
                     let field_all: Vec<Rep3PrimeFieldShare<F>> = if inc_b2a_max_forks <= 1 {
-                        edabits::ring_to_field_b2a_many::<XlenInt, F, _>(&combined, &batch_eda, io_ctx.main())?
+                        casts::r2f_b2a_preproc_many::<XlenInt, F, _>(&combined, &batch_eda, io_ctx.main())?
                     } else {
                         let chunk_size = (combined.len()).div_ceil(inc_b2a_max_forks);
                         io_ctx.par_chunks_preproc(combined, batch_eda, Some(chunk_size), |xs, b, c| {
-                            edabits::ring_to_field_b2a_many::<XlenInt, F, _>(&xs, &b, c)
+                            casts::r2f_b2a_preproc_many::<XlenInt, F, _>(&xs, &b, c)
                         })?
                     };
                     debug_assert_eq!(field_all.len(), 2 * chunk_len);
@@ -904,11 +904,11 @@ where
 
                     let batch_eda = preproc.take_edabits::<XlenInt>(2 * chunk_len)?;
                     let field_all: Vec<Rep3PrimeFieldShare<F>> = if inc_b2a_max_forks <= 1 {
-                        edabits::ring_to_field_b2a_many::<XlenInt, F, _>(&combined, &batch_eda, io_ctx.main())?
+                        casts::r2f_b2a_preproc_many::<XlenInt, F, _>(&combined, &batch_eda, io_ctx.main())?
                     } else {
                         let chunk_size = (combined.len()).div_ceil(inc_b2a_max_forks);
                         io_ctx.par_chunks_preproc(combined, batch_eda, Some(chunk_size), |xs, b, c| {
-                            edabits::ring_to_field_b2a_many::<XlenInt, F, _>(&xs, &b, c)
+                            casts::r2f_b2a_preproc_many::<XlenInt, F, _>(&xs, &b, c)
                         })?
                     };
                     debug_assert_eq!(field_all.len(), 2 * chunk_len);

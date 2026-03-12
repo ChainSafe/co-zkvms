@@ -2,14 +2,12 @@
 //!
 //! This module contains implementations of rep3 rngs
 
-use super::yao::GCUtils;
 use crate::RngType;
 use ark_ec::CurveGroup;
 use ark_ff::One;
 use ark_linear_sumcheck::rng::FeedableRNG;
-use fancy_garbling::WireMod2;
-use mpc_types::field::PrimeField;
-use mpc_types::protocols::rep3::id::PartyID;
+use crate::field::PrimeField;
+use crate::protocols::rep3::PartyID;
 use num_bigint::BigUint;
 use parking_lot::Mutex;
 use rand::{
@@ -69,15 +67,6 @@ impl Rep3CorrelatedRng {
             PartyID::ID0 => panic!("Garbler should not be PartyID::ID0"),
             PartyID::ID1 => self.rand.rng1.r#gen(),
             PartyID::ID2 => self.rand.rng2.r#gen(),
-        }
-    }
-
-    /// Generate a random delta that is equal for the two garblers
-    pub fn generate_random_garbler_delta(&mut self, id: PartyID) -> Option<WireMod2> {
-        match id {
-            PartyID::ID0 => None,
-            PartyID::ID1 => Some(GCUtils::random_delta(&mut self.rand.rng1)),
-            PartyID::ID2 => Some(GCUtils::random_delta(&mut self.rand.rng2)),
         }
     }
 }

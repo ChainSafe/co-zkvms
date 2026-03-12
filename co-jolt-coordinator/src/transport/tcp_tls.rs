@@ -6,7 +6,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::{eyre, Context};
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 use mpc_net::topology::MpcStarNetCoordinator;
-use mpc_types::protocols::rep3::id::PartyID;
+use mpc_core::protocols::rep3::PartyID;
 
 use super::ephemeral_identity::EphemeralIdentity;
 

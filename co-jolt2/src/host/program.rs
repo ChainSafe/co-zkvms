@@ -4,7 +4,7 @@ use jolt_core::zkvm::bytecode::BytecodePreprocessing;
 use jolt_core::zkvm::ram::RAMPreprocessing;
 use jolt_core::zkvm::JoltSharedPreprocessing;
 use mpc_core::protocols::rep3_ring::{self};
-use rand::RngCore;
+use rand::{CryptoRng, RngCore};
 use rayon::prelude::*;
 
 use crate::host::jolt_device::Rep3ProgramIOInput;
@@ -13,7 +13,7 @@ use crate::utils::compute_ram_k;
 use crate::zkvm::instruction::{Rep3Cycle, Rep3Operand};
 
 pub trait Rep3Program {
-    fn generate_trace_shares<R: RngCore>(
+    fn generate_trace_shares<R: RngCore + CryptoRng>(
         &mut self,
         inputs: &[u8],
         untrusted_advice: &[u8],
@@ -24,7 +24,7 @@ pub trait Rep3Program {
 
 impl Rep3Program for Program {
     #[tracing::instrument(skip_all, name = "Program::generate_trace_shares")]
-    fn generate_trace_shares<R: RngCore>(
+    fn generate_trace_shares<R: RngCore + CryptoRng>(
         &mut self,
         inputs: &[u8],
         untrusted_advice: &[u8],
@@ -112,7 +112,7 @@ fn public_operand_indices(cycle: &tracer::instruction::Cycle) -> &'static [usize
 /// Extracts operand values directly from the vanilla Cycle, generates binary
 /// shares, and builds 3 Rep3Cycles via `from_cycle_shared`.
 /// Operands at indices returned by `public_operand_indices` are kept public.
-fn share_cycle(cycle: &tracer::instruction::Cycle, rng: &mut impl rand::Rng) -> (Rep3Cycle, Rep3Cycle, Rep3Cycle) {
+fn share_cycle(cycle: &tracer::instruction::Cycle, rng: &mut (impl rand::Rng + rand::CryptoRng)) -> (Rep3Cycle, Rep3Cycle, Rep3Cycle) {
     let mut copied_cycle = cycle.clone();
     let values = Rep3Cycle::extract_operand_values(&copied_cycle);
     let public_indices = public_operand_indices(cycle);
@@ -130,7 +130,7 @@ fn share_cycle(cycle: &tracer::instruction::Cycle, rng: &mut impl rand::Rng) -> 
                 let op = Rep3Operand::Public(v as i128);
                 [op, op, op]
             } else {
-                let s = rep3_ring::binary::generate_shares_rep3(v as jolt_common::constants::XlenInt, rng);
+                let s = rep3_ring::share_ring_element_binary(rep3_ring::ring::ring_impl::RingElement(v as jolt_common::constants::XlenInt), rng);
                 [Rep3Operand::from_binary(s[0]), Rep3Operand::from_binary(s[1]), Rep3Operand::from_binary(s[2])]
             }
         })

@@ -8,14 +8,17 @@ members = [
     "jolt-common",
     "mpc-net",
     "mpc-core",
-    "mpc-types",
+]
+exclude = [
+    "jolt-sdk",
+    "examples/fibonacci",
+    "examples/sha2-chain",
 ]
 default-members = [
     "co-jolt2",
     "co-jolt-coordinator",
     "mpc-net",
     "mpc-core",
-    "mpc-types",
 ]
 
 [workspace.package]
@@ -93,7 +96,6 @@ crossbeam = "0.8.3"
 merlin = "3.0.0"
 blake2 = "0.10"
 
-mpc-types = { path = "./mpc-types" }
 anyhow = "1.0.93"
 argh = "0.1.12"
 

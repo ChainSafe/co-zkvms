@@ -2,6 +2,8 @@
 //!
 //! This module contains operations with arithmetic shares
 
+pub use super::types::{Rep3RingShare, Rep3RingSignedShare};
+
 use crate::{
     IoResult,
     protocols::{
@@ -13,12 +15,9 @@ use crate::{
     },
 };
 use itertools::{Itertools, izip};
-use mpc_types::protocols::{
-    rep3::id::PartyID,
-    rep3_ring::{
-        Rep3RingShare,
-        ring::{bit::Bit, int_ring::IntRing2k, ring_impl::RingElement},
-    },
+use crate::protocols::{
+    rep3::PartyID,
+    rep3_ring::ring::{bit::Bit, int_ring::IntRing2k, ring_impl::RingElement},
 };
 use num_traits::{One, Zero};
 use rand::{Rng, distributions::Standard, prelude::Distribution};
@@ -28,20 +27,6 @@ use super::{binary, conversion, detail};
 
 /// Type alias for a [`Rep3RingShare`] which is used for both arithmetic and binary shares.
 pub type RingShare<F> = Rep3RingShare<F>;
-
-pub fn generate_shares_rep3<T: IntRing2k, R: Rng>(val: T, rng: &mut R) -> Vec<Rep3RingShare<T>>
-where
-    Standard: Distribution<T>,
-{
-    let t0 = rng.r#gen::<T>();
-    let t1 = rng.r#gen::<T>();
-    let t2 = val.wrapping_sub(&t0).wrapping_sub(&t1);
-
-    let p_share_0 = Rep3RingShare::new(t0, t2);
-    let p_share_1 = Rep3RingShare::new(t1, t0);
-    let p_share_2 = Rep3RingShare::new(t2, t1);
-    vec![p_share_0, p_share_1, p_share_2]
-}
 
 /// Performs addition between two shared values.
 pub fn add<T: IntRing2k>(a: RingShare<T>, b: RingShare<T>) -> RingShare<T> {
@@ -576,7 +561,7 @@ where
     Standard: Distribution<T>,
 {
     let diff = sub(a, b);
-    let bits = conversion::a2b_selector(diff, io_context)?;
+    let bits = conversion::a2b(diff, io_context)?;
     let is_zero = binary::is_zero(&bits, io_context)?;
     Ok(is_zero)
 }

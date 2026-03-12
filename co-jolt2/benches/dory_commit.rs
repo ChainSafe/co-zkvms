@@ -11,17 +11,21 @@ use mpc_core::protocols::rep3::network::IoContextPool;
 use mpc_core::protocols::rep3::test_utils::{run_rep3_local_test_with_coordinator, LocalRep3TestWorkerNet};
 use mpc_core::protocols::rep3_ring;
 use mpc_core::protocols::rep3_ring::edabits;
+use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
 use mpc_core::protocols::rep3_ring::ring::u66::U66;
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use rand::Rng;
+use rand::SeedableRng;
+use rand_chacha::ChaCha12Rng;
 use std::time::{Duration, Instant};
 
 const N: usize = 1 << 18;
 const ITERS: usize = 10;
 const WARMUP: usize = 3;
 
+#[cfg(feature = "ring-msm")]
 fn main() {
-    let mut rng = ark_std::test_rng();
+    let mut rng = ChaCha12Rng::seed_from_u64(0);
 
     // Sample u64 coefficients
     let values: Vec<u64> = (0..N).map(|_| rng.gen()).collect();
@@ -39,12 +43,10 @@ fn main() {
 
     // Generate ring-share polynomials (arith + bin, one per party)
     use jolt_common::constants::{ArithmeticWideInt, XlenInt};
-    let all_arith: Vec<_> = values
-        .iter()
-        .map(|&v| rep3_ring::arithmetic::generate_shares_rep3::<ArithmeticWideInt, _>(v as ArithmeticWideInt, &mut rng))
-        .collect();
+    let all_arith: Vec<_> =
+        values.iter().map(|&v| rep3_ring::share_ring_element(RingElement(v as ArithmeticWideInt), &mut rng)).collect();
     let all_bin: Vec<_> =
-        values.iter().map(|&v| rep3_ring::binary::generate_shares_rep3::<XlenInt, _>(v as XlenInt, &mut rng)).collect();
+        values.iter().map(|&v| rep3_ring::share_ring_element_binary(RingElement(v as XlenInt), &mut rng)).collect();
     let polys_u64: [Rep3MultilinearPolynomial<Fr>; 3] = std::array::from_fn(|pid| {
         let shares: Vec<Rep3RingShare<ArithmeticWideInt>> = all_arith.iter().map(|s| s[pid]).collect();
         let shares_bin: Vec<Rep3RingShare<XlenInt>> = all_bin.iter().map(|s| s[pid]).collect();

@@ -26,14 +26,7 @@ bytes = { workspace = true }
 subtle = { workspace = true }
 thiserror = { workspace = true }
 bytesize = { workspace = true }
-nom = "7"
-sha3 = "0.10.8"
-fancy-garbling = { git = "https://github.com/GaloisInc/swanky", rev = "5ff648457218b74da9d8323b7ca47166ff5be4b3" }
-scuttlebutt = { git = "https://github.com/GaloisInc/swanky", rev = "5ff648457218b74da9d8323b7ca47166ff5be4b3" }
-vectoreyes = { git = "https://github.com/GaloisInc/swanky", rev = "5ff648457218b74da9d8323b7ca47166ff5be4b3" }
 parking_lot = "0.12.0"
-
-mpc-types.workspace = true
 mpc-net = { path = "../mpc-net" }
 jolt-core.workspace = true
 

@@ -80,10 +80,6 @@ jolt-common.workspace = true
 name = "worker"
 path = "src/bin/worker.rs"
 
-[[bin]]
-name = "client"
-path = "src/bin/client.rs"
-
 [[example]]
 name = "rep3_jolt"
 required-features = ["test-utils"]
@@ -91,6 +87,12 @@ required-features = ["test-utils"]
 [[bench]]
 name = "fwht"
 harness = false
+
+[[bench]]
+name = "dory_commit"
+harness = false
+required-features = ["ring-msm"]
+
 
 [features]
 default = ["std", "debug", "zk"]
