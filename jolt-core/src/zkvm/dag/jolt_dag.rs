@@ -174,56 +174,60 @@ impl JoltDAG {
             .context("Stage 5")?;
         }
 
-        // Batch-prove all openings
-        let batched_opening_proof =
-            proofs.get(&ProofKeys::ReducedOpeningProof).expect("Reduced opening proof not found");
-        let batched_opening_proof = match batched_opening_proof {
-            ProofData::ReducedOpeningProof(proof) => proof.clone(),
-            _ => panic!("Invalid proof type for stage 4"),
-        };
+        {
+            // Batch-prove all openings
+            let batched_opening_proof =
+                proofs.get(&ProofKeys::ReducedOpeningProof).expect("Reduced opening proof not found");
+            let batched_opening_proof = match batched_opening_proof {
+                ProofData::ReducedOpeningProof(proof) => proof,
+                _ => panic!("Invalid proof type for stage 4"),
+            };
+            let stage5_eval_commitment = PCS::eval_commitment(&batched_opening_proof.joint_opening_proof)
+                .ok_or_else(|| anyhow::anyhow!("missing eval commitment"))?;
 
-        let mut commitments_map = HashMap::new();
-        for polynomial in AllCommittedPolynomials::iter() {
-            commitments_map.insert(*polynomial, commitments.borrow()[polynomial.to_index()].clone());
-        }
-        let accumulator = state_manager.get_verifier_accumulator();
-        accumulator
-            .borrow_mut()
-            .reduce_and_verify(
-                &state_manager.preprocessing.generators,
-                &mut commitments_map,
-                &batched_opening_proof,
-                &mut *transcript.borrow_mut(),
-            )
-            .context("Stage 5")?;
-        drop(proofs);
+            let mut commitments_map = HashMap::new();
+            for polynomial in AllCommittedPolynomials::iter() {
+                commitments_map.insert(*polynomial, commitments.borrow()[polynomial.to_index()].clone());
+            }
+            let accumulator = state_manager.get_verifier_accumulator();
+            accumulator
+                .borrow_mut()
+                .reduce_and_verify(
+                    &state_manager.preprocessing.generators,
+                    &mut commitments_map,
+                    batched_opening_proof,
+                    &mut *transcript.borrow_mut(),
+                )
+                .context("Stage 5")?;
+            drop(proofs);
 
-        #[cfg(feature = "zk")]
-        if state_manager.blindfold_proof.is_some() {
-            Self::verify_blindfold::<F, ProofTranscript, PCS>(
-                &mut state_manager,
-                stage1_blindfold,
-                &stage2_instances,
-                StageBlindfoldVerifyData {
-                    batching_coefficients: stage2_batching_coeffs,
-                    challenges: r_stage2,
-                    output_claim_ids: stage2_output_claim_ids,
-                },
-                &stage3_instances,
-                StageBlindfoldVerifyData {
-                    batching_coefficients: stage3_batching_coeffs,
-                    challenges: r_stage3,
-                    output_claim_ids: stage3_output_claim_ids,
-                },
-                &stage4_instances,
-                StageBlindfoldVerifyData {
-                    batching_coefficients: stage4_batching_coeffs,
-                    challenges: r_stage4,
-                    output_claim_ids: stage4_output_claim_ids,
-                },
-                &batched_opening_proof,
-            )
-            .context("BlindFold")?;
+            #[cfg(feature = "zk")]
+            if state_manager.blindfold_proof.is_some() {
+                Self::verify_blindfold::<F, ProofTranscript, PCS>(
+                    &mut state_manager,
+                    stage1_blindfold,
+                    &stage2_instances,
+                    StageBlindfoldVerifyData {
+                        batching_coefficients: stage2_batching_coeffs,
+                        challenges: r_stage2,
+                        output_claim_ids: stage2_output_claim_ids,
+                    },
+                    &stage3_instances,
+                    StageBlindfoldVerifyData {
+                        batching_coefficients: stage3_batching_coeffs,
+                        challenges: r_stage3,
+                        output_claim_ids: stage3_output_claim_ids,
+                    },
+                    &stage4_instances,
+                    StageBlindfoldVerifyData {
+                        batching_coefficients: stage4_batching_coeffs,
+                        challenges: r_stage4,
+                        output_claim_ids: stage4_output_claim_ids,
+                    },
+                    stage5_eval_commitment,
+                )
+                .context("BlindFold")?;
+            }
         }
 
         Ok(())
@@ -245,7 +249,7 @@ impl JoltDAG {
         stage3_data: StageBlindfoldVerifyData<F>,
         stage4_instances: &[Box<dyn SumcheckInstance<F, ProofTranscript>>],
         stage4_data: StageBlindfoldVerifyData<F>,
-        batched_opening_proof: &crate::poly::opening_proof::ReducedOpeningProof<F, Bn254Curve, PCS, ProofTranscript>,
+        stage5_eval_commitment: <Bn254Curve as JoltCurve>::G1,
     ) -> Result<(), anyhow::Error> {
         let opening_data = state_manager
             .get_verifier_accumulator()
@@ -355,6 +359,12 @@ impl JoltDAG {
             stage3_data.output_claim_ids,
             stage4_data.output_claim_ids,
         ];
+        let initial_claims = vec![
+            F::zero(),
+            Self::batched_initial_claim(stage2_instances, &stage2_data.batching_coefficients),
+            Self::batched_initial_claim(stage3_instances, &stage3_data.batching_coefficients),
+            Self::batched_initial_claim(stage4_instances, &stage4_data.batching_coefficients),
+        ];
 
         let mut stage_configs = Vec::new();
         let mut baked_challenges = Vec::new();
@@ -416,12 +426,13 @@ impl JoltDAG {
         );
         let baked = BakedPublicInputs {
             challenges: baked_challenges,
-            initial_claims: vec![F::zero()],
+            initial_claims,
             batching_coefficients: Vec::new(),
             output_constraint_challenges: baked_output_challenges,
             input_constraint_challenges: baked_input_challenges,
             extra_constraint_challenges: opening_data.constraint_coeffs.clone(),
         };
+        let oc_block_lens: Vec<usize> = oc_blocks.iter().map(|b| b.len()).collect();
         let r1cs =
             VerifierR1CSBuilder::<F>::new_with_extra(&stage_configs, &[extra_constraint], &baked, oc_blocks).build();
         drop(proofs);
@@ -429,8 +440,7 @@ impl JoltDAG {
         let verifier_input = BlindFoldVerifierInput {
             round_commitments,
             output_claims_row_commitments,
-            eval_commitments: vec![PCS::eval_commitment(&batched_opening_proof.joint_opening_proof)
-                .ok_or_else(|| anyhow::anyhow!("missing eval commitment"))?],
+            eval_commitments: vec![stage5_eval_commitment],
         };
         let blindfold_proof =
             state_manager.blindfold_proof.as_ref().ok_or_else(|| anyhow::anyhow!("missing blindfold proof"))?;
@@ -543,6 +553,25 @@ impl JoltDAG {
                 ));
         }
         Some(values)
+    }
+
+    #[cfg(feature = "zk")]
+    fn batched_initial_claim<F, ProofTranscript>(
+        instances: &[Box<dyn SumcheckInstance<F, ProofTranscript>>],
+        batching_coefficients: &[F],
+    ) -> F
+    where
+        F: JoltField,
+        ProofTranscript: Transcript,
+    {
+        let max_num_rounds = instances.iter().map(|instance| instance.num_rounds()).max().unwrap_or(0);
+        instances
+            .iter()
+            .zip(batching_coefficients.iter())
+            .map(|(instance, coeff)| {
+                instance.input_claim().mul_pow_2(max_num_rounds - instance.num_rounds()) * coeff
+            })
+            .sum()
     }
 
     #[cfg(feature = "zk")]

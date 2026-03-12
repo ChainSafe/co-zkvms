@@ -32,7 +32,9 @@ use co_jolt2::zkvm::Rep3JoltWorker;
 use co_jolt_coordinator::zkvm::Rep3Jolt;
 use jolt_core::host::Program;
 use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
+use jolt_core::transcripts::Blake2bTranscript;
 use jolt_core::zkvm::bytecode::BytecodePreprocessing;
+use jolt_core::zkvm::dag::jolt_dag::JoltDAG;
 use jolt_core::zkvm::dag::state_manager::StateManager as VanillaStateManager;
 use jolt_core::zkvm::ram::RAMPreprocessing;
 use jolt_core::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials, DTH_ROOT_OF_K};
@@ -43,6 +45,7 @@ use tracer::JoltDevice;
 
 type F = Fr;
 type PCS = DoryCommitmentScheme;
+type FS = Blake2bTranscript;
 
 #[derive(Parser)]
 struct Args {
@@ -260,7 +263,10 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     let (bytecode, memory_init, _) = program.decode();
 
     info!("tracing guest program");
-    let (mut vanilla_trace, _memory, io_device) = program.trace(&inputs, &[], &[]);
+    let (mut vanilla_trace, _memory, mut io_device) = program.trace(&inputs, &[], &[]);
+
+    // Match Jolt's public I/O normalization before proving / verifying.
+    io_device.outputs.truncate(io_device.outputs.iter().rposition(|&b| b != 0).map_or(0, |pos| pos + 1));
 
     let padded_len = (vanilla_trace.len() + 1).next_power_of_two();
     info!(raw_len = vanilla_trace.len(), padded_len, "padding traces");
@@ -332,12 +338,31 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     let proof = <JoltArch as Rep3Jolt<F, PCS, _>>::prove(
         &verifier_preprocessing,
         &preprocessing.generators,
-        io_device,
+        io_device.clone(),
         &mut network,
         ram_k,
         padded_len,
     )?;
     info!(proof_size = std::mem::size_of_val(&proof), "coordinator proof complete");
+
+    let twist_switch = proof.twist_sumcheck_switch_index;
+    let verifier_program_io = JoltDevice {
+        inputs: io_device.inputs.clone(),
+        outputs: io_device.outputs.clone(),
+        panic: io_device.panic,
+        memory_layout: io_device.memory_layout.clone(),
+        trusted_advice: vec![],
+        untrusted_advice: vec![],
+    };
+    let verifier_sm = VanillaStateManager::from_proof(
+        proof,
+        Box::leak(Box::new(verifier_preprocessing)),
+        verifier_program_io,
+        ram_k,
+        twist_switch,
+    );
+    JoltDAG::verify::<F, FS, PCS>(verifier_sm).map_err(|e| eyre::eyre!("{e:#}"))?;
+    info!("coordinator proof verified successfully");
 
     Ok(())
 }

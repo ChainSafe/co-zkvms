@@ -10,6 +10,7 @@ pub struct BytecodeStage4Init<F: JoltField> {
     // ReadRaf
     pub read_raf_gamma: F,
     pub rv_claim: F,
+    pub read_raf_stage_gamma_powers: [Vec<F>; 3],
     pub val_polys: [Vec<F>; 3],
     pub r_cycles: [Vec<F::Challenge>; 3],
     // Booleanity
@@ -238,6 +239,11 @@ impl Rep3BytecodeDag {
             log_K,
             log_T,
             d,
+            [
+                _gamma_powers_1.clone(),
+                _gamma_powers_2.clone(),
+                _gamma_powers_3.clone(),
+            ],
             val_polys.clone(),
         );
 
@@ -276,6 +282,7 @@ impl Rep3BytecodeDag {
         let init = BytecodeStage4Init {
             read_raf_gamma,
             rv_claim,
+            read_raf_stage_gamma_powers: [_gamma_powers_1, _gamma_powers_2, _gamma_powers_3],
             val_polys,
             r_cycles,
             bool_gamma_powers,

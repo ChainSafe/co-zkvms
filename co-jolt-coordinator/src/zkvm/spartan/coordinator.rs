@@ -64,12 +64,10 @@ impl Rep3SpartanDag {
         let mut polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds_x);
         let mut claim = F::zero();
         #[cfg(feature = "zk")]
-        let experimental_zk = std::env::var_os("CO_JOLT2_EXPERIMENTAL_DAG_ZK_SUMCHECKS").is_some();
-        #[cfg(feature = "zk")]
-        let pedersen_gens = experimental_zk.then(|| {
+        let pedersen_gens = {
             let pcs_setup = state
                 .pcs_setup
-                .expect("StateManager::pcs_setup must be set for experimental DAG ZK sumchecks");
+                .expect("StateManager::pcs_setup must be set for DAG ZK sumchecks");
             let blindfold_pedersen_count = [
                 4usize,
                 LOOKUP_D + 1,
@@ -84,9 +82,9 @@ impl Rep3SpartanDag {
                 PCS::zk_generators(pcs_setup, blindfold_pedersen_count)
                 .expect("PCS does not support BlindFold generators");
             PedersenGenerators::<Bn254Curve>::new(message_generators, blinding_generator)
-        });
+        };
         #[cfg(feature = "zk")]
-        let mut zk_rng = experimental_zk.then(thread_rng);
+        let mut zk_rng = thread_rng();
         #[cfg(feature = "zk")]
         let mut round_commitments = Vec::with_capacity(num_rounds_x);
         #[cfg(feature = "zk")]
@@ -102,9 +100,7 @@ impl Rep3SpartanDag {
             let t0: F = round_shares.iter().map(|x| x.0.into_fe()).sum();
             let t_inf: F = round_shares.iter().map(|x| x.1.into_fe()).sum();
             #[cfg(feature = "zk")]
-            let r_i = if let (Some(pedersen_gens), Some(zk_rng)) =
-                (pedersen_gens.as_ref(), zk_rng.as_mut())
-            {
+            let r_i = {
                 let scalar_times_w_i =
                     eq_poly.current_scalar * eq_poly.w[eq_poly.current_index - 1];
                 let cubic_poly = UniPoly::from_linear_times_quadratic_with_hint(
@@ -117,7 +113,7 @@ impl Rep3SpartanDag {
                     claim,
                 );
 
-                let blinding = F::random(zk_rng);
+                let blinding = F::random(&mut zk_rng);
                 let commitment = pedersen_gens.commit(&cubic_poly.coeffs, &blinding);
                 state.transcript.append_message(b"sumcheck_commitment");
                 state.transcript.append_serializable(&commitment);
@@ -130,15 +126,6 @@ impl Rep3SpartanDag {
                 claim = cubic_poly.evaluate(&r_i);
                 eq_poly.bind(r_i);
                 r_i
-            } else {
-                process_eq_sumcheck_round(
-                    (t0, t_inf),
-                    &mut eq_poly,
-                    &mut polys,
-                    &mut r,
-                    &mut claim,
-                    &mut state.transcript,
-                )
             };
             #[cfg(not(feature = "zk"))]
             let r_i = process_eq_sumcheck_round(
@@ -181,9 +168,7 @@ impl Rep3SpartanDag {
             .map(|input| claimed_witness_evals[input.to_index()])
             .collect();
         #[cfg(feature = "zk")]
-        let proof = if let (Some(pedersen_gens), Some(zk_rng)) =
-            (pedersen_gens.as_ref(), zk_rng.as_mut())
-        {
+        let proof = {
             state.accumulator.set_zk_mode(true);
             let opening_point =
                 jolt_core::poly::opening_proof::OpeningPoint::new(outer_sumcheck_r.clone());
@@ -237,7 +222,7 @@ impl Rep3SpartanDag {
             state.accumulator.set_zk_mode(false);
 
             let committed_output_claims =
-                pedersen_gens.commit_chunked(&output_claim_values, zk_rng);
+                pedersen_gens.commit_chunked(&output_claim_values, &mut zk_rng);
             let (output_claims_commitments, output_claims_blindings): (Vec<_>, Vec<_>) =
                 committed_output_claims.into_iter().unzip();
             state.transcript.append_message(b"output_claims_coms");
@@ -274,8 +259,6 @@ impl Rep3SpartanDag {
                     .collect(),
                 output_claims_commitments,
             )
-        } else {
-            SumcheckInstanceProof::new(polys)
         };
         #[cfg(not(feature = "zk"))]
         let proof = SumcheckInstanceProof::new(polys);
@@ -283,10 +266,7 @@ impl Rep3SpartanDag {
             .proofs
             .insert(ProofKeys::Stage1Sumcheck, ProofData::SumcheckProof(proof));
         #[cfg(feature = "zk")]
-        let proof_is_zk = matches!(
-            state.proofs.get(&ProofKeys::Stage1Sumcheck),
-            Some(ProofData::SumcheckProof(SumcheckInstanceProof::Zk(_)))
-        );
+        let proof_is_zk = true;
         #[cfg(not(feature = "zk"))]
         let proof_is_zk = false;
 

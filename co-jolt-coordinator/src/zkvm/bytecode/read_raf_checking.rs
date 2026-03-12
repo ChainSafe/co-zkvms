@@ -1,5 +1,7 @@
 use jolt_common::constants::REGISTER_COUNT;
 use jolt_core::poly::eq_poly::EqPolynomial;
+#[cfg(feature = "zk")]
+use jolt_core::poly::opening_proof::OpeningId;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::bytecode::read_raf_checking::ReadRafSumcheck;
@@ -8,6 +10,8 @@ use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::poly::opening_proof::Rep3OpeningAccumulator;
 use crate::subprotocols::sumcheck::PublicSumcheckInstance;
 use jolt_core::field::JoltField;
+#[cfg(feature = "zk")]
+use jolt_core::subprotocols::blindfold::InputClaimConstraint;
 
 impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for ReadRafSumcheck<F> {
     fn degree(&self) -> usize {
@@ -122,5 +126,18 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for ReadRafSumche
                 vec![claims[i]],
             );
         }
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::all_weighted_openings(&self.blindfold_input_openings())
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(
+        &self,
+        _accumulator: &Rep3OpeningAccumulator<F>,
+    ) -> Vec<F> {
+        self.blindfold_input_challenge_values()
     }
 }

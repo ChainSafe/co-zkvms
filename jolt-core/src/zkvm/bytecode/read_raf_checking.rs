@@ -1,6 +1,8 @@
 use std::{cell::RefCell, iter::once, rc::Rc, sync::Arc};
 
 use num_traits::Zero;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::InputClaimConstraint;
 
 use crate::{
     field::JoltField,
@@ -11,7 +13,8 @@ use crate::{
             BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
         },
         opening_proof::{
-            OpeningPoint, ProverOpeningAccumulator, SumcheckId, VerifierOpeningAccumulator,
+            OpeningId, OpeningPoint, ProverOpeningAccumulator, SumcheckId,
+            VerifierOpeningAccumulator,
             BIG_ENDIAN,
         },
         ra_poly::RaPolynomial,
@@ -63,6 +66,7 @@ pub struct ReadRafSumcheck<F: JoltField> {
     d: usize,
     prover_state: Option<ReadCheckingProverState<F>>,
     val_polys: [MultilinearPolynomial<F>; STAGES],
+    stage_gamma_powers: [Vec<F>; STAGES],
     int_poly: IdentityPolynomial<F>,
 }
 
@@ -92,6 +96,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         log_K: usize,
         log_T: usize,
         d: usize,
+        stage_gamma_powers: [Vec<F>; STAGES],
         val_polys: [Vec<F>; STAGES],
         r_cycles: [Vec<F::Challenge>; STAGES],
         pc: Vec<usize>,
@@ -149,6 +154,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 MultilinearPolynomial::from(val_polys[1].clone()),
                 MultilinearPolynomial::from(val_polys[2].clone()),
             ],
+            stage_gamma_powers,
             int_poly,
             gamma: [F::one(), gamma, gamma_sqr],
             gamma_sqr,
@@ -164,6 +170,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
         log_K: usize,
         log_T: usize,
         d: usize,
+        stage_gamma_powers: [Vec<F>; STAGES],
         val_polys: [Vec<F>; STAGES],
     ) -> Self {
         let log_K_chunk = log_K.div_ceil(d);
@@ -187,6 +194,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
                 MultilinearPolynomial::from(val_polys[1].clone()),
                 MultilinearPolynomial::from(val_polys[2].clone()),
             ],
+            stage_gamma_powers,
             int_poly,
         }
     }
@@ -424,6 +432,19 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
             );
         });
     }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::all_weighted_openings(&self.blindfold_input_openings())
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(
+        &self,
+        _opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+    ) -> Vec<F> {
+        self.blindfold_input_challenge_values()
+    }
 }
 
 impl<F: JoltField> ReadRafSumcheck<F> {
@@ -471,6 +492,98 @@ impl<F: JoltField> ReadRafSumcheck<F> {
     pub fn val_polys_evaluate(&self, r_address: &[F::Challenge]) -> [F; 3] {
         use crate::poly::multilinear_polynomial::PolynomialEvaluation;
         std::array::from_fn(|i| self.val_polys[i].evaluate(r_address))
+    }
+
+    pub fn blindfold_input_openings(&self) -> Vec<OpeningId> {
+        let mut openings = Vec::with_capacity(
+            3 + NUM_CIRCUIT_FLAGS + 3 + 4 + LookupTables::<XLEN>::COUNT + 2,
+        );
+
+        openings.push(OpeningId::Virtual(
+            VirtualPolynomial::UnexpandedPC,
+            SumcheckId::SpartanOuter,
+        ));
+        openings.push(OpeningId::Virtual(
+            VirtualPolynomial::Imm,
+            SumcheckId::SpartanOuter,
+        ));
+        openings.push(OpeningId::Virtual(
+            VirtualPolynomial::Rd,
+            SumcheckId::SpartanOuter,
+        ));
+        for flag in CircuitFlags::iter() {
+            openings.push(OpeningId::Virtual(
+                VirtualPolynomial::OpFlags(flag),
+                SumcheckId::SpartanOuter,
+            ));
+        }
+
+        openings.push(OpeningId::Virtual(
+            VirtualPolynomial::RdWa,
+            SumcheckId::RegistersReadWriteChecking,
+        ));
+        openings.push(OpeningId::Virtual(
+            VirtualPolynomial::Rs1Ra,
+            SumcheckId::RegistersReadWriteChecking,
+        ));
+        openings.push(OpeningId::Virtual(
+            VirtualPolynomial::Rs2Ra,
+            SumcheckId::RegistersReadWriteChecking,
+        ));
+
+        openings.push(OpeningId::Virtual(
+            VirtualPolynomial::RdWa,
+            SumcheckId::RegistersValEvaluation,
+        ));
+        openings.push(OpeningId::Virtual(
+            VirtualPolynomial::UnexpandedPC,
+            SumcheckId::SpartanShift,
+        ));
+        openings.push(OpeningId::Virtual(
+            VirtualPolynomial::OpFlags(CircuitFlags::IsNoop),
+            SumcheckId::SpartanShift,
+        ));
+        openings.push(OpeningId::Virtual(
+            VirtualPolynomial::InstructionRafFlag,
+            SumcheckId::InstructionReadRaf,
+        ));
+        for i in 0..LookupTables::<XLEN>::COUNT {
+            openings.push(OpeningId::Virtual(
+                VirtualPolynomial::LookupTableFlag(i),
+                SumcheckId::InstructionReadRaf,
+            ));
+        }
+
+        openings.push(OpeningId::Virtual(
+            VirtualPolynomial::PC,
+            SumcheckId::SpartanOuter,
+        ));
+        openings.push(OpeningId::Virtual(
+            VirtualPolynomial::PC,
+            SumcheckId::SpartanShift,
+        ));
+
+        openings
+    }
+
+    pub fn blindfold_input_challenge_values(&self) -> Vec<F> {
+        let stage2_gamma = self.gamma[1];
+        let stage3_gamma = self.gamma[2];
+        let stage4_gamma = self.gamma_cub;
+        let stage5_gamma = self.gamma_sqr.square();
+
+        let mut coeffs = Vec::with_capacity(
+            self.stage_gamma_powers[0].len()
+                + self.stage_gamma_powers[1].len()
+                + self.stage_gamma_powers[2].len()
+                + 2,
+        );
+        coeffs.extend_from_slice(&self.stage_gamma_powers[0]);
+        coeffs.extend(self.stage_gamma_powers[1].iter().map(|coeff| *coeff * stage2_gamma));
+        coeffs.extend(self.stage_gamma_powers[2].iter().map(|coeff| *coeff * stage3_gamma));
+        coeffs.push(stage4_gamma);
+        coeffs.push(stage5_gamma);
+        coeffs
     }
 
     pub fn degree(&self) -> usize {

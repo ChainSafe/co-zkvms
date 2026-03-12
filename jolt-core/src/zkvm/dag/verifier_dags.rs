@@ -865,6 +865,7 @@ impl BytecodeDag {
             log_K,
             log_T,
             d,
+            [gamma_powers_1.clone(), gamma_powers_2.clone(), gamma_powers_3.clone()],
             val_polys,
         );
 

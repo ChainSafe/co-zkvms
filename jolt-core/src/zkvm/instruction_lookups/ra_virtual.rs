@@ -4,12 +4,14 @@ use std::rc::Rc;
 use crate::field::JoltField;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::opening_proof::{
-    OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
+    OpeningId, OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::InputClaimConstraint;
 use crate::subprotocols::sumcheck::SumcheckInstance;
 use crate::transcripts::Transcript;
 use crate::zkvm::instruction_lookups::D;
-use crate::zkvm::witness::CommittedPolynomial;
+use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 
 pub struct InstructionRaSumcheck<F: JoltField> {
     input_claim: F,
@@ -91,5 +93,13 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InstructionRaSumche
                     .collect(),
             );
         }
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::direct(OpeningId::Virtual(
+            VirtualPolynomial::InstructionRa,
+            SumcheckId::InstructionReadRaf,
+        ))
     }
 }

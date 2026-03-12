@@ -154,6 +154,15 @@ pub enum OpeningId {
     TrustedAdvice,
 }
 
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]
+enum PolynomialId {
+    Committed(CommittedPolynomial),
+    Virtual(VirtualPolynomial),
+    ReducedOpeningClaim(u32),
+    UntrustedAdvice,
+    TrustedAdvice,
+}
+
 pub type Openings<F> = BTreeMap<OpeningId, (OpeningPoint<BIG_ENDIAN, F>, F)>;
 
 #[derive(Clone, Debug)]
@@ -177,11 +186,22 @@ pub trait OpeningAccumulator<F: JoltField> {
     ) -> (OpeningPoint<BIG_ENDIAN, F>, F);
 }
 
+fn underlying_polynomial_id(opening_id: OpeningId) -> PolynomialId {
+    match opening_id {
+        OpeningId::Committed(poly, _) => PolynomialId::Committed(poly),
+        OpeningId::Virtual(poly, _) => PolynomialId::Virtual(poly),
+        OpeningId::ReducedOpeningClaim(index) => PolynomialId::ReducedOpeningClaim(index),
+        OpeningId::UntrustedAdvice => PolynomialId::UntrustedAdvice,
+        OpeningId::TrustedAdvice => PolynomialId::TrustedAdvice,
+    }
+}
+
 #[derive(Clone, Allocative)]
 pub struct OpeningProofReductionSumcheck<F>
 where
     F: JoltField,
 {
+    opening_ids: Vec<OpeningId>,
     pub polynomials: Vec<CommittedPolynomial>,
     sumcheck_id: SumcheckId,
     rlc_coeffs: Vec<F>,
@@ -200,12 +220,22 @@ where
         opening_point: Vec<F::Challenge>,
         claims: Vec<F>,
     ) -> Self {
+        let opening_ids =
+            polynomials.iter().map(|poly| OpeningId::Committed(*poly, sumcheck_id)).collect();
         let rlc_coeffs = if polynomials.len() == 1 {
             vec![F::one()]
         } else {
             vec![] // Will be populated later
         };
-        Self { polynomials, sumcheck_id, input_claims: claims, rlc_coeffs, opening_point, sumcheck_claim: None }
+        Self {
+            opening_ids,
+            polynomials,
+            sumcheck_id,
+            input_claims: claims,
+            rlc_coeffs,
+            opening_point,
+            sumcheck_claim: None,
+        }
     }
 
     fn prepare_sumcheck(&mut self, gammas: &[F]) {
@@ -516,6 +546,8 @@ where
 {
     sumchecks: Vec<OpeningProofReductionSumcheck<F>>,
     pub openings: Openings<F>,
+    opening_ids_by_poly_point: BTreeMap<(PolynomialId, Vec<u8>), OpeningId>,
+    aliases: BTreeMap<OpeningId, OpeningId>,
     zk_mode: bool,
     pending_claims: Vec<F>,
     pending_claim_ids: Vec<OpeningId>,
@@ -555,6 +587,8 @@ where
         Self {
             sumchecks: vec![],
             openings: BTreeMap::new(),
+            opening_ids_by_poly_point: BTreeMap::new(),
+            aliases: BTreeMap::new(),
             zk_mode: false,
             pending_claims: vec![],
             pending_claim_ids: vec![],
@@ -566,6 +600,8 @@ where
         Self {
             sumchecks: vec![],
             openings: BTreeMap::new(),
+            opening_ids_by_poly_point: BTreeMap::new(),
+            aliases: BTreeMap::new(),
             zk_mode: true,
             pending_claims: vec![],
             pending_claim_ids: vec![],
@@ -585,8 +621,23 @@ where
         &mut self.openings
     }
 
+    pub fn prime_openings(&mut self, openings: Openings<F>) {
+        self.openings = openings;
+        self.opening_ids_by_poly_point.clear();
+        self.aliases.clear();
+
+        let seeded_openings: Vec<(OpeningId, OpeningPoint<BIG_ENDIAN, F>, F)> = self
+            .openings
+            .iter()
+            .map(|(id, (point, claim))| (*id, point.clone(), *claim))
+            .collect();
+        for (key, point, claim) in seeded_openings {
+            self.register_existing_opening(key, point, claim);
+        }
+    }
+
     pub fn get_opening(&self, key: OpeningId) -> F {
-        self.openings.get(&key).unwrap().1
+        self.openings.get(&self.resolve_alias(key)).unwrap().1
     }
 
     pub fn get_virtual_polynomial_opening(
@@ -594,9 +645,10 @@ where
         polynomial: VirtualPolynomial,
         sumcheck: SumcheckId,
     ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+        let key = self.resolve_alias(OpeningId::Virtual(polynomial, sumcheck));
         let (point, claim) = self
             .openings
-            .get(&OpeningId::Virtual(polynomial, sumcheck))
+            .get(&key)
             .unwrap_or_else(|| panic!("No opening found for {sumcheck:?} {polynomial:?}"));
         (point.clone(), *claim)
     }
@@ -606,21 +658,119 @@ where
         polynomial: CommittedPolynomial,
         sumcheck: SumcheckId,
     ) -> (OpeningPoint<BIG_ENDIAN, F>, F) {
+        let key = self.resolve_alias(OpeningId::Committed(polynomial, sumcheck));
         let (point, claim) = self
             .openings
-            .get(&OpeningId::Committed(polynomial, sumcheck))
+            .get(&key)
             .unwrap_or_else(|| panic!("No opening found for {sumcheck:?} {polynomial:?}"));
         (point.clone(), *claim)
     }
 
     pub fn get_untrusted_advice_opening(&self) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
-        let (point, claim) = self.openings.get(&OpeningId::UntrustedAdvice)?;
+        let (point, claim) = self.openings.get(&self.resolve_alias(OpeningId::UntrustedAdvice))?;
         Some((point.clone(), *claim))
     }
 
     pub fn get_trusted_advice_opening(&self) -> Option<(OpeningPoint<BIG_ENDIAN, F>, F)> {
-        let (point, claim) = self.openings.get(&OpeningId::TrustedAdvice)?;
+        let (point, claim) = self.openings.get(&self.resolve_alias(OpeningId::TrustedAdvice))?;
         Some((point.clone(), *claim))
+    }
+
+    fn resolve_alias(&self, mut key: OpeningId) -> OpeningId {
+        while let Some(next) = self.aliases.get(&key) {
+            key = *next;
+        }
+        key
+    }
+
+    fn index_opening_id(&mut self, key: OpeningId) {
+        let Some((point, _)) = self.openings.get(&key) else {
+            return;
+        };
+        if point.r.is_empty() {
+            return;
+        }
+        self.opening_ids_by_poly_point
+            .insert((underlying_polynomial_id(key), Self::point_key(point)), key);
+    }
+
+    fn find_existing_opening_at_point(
+        &self,
+        poly_id: PolynomialId,
+        point: &OpeningPoint<BIG_ENDIAN, F>,
+    ) -> Option<(OpeningId, F)> {
+        let existing_id = *self
+            .opening_ids_by_poly_point
+            .get(&(poly_id, Self::point_key(point)))?;
+        let (_, existing_claim) = self.openings.get(&existing_id).expect("indexed opening missing");
+        Some((existing_id, *existing_claim))
+    }
+
+    fn point_key(point: &OpeningPoint<BIG_ENDIAN, F>) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        point
+            .r
+            .serialize_compressed(&mut bytes)
+            .expect("opening point serialization should succeed");
+        bytes
+    }
+
+    fn register_existing_opening(
+        &mut self,
+        key: OpeningId,
+        point: OpeningPoint<BIG_ENDIAN, F>,
+        claim: F,
+    ) {
+        if let Some((existing_id, existing_claim)) =
+            self.find_existing_opening_at_point(underlying_polynomial_id(key), &point)
+        {
+            if existing_id != key {
+                assert_eq!(
+                    claim, existing_claim,
+                    "Inconsistent duplicate opening claims: {key:?} vs {existing_id:?}"
+                );
+                self.aliases.insert(key, existing_id);
+            }
+            return;
+        }
+        self.index_opening_id(key);
+    }
+
+    fn populate_or_alias_opening(
+        &mut self,
+        key: OpeningId,
+        point: OpeningPoint<BIG_ENDIAN, F>,
+    ) -> (OpeningId, F, bool) {
+        if let Some((_, claim)) = self.openings.get(&key) {
+            let claim = *claim;
+            if let Some((existing_id, existing_claim)) =
+                self.find_existing_opening_at_point(underlying_polynomial_id(key), &point)
+            {
+                if existing_id != key {
+                    assert_eq!(
+                        claim, existing_claim,
+                        "Inconsistent duplicate opening claims: {key:?} vs {existing_id:?}"
+                    );
+                    self.aliases.insert(key, existing_id);
+                    return (existing_id, claim, false);
+                }
+            }
+            self.openings.insert(key, (point, claim));
+            self.index_opening_id(key);
+            return (key, claim, true);
+        }
+
+        if let Some((existing_id, existing_claim)) =
+            self.find_existing_opening_at_point(underlying_polynomial_id(key), &point)
+        {
+            self.aliases.insert(key, existing_id);
+            return (existing_id, existing_claim, false);
+        }
+
+        let claim = F::zero();
+        self.openings.insert(key, (point, claim));
+        self.index_opening_id(key);
+        (key, claim, true)
     }
 
     pub fn append_dense<T: Transcript>(
@@ -630,21 +780,20 @@ where
         sumcheck: SumcheckId,
         opening_point: Vec<F::Challenge>,
     ) {
-        let claims: Vec<F> = polynomials
-            .iter()
-            .map(|poly| {
-                let key = OpeningId::Committed(*poly, sumcheck);
-                let claim = self.openings.get(&key).map(|opening| opening.1).unwrap_or(F::zero());
-                self.openings.insert(key, (OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone()), claim));
+        let mut claims = Vec::with_capacity(polynomials.len());
+        for poly in polynomials.iter() {
+            let key = OpeningId::Committed(*poly, sumcheck);
+            let (_, claim, is_canonical) =
+                self.populate_or_alias_opening(key, OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone()));
+            if is_canonical {
                 if self.zk_mode {
                     self.pending_claim_ids.push(key);
                     self.pending_claims.push(claim);
+                } else {
+                    transcript.append_scalar(&claim);
                 }
-                claim
-            })
-            .collect();
-        if !self.zk_mode {
-            transcript.append_scalars(&claims);
+            }
+            claims.push(claim);
         }
 
         self.sumchecks.push(OpeningProofReductionSumcheck::new_verifier_instance(
@@ -664,13 +813,13 @@ where
     ) {
         for label in polynomials.into_iter() {
             let key = OpeningId::Committed(label, sumcheck);
-            let claim = self.openings.get(&key).map(|opening| opening.1).unwrap_or(F::zero());
-            self.openings.insert(key, (OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone()), claim));
-            if self.zk_mode {
+            let (_, claim, is_canonical) =
+                self.populate_or_alias_opening(key, OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone()));
+            if is_canonical && self.zk_mode {
                 self.pending_claim_ids.push(key);
                 self.pending_claims.push(claim);
             }
-            if !self.zk_mode {
+            if is_canonical && !self.zk_mode {
                 transcript.append_scalar(&claim);
             }
 
@@ -691,19 +840,14 @@ where
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         let key = OpeningId::Virtual(polynomial, sumcheck);
-        if let Some((_, claim)) = self.openings.get(&key) {
-            let claim = *claim;
-            self.openings.insert(key, (opening_point.clone(), claim));
+        let (_, claim, is_canonical) = self.populate_or_alias_opening(key, opening_point);
+        if is_canonical {
             if self.zk_mode {
                 self.pending_claims.push(claim);
                 self.pending_claim_ids.push(key);
             } else {
                 transcript.append_scalar(&claim);
             }
-        } else {
-            self.openings.insert(key, (opening_point.clone(), F::zero()));
-            self.pending_claims.push(F::zero());
-            self.pending_claim_ids.push(key);
         }
     }
 
@@ -712,19 +856,15 @@ where
         transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        if let Some((_, claim)) = self.openings.get(&OpeningId::UntrustedAdvice) {
-            let claim = *claim;
-            self.openings.insert(OpeningId::UntrustedAdvice, (opening_point.clone(), claim));
+        let key = OpeningId::UntrustedAdvice;
+        let (_, claim, is_canonical) = self.populate_or_alias_opening(key, opening_point);
+        if is_canonical {
             if self.zk_mode {
                 self.pending_claims.push(claim);
-                self.pending_claim_ids.push(OpeningId::UntrustedAdvice);
+                self.pending_claim_ids.push(key);
             } else {
                 transcript.append_scalar(&claim);
             }
-        } else {
-            self.openings.insert(OpeningId::UntrustedAdvice, (opening_point.clone(), F::zero()));
-            self.pending_claims.push(F::zero());
-            self.pending_claim_ids.push(OpeningId::UntrustedAdvice);
         }
     }
 
@@ -733,19 +873,15 @@ where
         transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
-        if let Some((_, claim)) = self.openings.get(&OpeningId::TrustedAdvice) {
-            let claim = *claim;
-            self.openings.insert(OpeningId::TrustedAdvice, (opening_point.clone(), claim));
+        let key = OpeningId::TrustedAdvice;
+        let (_, claim, is_canonical) = self.populate_or_alias_opening(key, opening_point);
+        if is_canonical {
             if self.zk_mode {
                 self.pending_claims.push(claim);
-                self.pending_claim_ids.push(OpeningId::TrustedAdvice);
+                self.pending_claim_ids.push(key);
             } else {
                 transcript.append_scalar(&claim);
             }
-        } else {
-            self.openings.insert(OpeningId::TrustedAdvice, (opening_point.clone(), F::zero()));
-            self.pending_claims.push(F::zero());
-            self.pending_claim_ids.push(OpeningId::TrustedAdvice);
         }
     }
 
@@ -815,11 +951,6 @@ where
             gamma_powers.push(gamma_powers[i - 1] * gamma);
         }
 
-        let opening_ids: Vec<OpeningId> =
-            (0..self.sumchecks.len()).map(|idx| OpeningId::ReducedOpeningClaim(idx as u32)).collect();
-        for (opening_id, claim) in opening_ids.iter().zip(reduced_opening_proof.sumcheck_claims.iter()) {
-            self.openings.insert(*opening_id, (OpeningPoint::new(r_sumcheck.clone()), *claim));
-        }
         // Compute the commitment for the reduced opening proof by homomorphically combining
         // the commitments of the individual polynomials.
         let joint_commitment = {
@@ -862,6 +993,17 @@ where
                 let r_slice = &r_sumcheck[..num_sumcheck_rounds - opening.opening_point.len()];
                 let lagrange_eval: F = r_slice.iter().map(|r| F::one() - r).product();
                 *coeff * lagrange_eval
+            })
+            .collect();
+        let opening_point = OpeningPoint::<BIG_ENDIAN, F>::new(r_sumcheck.clone());
+        let opening_ids: Vec<OpeningId> = reduced_opening_proof
+            .sumcheck_claims
+            .iter()
+            .enumerate()
+            .map(|(index, claim)| {
+                let id = OpeningId::ReducedOpeningClaim(index as u32);
+                self.openings.insert(id, (opening_point.clone(), *claim));
+                id
             })
             .collect();
 

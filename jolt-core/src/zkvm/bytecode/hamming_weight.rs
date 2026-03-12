@@ -1,6 +1,8 @@
 use std::{cell::RefCell, rc::Rc};
 
 use num_traits::Zero;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{InputClaimConstraint, ProductTerm, ValueSource};
 
 use crate::{
     field::{JoltField, MulTrunc},
@@ -200,5 +202,24 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingWeightSumche
             SumcheckId::BytecodeHammingWeight,
             r,
         );
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::sum_of_products(
+            self.gamma
+                .iter()
+                .enumerate()
+                .map(|(idx, _)| ProductTerm::single(ValueSource::challenge(idx)))
+                .collect(),
+        )
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(
+        &self,
+        _opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+    ) -> Vec<F> {
+        self.gamma.clone()
     }
 }

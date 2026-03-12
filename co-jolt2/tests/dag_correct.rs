@@ -1,5 +1,4 @@
-use std::ffi::OsString;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use ark_bn254::Fr;
 use ark_std::test_rng;
@@ -26,6 +25,7 @@ use jolt_core::zkvm::dag::state_manager::StateManager as VanillaStateManager;
 use jolt_core::zkvm::dag::state_manager::{ProofData, ProofKeys};
 use jolt_core::zkvm::witness::DTH_ROOT_OF_K;
 use jolt_core::zkvm::{JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing, JoltVerifierPreprocessing};
+use tracer::JoltDevice;
 use tracer::instruction::Cycle;
 
 type F = Fr;
@@ -39,45 +39,48 @@ struct DagFixture {
     ram_k: usize,
 }
 
-struct ExperimentalZkEnvGuard {
-    previous: Option<OsString>,
+fn dag_test_lock() -> MutexGuard<'static, ()> {
+    static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    TEST_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
 }
 
-impl ExperimentalZkEnvGuard {
-    fn new(enabled: bool) -> Self {
-        let previous = std::env::var_os("CO_JOLT2_EXPERIMENTAL_DAG_ZK_SUMCHECKS");
-        if enabled {
-            std::env::set_var("CO_JOLT2_EXPERIMENTAL_DAG_ZK_SUMCHECKS", "1");
-        } else {
-            std::env::remove_var("CO_JOLT2_EXPERIMENTAL_DAG_ZK_SUMCHECKS");
-        }
-        Self { previous }
+fn use_sha2_fixture() -> bool {
+    matches!(
+        std::env::var("TEST_SHA2").ok().as_deref().or(std::env::var("SHA2_CHAIN").ok().as_deref()),
+        Some("1")
+    )
+}
+
+fn build_program() -> Program {
+    if use_sha2_fixture() {
+        let mut program = Program::new("sha2-chain-guest");
+        program.set_stack_size(65536);
+        program.set_memory_size(10240);
+        program
+    } else {
+        let mut program = Program::new("fibonacci-guest");
+        program.set_memory_size(10240);
+        program
     }
 }
 
-impl Drop for ExperimentalZkEnvGuard {
-    fn drop(&mut self) {
-        match &self.previous {
-            Some(value) => std::env::set_var("CO_JOLT2_EXPERIMENTAL_DAG_ZK_SUMCHECKS", value),
-            None => std::env::remove_var("CO_JOLT2_EXPERIMENTAL_DAG_ZK_SUMCHECKS"),
-        }
+fn build_inputs() -> Vec<u8> {
+    if use_sha2_fixture() {
+        let mut inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
+        inputs.append(&mut postcard::to_stdvec(&1u32).unwrap());
+        inputs
+    } else {
+        postcard::to_stdvec(&9u32).unwrap()
     }
 }
 
-fn dag_test_env_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
-
-fn build_dag_fixture(trace_file: &str, experimental_zk_sumchecks: bool) -> DagFixture {
-    let _env_lock = dag_test_env_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let _env_guard = ExperimentalZkEnvGuard::new(experimental_zk_sumchecks);
+fn build_dag_fixture(trace_file: &str) -> DagFixture {
+    let _test_guard = dag_test_lock();
     let _tracing_guard = init_tracing(trace_file, std::path::Path::new("traces"));
 
-    // 1) Build and trace the fibonacci program.
-    let mut program = Program::new("fibonacci-guest");
-    program.set_memory_size(10240);
-    let inputs = postcard::to_stdvec(&9u32).unwrap();
+    // 1) Build and trace the guest program.
+    let mut program = build_program();
+    let inputs = build_inputs();
     let (bytecode, memory_init, _) = program.decode();
 
     let mut rng = test_rng();
@@ -224,10 +227,18 @@ fn build_dag_fixture(trace_file: &str, experimental_zk_sumchecks: bool) -> DagFi
 fn verify_dag_fixture(fixture: DagFixture) -> Result<(), Box<dyn std::error::Error>> {
     let DagFixture { proof, verifier_preprocessing, io_device, ram_k } = fixture;
     let twist_sumcheck_switch_index = proof.twist_sumcheck_switch_index;
+    let verifier_program_io = JoltDevice {
+        inputs: io_device.inputs.clone(),
+        outputs: io_device.outputs.clone(),
+        panic: io_device.panic,
+        memory_layout: io_device.memory_layout.clone(),
+        trusted_advice: vec![],
+        untrusted_advice: vec![],
+    };
     let verifier_sm = VanillaStateManager::from_proof(
         proof,
         Box::leak(Box::new(verifier_preprocessing)),
-        io_device,
+        verifier_program_io,
         ram_k,
         twist_sumcheck_switch_index,
     );
@@ -236,15 +247,15 @@ fn verify_dag_fixture(fixture: DagFixture) -> Result<(), Box<dyn std::error::Err
 
 #[test]
 fn dag_correct() {
-    let fixture = build_dag_fixture("dag_correct.json", false);
+    let fixture = build_dag_fixture("dag_correct.json");
     verify_dag_fixture(fixture).expect("Vanilla verification of MPC proof failed");
 }
 
 #[cfg(feature = "zk")]
 #[test]
 fn dag_zk_tampered_y_com_fails() {
-    let mut fixture = build_dag_fixture("dag_zk_tampered_y_com.json", true);
-    assert!(fixture.proof.blindfold_proof.is_some(), "experimental DAG ZK proof must include BlindFold");
+    let mut fixture = build_dag_fixture("dag_zk_tampered_y_com.json");
+    assert!(fixture.proof.blindfold_proof.is_some(), "DAG ZK proof must include BlindFold");
 
     let reduced_opening_proof =
         fixture.proof.proofs.get_mut(&ProofKeys::ReducedOpeningProof).expect("reduced opening proof missing");
@@ -271,8 +282,8 @@ fn dag_zk_tampered_y_com_fails() {
 #[cfg(feature = "zk")]
 #[test]
 fn dag_zk_tampered_stage5_hidden_claim_fails() {
-    let mut fixture = build_dag_fixture("dag_zk_tampered_stage5_hidden_claim.json", true);
-    assert!(fixture.proof.blindfold_proof.is_some(), "experimental DAG ZK proof must include BlindFold");
+    let mut fixture = build_dag_fixture("dag_zk_tampered_stage5_hidden_claim.json");
+    assert!(fixture.proof.blindfold_proof.is_some(), "DAG ZK proof must include BlindFold");
 
     let reduced_opening_proof =
         fixture.proof.proofs.get_mut(&ProofKeys::ReducedOpeningProof).expect("reduced opening proof missing");

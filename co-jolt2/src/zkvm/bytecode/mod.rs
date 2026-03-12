@@ -97,6 +97,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker> Sumch
                 log_K,
                 log_T,
                 d,
+                init.read_raf_stage_gamma_powers,
                 init.val_polys,
                 init.r_cycles,
                 pc,
@@ -127,6 +128,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, N: Rep3NetworkWorker> Sumch
                 log_K,
                 log_T,
                 d,
+                init.read_raf_stage_gamma_powers,
                 init.val_polys,
             );
 

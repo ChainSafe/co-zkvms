@@ -95,7 +95,7 @@ where
         };
         // Seed any serialized openings that are present. In the full BlindFold path this can
         // legitimately be empty, but mixed clear/ZK staging still relies on these values.
-        *accumulator.openings_mut() = proof.opening_claims.0.clone();
+        accumulator.prime_openings(proof.opening_claims.0.clone());
 
         Self {
             transcript: Rc::new(RefCell::new(ProofTranscript::new(b"Jolt"))),

@@ -1,4 +1,6 @@
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
+#[cfg(feature = "zk")]
+use jolt_core::subprotocols::blindfold::{InputClaimConstraint, ProductTerm, ValueSource};
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::bytecode::hamming_weight::HammingWeightSumcheck;
 use jolt_core::zkvm::witness::CommittedPolynomial;
@@ -71,5 +73,24 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for HammingWeight
             &r_cycle,
             claims,
         );
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::sum_of_products(
+            self.gamma_powers()
+                .iter()
+                .enumerate()
+                .map(|(idx, _)| ProductTerm::single(ValueSource::challenge(idx)))
+                .collect(),
+        )
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(
+        &self,
+        _accumulator: &Rep3OpeningAccumulator<F>,
+    ) -> Vec<F> {
+        self.gamma_powers().to_vec()
     }
 }

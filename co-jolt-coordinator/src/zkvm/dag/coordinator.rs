@@ -15,10 +15,9 @@ use jolt_core::poly::opening_proof::{OpeningId, ReducedOpeningProof};
 use jolt_core::subprotocols::blindfold::OpeningProofData;
 #[cfg(feature = "zk")]
 use jolt_core::subprotocols::blindfold::{
-    pedersen_generator_count_for_r1cs, BakedPublicInputs, BlindFoldProof, BlindFoldProver, BlindFoldVerifier,
-    BlindFoldVerifierInput, BlindFoldWitness, ExtraConstraintWitness, FinalOutputWitness, InputClaimConstraint,
-    OutputClaimConstraint, RelaxedR1CSInstance, RoundWitness, StageConfig, StageWitness, ValueSource,
-    VerifierR1CSBuilder, ZkStageData,
+    pedersen_generator_count_for_r1cs, BakedPublicInputs, BlindFoldProof, BlindFoldProver, BlindFoldWitness,
+    ExtraConstraintWitness, FinalOutputWitness, InputClaimConstraint, OutputClaimConstraint, RelaxedR1CSInstance,
+    RoundWitness, StageConfig, StageWitness, ValueSource, VerifierR1CSBuilder, ZkStageData,
 };
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::dag::proof_serialization::{Claims, JoltProof};
@@ -65,7 +64,7 @@ impl Rep3JoltDag {
         let _dory_guard = DoryGlobals::initialize(DTH_ROOT_OF_K, padded_trace_length);
         let _poly_guard = AllCommittedPolynomials::initialize(compute_d_parameter(ram_K), bytecode_d);
         #[cfg(feature = "zk")]
-        let mut experimental_zk_rng = Self::experimental_zk_sumchecks_enabled().then(thread_rng);
+        let mut zk_rng = thread_rng();
 
         // --- Receive, combine, and store commitments ---
         let _recv_commits = info_span!("receive_commitments").entered();
@@ -96,9 +95,9 @@ impl Rep3JoltDag {
             stages.stage2_instances(&mut state, network)?;
 
         #[cfg(feature = "zk")]
-        let (proof, _r_stage2) = if let Some(rng) = experimental_zk_rng.as_mut() {
+        let (proof, _r_stage2) = {
             let pedersen_gens = Self::pedersen_generators::<F, PCS>(
-                state.pcs_setup.expect("StateManager::pcs_setup must be set for experimental DAG ZK sumchecks"),
+                state.pcs_setup.expect("StateManager::pcs_setup must be set for DAG ZK sumchecks"),
                 Self::blindfold_pedersen_generator_count(&state),
             );
             let (proof, _r_stage2, zk_material) = HybridBatchedSumcheck::prove_zk(
@@ -107,7 +106,7 @@ impl Rep3JoltDag {
                 &mut state.transcript,
                 network,
                 &pedersen_gens,
-                rng,
+                &mut zk_rng,
             )?;
             state.blindfold_accumulator.push_stage_data(Self::stage_data_from_instances(
                 "stage2",
@@ -116,8 +115,6 @@ impl Rep3JoltDag {
                 zk_material,
             ));
             (proof, _r_stage2)
-        } else {
-            HybridBatchedSumcheck::prove(&stage2_hybrid, &mut state.accumulator, &mut state.transcript, network)?
         };
         #[cfg(not(feature = "zk"))]
         let (proof, _r_stage2) =
@@ -133,9 +130,9 @@ impl Rep3JoltDag {
         let stage3_instances = stages.stage3_instances(&mut state, network)?;
 
         #[cfg(feature = "zk")]
-        let (stage3_proof, _r_stage3) = if let Some(rng) = experimental_zk_rng.as_mut() {
+        let (stage3_proof, _r_stage3) = {
             let pedersen_gens = Self::pedersen_generators::<F, PCS>(
-                state.pcs_setup.expect("StateManager::pcs_setup must be set for experimental DAG ZK sumchecks"),
+                state.pcs_setup.expect("StateManager::pcs_setup must be set for DAG ZK sumchecks"),
                 Self::blindfold_pedersen_generator_count(&state),
             );
             let (proof, _r_stage3, zk_material) = HybridBatchedSumcheck::prove_zk(
@@ -144,7 +141,7 @@ impl Rep3JoltDag {
                 &mut state.transcript,
                 network,
                 &pedersen_gens,
-                rng,
+                &mut zk_rng,
             )?;
             state.blindfold_accumulator.push_stage_data(Self::stage_data_from_instances(
                 "stage3",
@@ -153,8 +150,6 @@ impl Rep3JoltDag {
                 zk_material,
             ));
             (proof, _r_stage3)
-        } else {
-            HybridBatchedSumcheck::prove(&stage3_instances, &mut state.accumulator, &mut state.transcript, network)?
         };
         #[cfg(not(feature = "zk"))]
         let (stage3_proof, _r_stage3) =
@@ -171,9 +166,9 @@ impl Rep3JoltDag {
 
         if !stage4_instances.is_empty() {
             #[cfg(feature = "zk")]
-            let (stage4_proof, _r_stage4) = if let Some(rng) = experimental_zk_rng.as_mut() {
+            let (stage4_proof, _r_stage4) = {
                 let pedersen_gens = Self::pedersen_generators::<F, PCS>(
-                    state.pcs_setup.expect("StateManager::pcs_setup must be set for experimental DAG ZK sumchecks"),
+                    state.pcs_setup.expect("StateManager::pcs_setup must be set for DAG ZK sumchecks"),
                     Self::blindfold_pedersen_generator_count(&state),
                 );
                 let (proof, _r_stage4, zk_material) = HybridBatchedSumcheck::prove_zk(
@@ -182,7 +177,7 @@ impl Rep3JoltDag {
                     &mut state.transcript,
                     network,
                     &pedersen_gens,
-                    rng,
+                    &mut zk_rng,
                 )?;
                 state.blindfold_accumulator.push_stage_data(Self::stage_data_from_instances(
                     "stage4",
@@ -191,8 +186,6 @@ impl Rep3JoltDag {
                     zk_material,
                 ));
                 (proof, _r_stage4)
-            } else {
-                HybridBatchedSumcheck::prove(&stage4_instances, &mut state.accumulator, &mut state.transcript, network)?
             };
             #[cfg(not(feature = "zk"))]
             let (stage4_proof, _r_stage4) = HybridBatchedSumcheck::prove(
@@ -232,11 +225,8 @@ impl Rep3JoltDag {
             });
         }
         #[cfg(feature = "zk")]
-        let blindfold_proof = if Self::experimental_zk_sumchecks_enabled() {
-            Some(Self::prove_blindfold::<F, ProofTranscript, PCS>(&mut state, &reduced.joint_opening_proof))
-        } else {
-            None
-        };
+        let blindfold_proof =
+            Some(Self::prove_blindfold::<F, ProofTranscript, PCS>(&mut state, &reduced.joint_opening_proof));
         state.proofs.insert(
             ProofKeys::ReducedOpeningProof,
             ProofData::ReducedOpeningProof(ReducedOpeningProof::<F, Bn254Curve, PCS, ProofTranscript> {
@@ -261,11 +251,6 @@ impl Rep3JoltDag {
             twist_sumcheck_switch_index: state.twist_sumcheck_switch_index,
         };
         Ok(proof)
-    }
-
-    #[cfg(feature = "zk")]
-    fn experimental_zk_sumchecks_enabled() -> bool {
-        std::env::var_os("CO_JOLT2_EXPERIMENTAL_DAG_ZK_SUMCHECKS").is_some()
     }
 
     #[cfg(feature = "zk")]
@@ -365,6 +350,7 @@ impl Rep3JoltDag {
     }
 
     #[cfg(feature = "zk")]
+    #[tracing::instrument(skip_all, name = "JoltDag::prove_blindfold")]
     fn prove_blindfold<F, ProofTranscript, PCS>(
         state: &mut StateManager<'_, F, ProofTranscript, PCS>,
         joint_opening_proof: &PCS::Proof,
@@ -461,8 +447,10 @@ impl Rep3JoltDag {
                         assert_eq!(
                             expected_output_claim,
                             next_claim,
-                            "BlindFold output-claim constraint mismatch at stage {} end",
+                            "BlindFold output-claim constraint mismatch at stage {} end: openings={:?} challenges={:?}",
                             stage_idx + 1,
+                            opening_values,
+                            challenge_values,
                         );
                         baked_output_challenges.extend_from_slice(&challenge_values);
                         config = config.with_constraint(constraint);
@@ -625,26 +613,9 @@ impl Rep3JoltDag {
             w_row_blindings,
         );
         let eval_commitment_gens = PCS::eval_commitment_gens(pcs_setup);
-
         let prover = BlindFoldProver::<_, _>::new(&pedersen_generators, &r1cs, eval_commitment_gens);
         let mut blindfold_transcript = ProofTranscript::new(b"BlindFold");
-        let blindfold_proof = prover.prove(&real_instance, &real_witness, &z, &mut blindfold_transcript);
-
-        let verifier = BlindFoldVerifier::<_, _>::new(&pedersen_generators, &r1cs, eval_commitment_gens);
-        let mut blindfold_verify_transcript = ProofTranscript::new(b"BlindFold");
-        verifier
-            .verify(
-                &blindfold_proof,
-                &BlindFoldVerifierInput {
-                    round_commitments: real_instance.round_commitments.clone(),
-                    output_claims_row_commitments: real_instance.output_claims_row_commitments.clone(),
-                    eval_commitments: real_instance.eval_commitments.clone(),
-                },
-                &mut blindfold_verify_transcript,
-            )
-            .expect("Coordinator-constructed DAG BlindFold proof must self-verify");
-
-        blindfold_proof
+        prover.prove(&real_instance, &real_witness, &z, &mut blindfold_transcript)
     }
 
     fn receive_commitments<F, PCS, ProofTranscript, N>(
