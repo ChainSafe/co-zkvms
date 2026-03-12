@@ -18,7 +18,7 @@ use std::sync::{Arc, OnceLock};
 
 use crate::protocols::rep3_ring::dabits::DaBitBatch;
 use crate::protocols::rep3_ring::edabits::EdaBitsBatch;
-use crate::protocols::rep3_ring::preprocessing::backing_store::assert_field_layout;
+use crate::preprocessing::backing_store::assert_field_layout;
 
 use itertools::Itertools;
 use mpc_net::topology::{MpcStarNetCoordinator, MpcStarNetWorker};
@@ -34,11 +34,10 @@ use rayon::iter::Either;
 use rayon::prelude::*;
 
 use super::{
-    conversion::A2BType,
+    conversion::MPCType,
     rngs::{Rep3CorrelatedRng, Rep3Rand, Rep3RandBitComp},
 };
 
-// this will be moved later
 /// This struct handles networking and rng
 pub struct IoContext<N: Rep3Network> {
     /// The party id
@@ -49,8 +48,8 @@ pub struct IoContext<N: Rep3Network> {
     pub rng: RngType,
     /// The underlying network
     pub network: N,
-    /// The used arithmetic/binary conversion protocol
-    pub a2b_type: A2BType,
+    /// Online or preprocessed MPC execution mode
+    pub mpc_type: MPCType,
 
     rng_src: Arc<RngForker<RngType>>,
     rngs_src: Arc<RngForker<Rep3CorrelatedRng>>,
@@ -115,15 +114,15 @@ impl<N: Rep3Network> IoContext<N> {
             network,
             rngs: master_rngs.fork(),
             rng: rng.clone(),
-            a2b_type: A2BType::default(),
+            mpc_type: MPCType::default(),
             rng_src: Arc::new(RngForker::new(rng)),
             rngs_src: Arc::new(RngForker::new(master_rngs)),
         })
     }
 
-    /// Allows to change the used arithmetic/binary conversion protocol
-    pub fn set_a2b_type(&mut self, a2b_type: A2BType) {
-        self.a2b_type = a2b_type;
+    /// Set the MPC execution mode (online or preprocessed).
+    pub fn set_mpc_type(&mut self, mpc_type: MPCType) {
+        self.mpc_type = mpc_type;
     }
 
     /// Cronstruct a fork of the [`IoContext`]. This fork can be used concurrently with its parent.
@@ -136,7 +135,7 @@ impl<N: Rep3Network> IoContext<N> {
             rngs: child_rngs,
             rng: child_rng,
             network: self.network.fork(),
-            a2b_type: self.a2b_type,
+            mpc_type: self.mpc_type,
             rng_src: Arc::clone(&self.rng_src),
             rngs_src: Arc::clone(&self.rngs_src),
         })

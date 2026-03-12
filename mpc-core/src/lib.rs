@@ -1,4 +1,5 @@
 pub mod field;
+pub mod preprocessing;
 pub mod protocols;
 pub mod serde_compat;
 pub mod utils;

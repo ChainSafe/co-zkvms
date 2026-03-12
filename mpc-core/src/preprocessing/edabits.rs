@@ -6,20 +6,20 @@
 //! both domains.
 
 use super::backing_store;
+use crate::field::PrimeField;
 use crate::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use crate::protocols::rep3::{
     PartyID, Rep3PrimeFieldShare, arithmetic as rep3_arith,
     network::{IoContext, Rep3Network},
 };
 use crate::protocols::rep3_ring::arithmetic as rep3_ring_arith;
-use eyre::Ok;
-use crate::field::PrimeField;
-use num_traits::AsPrimitive;
 use crate::protocols::rep3_ring::ring::u66::U66;
 use crate::protocols::rep3_ring::{
     Rep3RingShare,
     ring::{int_ring::IntRing2k, ring_impl::RingElement},
 };
+use eyre::Ok;
+use num_traits::AsPrimitive;
 use rand::distributions::Standard;
 use rand::prelude::Distribution;
 use rand::{RngCore, SeedableRng};
@@ -85,11 +85,7 @@ where
     for _ in 0..num {
         // Generate gamma: XOR of both correlated RNG outputs → private to P0.
         let (g1, g2): (T, T) = io.main().random_elements();
-        let gamma = if io.party_id() == PartyID::ID0 {
-            RingElement(g1 ^ g2)
-        } else {
-            RingElement(T::zero())
-        };
+        let gamma = if io.party_id() == PartyID::ID0 { RingElement(g1 ^ g2) } else { RingElement(T::zero()) };
 
         // Generate per-bit alpha_1 from the P0-P1 shared RNG stream.
         // Convention: rng1 shared with next, rng2 shared with prev.
@@ -131,9 +127,7 @@ where
     }
     if io.party_id() == PartyID::ID2 {
         let alpha_2_all: Vec<F> =
-            io.par_chunks(rayon::iter::repeat_n((), num * T::K), None, |_, io| {
-                io.network.recv_many(PartyID::ID0)
-            })?;
+            io.par_chunks(rayon::iter::repeat_n((), num * T::K), None, |_, io| io.network.recv_many(PartyID::ID0))?;
         debug_assert_eq!(alpha_2_all.len(), num * T::K);
         for (j, alphas) in all_alphas.iter_mut().enumerate() {
             for i in 0..T::K {
@@ -143,11 +137,7 @@ where
     }
     drop(_span);
 
-    Ok(gammas
-        .into_iter()
-        .zip(all_alphas)
-        .map(|(gamma, alphas)| EdaBits { gamma, alphas })
-        .collect())
+    Ok(gammas.into_iter().zip(all_alphas).map(|(gamma, alphas)| EdaBits { gamma, alphas }).collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -196,9 +186,7 @@ where
             seed2: [0u8; crate::SEED_SIZE],
             pos2: 0,
             total: 0,
-            field_bytes: usize::try_from(F::MODULUS_BIT_SIZE)
-                .expect("u32 fits into usize")
-                .div_ceil(8),
+            field_bytes: usize::try_from(F::MODULUS_BIT_SIZE).expect("u32 fits into usize").div_ceil(8),
             cursor: 0,
             alpha2_flat: backing_store::BackingStore::Empty,
             party_id,
@@ -240,9 +228,7 @@ where
         alpha2_flat: backing_store::BackingStore<F>,
         party_id: PartyID,
     ) -> Self {
-        let field_bytes = usize::try_from(F::MODULUS_BIT_SIZE)
-            .expect("u32 fits into usize")
-            .div_ceil(8);
+        let field_bytes = usize::try_from(F::MODULUS_BIT_SIZE).expect("u32 fits into usize").div_ceil(8);
         Self {
             seed1,
             pos1,
@@ -286,10 +272,7 @@ where
         );
 
         if n == 0 {
-            return Ok(EdaBitsBatch {
-                gammas: Vec::new(),
-                alphas_flat: Vec::new(),
-            });
+            return Ok(EdaBitsBatch { gammas: Vec::new(), alphas_flat: Vec::new() });
         }
 
         let t_bytes = std::mem::size_of::<T>();
@@ -305,31 +288,22 @@ where
             let alphas_flat = {
                 #[cfg(feature = "reuse-preproc")]
                 {
-                    self.alpha2_flat
-                        .read_reuse(flat_start, flat_end)
-                        .unwrap_or_else(|e| {
-                            panic!(
-                                "LazyEdaBits(P2): read_reuse({flat_start}..{flat_end}) failed: {e}"
-                            );
-                        })
+                    self.alpha2_flat.read_reuse(flat_start, flat_end).unwrap_or_else(|e| {
+                        panic!("LazyEdaBits(P2): read_reuse({flat_start}..{flat_end}) failed: {e}");
+                    })
                 }
                 #[cfg(not(feature = "reuse-preproc"))]
                 {
-                    self.alpha2_flat
-                        .read_consume(flat_start, flat_end)
-                        .unwrap_or_else(|e| {
-                            panic!("LazyEdaBits(P2): read_consume({flat_start}..{flat_end}) failed: {e}");
-                        })
+                    self.alpha2_flat.read_consume(flat_start, flat_end).unwrap_or_else(|e| {
+                        panic!("LazyEdaBits(P2): read_consume({flat_start}..{flat_end}) failed: {e}");
+                    })
                 }
             };
             let gammas = vec![RingElement(T::zero()); n];
             self.cursor += n;
             self.persist_cursor();
             self.alpha2_flat.consume(flat_start, flat_end);
-            return Ok(EdaBitsBatch {
-                gammas,
-                alphas_flat,
-            });
+            return Ok(EdaBitsBatch { gammas, alphas_flat });
         }
 
         // P0/P1: regenerate from RNG seeds.
@@ -375,8 +349,7 @@ where
         } else {
             // P1: same interleaved stream from seed2 (P1↔P0 = P0↔P1 shared stream).
             let _span = tracing::trace_span!("gen_alpha").entered();
-            interleaved =
-                seek_and_generate(self.seed2, self.pos2, item_byte_offset, interleaved_bytes);
+            interleaved = seek_and_generate(self.seed2, self.pos2, item_byte_offset, interleaved_bytes);
             g2_bytes = Vec::new();
         }
 
@@ -405,17 +378,13 @@ where
                 let bit = idx % k;
                 let a_start = item * stride + t_bytes + bit * fb;
                 let lo = u64::from_le_bytes(interleaved[a_start..a_start + 8].try_into().unwrap());
-                let hi =
-                    u64::from_le_bytes(interleaved[a_start + 8..a_start + 16].try_into().unwrap());
+                let hi = u64::from_le_bytes(interleaved[a_start + 8..a_start + 16].try_into().unwrap());
                 F::from((hi as u128) << 64 | lo as u128)
             })
             .collect();
 
         self.cursor += n;
-        Ok(EdaBitsBatch {
-            gammas,
-            alphas_flat,
-        })
+        Ok(EdaBitsBatch { gammas, alphas_flat })
     }
 }
 
@@ -463,10 +432,7 @@ impl<T: IntRing2k, F: PrimeField> LazyEdaBits<T, F> {
         let suffix = T::K;
         let meta_path = dir.join(format!("edabits_{suffix}.meta"));
         let meta = backing_store::read_meta(&meta_path)?;
-        assert_eq!(
-            meta.party_id_byte,
-            backing_store::party_id_to_byte(party_id)
-        );
+        assert_eq!(meta.party_id_byte, backing_store::party_id_to_byte(party_id));
 
         let alpha2_flat = if party_id == PartyID::ID2 && meta.total > 0 {
             let data_path = dir.join(format!("edabits_{suffix}.alpha2"));
@@ -501,9 +467,7 @@ impl<T: IntRing2k, F: PrimeField> LazyEdaBits<T, F> {
     }
 
     /// Return the RNG seeds and positions for this lazy source.
-    pub(crate) fn extension_seeds(
-        &self,
-    ) -> ([u8; crate::SEED_SIZE], u128, [u8; crate::SEED_SIZE], u128) {
+    pub(crate) fn extension_seeds(&self) -> ([u8; crate::SEED_SIZE], u128, [u8; crate::SEED_SIZE], u128) {
         (self.seed1, self.pos1, self.seed2, self.pos2)
     }
 
@@ -555,9 +519,7 @@ where
 
     let t_bytes = std::mem::size_of::<T>();
     let k = T::K;
-    let field_bytes = usize::try_from(F::MODULUS_BIT_SIZE)
-        .expect("u32 fits into usize")
-        .div_ceil(8);
+    let field_bytes = usize::try_from(F::MODULUS_BIT_SIZE).expect("u32 fits into usize").div_ceil(8);
 
     // Fork a dedicated Rep3Rand and snapshot its state BEFORE generating bytes.
     let mut eda_rand = io.main().rngs.rand.fork();
@@ -577,37 +539,27 @@ where
         let (all_bytes1, g2_bytes) = {
             let mut a = vec![0u8; num * stride];
             let mut b = vec![0u8; gamma_total_bytes];
-            rayon::join(
-                || eda_rand.rng1.fill_bytes(&mut a),
-                || eda_rand.rng2.fill_bytes(&mut b),
-            );
+            rayon::join(|| eda_rand.rng1.fill_bytes(&mut a), || eda_rand.rng2.fill_bytes(&mut b));
             (a, b)
         };
         drop(_span);
 
         let _span = tracing::trace_span!("compute_send_alpha2").entered();
         let mut alpha_2_all = vec![F::zero(); num * k];
-        alpha_2_all
-            .par_chunks_mut(k)
-            .enumerate()
-            .with_min_len(256)
-            .for_each(|(i, chunk)| {
-                let base = i * stride;
-                let g1_val = T::from_le_bytes(&all_bytes1[base..base + t_bytes]);
-                let g2_val = T::from_le_bytes(&g2_bytes[i * t_bytes..(i + 1) * t_bytes]);
-                let gamma = g1_val ^ g2_val;
-                for j in 0..k {
-                    let a_start = base + t_bytes + j * field_bytes;
-                    let lo =
-                        u64::from_le_bytes(all_bytes1[a_start..a_start + 8].try_into().unwrap());
-                    let hi = u64::from_le_bytes(
-                        all_bytes1[a_start + 8..a_start + 16].try_into().unwrap(),
-                    );
-                    let alpha_1 = F::from((hi as u128) << 64 | lo as u128);
-                    let gamma_bit = ((gamma >> j) & T::one()) == T::one();
-                    chunk[j] = F::from(gamma_bit as u64) - alpha_1;
-                }
-            });
+        alpha_2_all.par_chunks_mut(k).enumerate().with_min_len(256).for_each(|(i, chunk)| {
+            let base = i * stride;
+            let g1_val = T::from_le_bytes(&all_bytes1[base..base + t_bytes]);
+            let g2_val = T::from_le_bytes(&g2_bytes[i * t_bytes..(i + 1) * t_bytes]);
+            let gamma = g1_val ^ g2_val;
+            for j in 0..k {
+                let a_start = base + t_bytes + j * field_bytes;
+                let lo = u64::from_le_bytes(all_bytes1[a_start..a_start + 8].try_into().unwrap());
+                let hi = u64::from_le_bytes(all_bytes1[a_start + 8..a_start + 16].try_into().unwrap());
+                let alpha_1 = F::from((hi as u128) << 64 | lo as u128);
+                let gamma_bit = ((gamma >> j) & T::one()) == T::one();
+                chunk[j] = F::from(gamma_bit as u64) - alpha_1;
+            }
+        });
         io.network().send_many(PartyID::ID2, &alpha_2_all)?;
     }
 
@@ -622,189 +574,14 @@ where
 
     // Return truly lazy: P0/P1 store only seeds (~192 bytes), P2 stores alpha2_flat.
     // The temporary all_bytes1/all_bytes2 are dropped here.
-    Ok(LazyEdaBits::new(
-        seed1,
-        pos1,
-        seed2,
-        pos2,
-        num,
-        alpha2_flat,
-        party_id,
-    ))
+    Ok(LazyEdaBits::new(seed1, pos1, seed2, pos2, num, alpha2_flat, party_id))
 }
 
 // PreprocessingPool generation/extension moved to `super::pool`.
 pub use super::pool::{extend_pool_batched, preprocess_pool};
 
-/// Convert an arithmetic ring share `[x]` over `Z_{2^K}` into an arithmetic
-/// field share `[x]` over `Fp`, using a masked opening.
-///
-/// Protocol:
-/// 1) Compute `[c] = [x] - [r]` in `Z_{2^K}`.
-/// 2) Open `c` to a public ring element (interpreted as an integer in `[0,2^K)`).
-/// 3) Output `[x]_{Fp} = [r]_{Fp} + c`.
-///
-/// # Assumptions
-/// Intended when `x` represents a non-negative integer smaller than `2^K`, `Fp`
-/// is large enough for the application (typical SNARK fields), and the opened
-/// value `c` corresponds to the *integer* difference `x - r` (i.e., no wrap
-/// around modulo `2^K`).
-pub fn ring_to_field<T: IntRing2k, F: PrimeField, N: Rep3Network>(
-    x: Rep3RingShare<T>,
-    eda: DaRing<T, F>,
-    io: &mut IoContext<N>,
-) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-    let c_share = x - eda.r_ring;
-    let c_open: RingElement<T> = rep3_ring_arith::open(c_share, io)?;
-
-    let c_f = F::from(Into::<u128>::into(c_open.0));
-    let c_fp_share = rep3_arith::promote_to_trivial_share(io.id, c_f);
-
-    Ok(eda.r_fp + c_fp_share)
-}
-
-pub fn ring_to_field_many<T: IntRing2k, F: PrimeField, N: Rep3Network>(
-    x: &[Rep3RingShare<T>],
-    eda: &[DaRing<T, F>],
-    io: &mut IoContext<N>,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    debug_assert_eq!(x.len(), eda.len());
-
-    let masked = x
-        .iter()
-        .zip(eda)
-        .map(|(x, eda)| *x - eda.r_ring)
-        .collect::<Vec<_>>();
-
-    let opened = rep3_ring_arith::open_vec(&masked, io)?;
-
-    Ok(opened
-        .into_iter()
-        .zip(eda)
-        .map(|(c_open, eda)| {
-            let c_f = F::from(Into::<u128>::into(c_open.0));
-            let c_fp_share = rep3_arith::promote_to_trivial_share(io.id, c_f);
-            eda.r_fp + c_fp_share
-        })
-        .collect())
-}
-
-/// Convert a binary (XOR-shared) ring share `[x]` over `Z_{2^K}` into an
-/// arithmetic field share `[x]` over `Fp`, using Protocol Π₂.
-///
-/// Online communication: K bits (P0 → P1, P2) + 1 field element reshare.
-pub fn ring_to_field_b2a<T: IntRing2k, F: PrimeField, N: Rep3Network>(
-    x_binary: Rep3RingShare<T>,
-    eda: EdaBits<T, F>,
-    io: &mut IoContext<N>,
-) -> eyre::Result<Rep3PrimeFieldShare<F>>
-where
-    Standard: Distribution<T>,
-{
-    let batch = EdaBitsBatch {
-        gammas: vec![eda.gamma],
-        alphas_flat: eda.alphas,
-    };
-    let mut out = ring_to_field_b2a_many::<T, F, N>(&[x_binary], &batch, io)?;
-    Ok(out.remove(0))
-}
-
-/// Batched Protocol Π₂ B2A conversion.
-///
-/// For each binary Rep3 share `x`, converts to an arithmetic Rep3 field share
-/// using the correlated random tuple in `batch`.
-///
-/// **Online communication:**
-/// - Round 1: P0 broadcasts N packed ring elements (K bits each) to P1 and P2.
-/// - Round 2: ShareConvert via `reshare_many` (one field element per conversion).
-pub fn ring_to_field_b2a_many<T: IntRing2k, F: PrimeField, N: Rep3Network>(
-    x_binary: &[Rep3RingShare<T>],
-    batch: &EdaBitsBatch<T, F>,
-    io: &mut IoContext<N>,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>>
-where
-    Standard: Distribution<T>,
-{
-    let n = x_binary.len();
-    if n == 0 {
-        return Ok(Vec::new());
-    }
-    debug_assert_eq!(batch.gammas.len(), n);
-    debug_assert_eq!(batch.alphas_flat.len(), n * T::K);
-
-    // Precompute powers of 2 in Fp.
-    let k = T::K;
-    let pow2 = {
-        let mut pow2 = Vec::with_capacity(k);
-        let mut cur = F::one();
-        for _ in 0..k {
-            pow2.push(cur);
-            cur = cur + cur;
-        }
-        pow2
-    };
-
-    // --- Round 1: P0 broadcasts masked values ---
-    let ms: Vec<RingElement<T>> = if io.id == PartyID::ID0 {
-        let ms: Vec<_> = x_binary
-            .iter()
-            .zip(&batch.gammas)
-            .map(|(x, gamma)| x.a ^ x.b ^ *gamma)
-            .collect();
-        io.network.send_many(PartyID::ID1, &ms)?;
-        io.network.send_many(PartyID::ID2, &ms)?;
-        ms
-    } else {
-        io.network.recv_many(PartyID::ID0)?
-    };
-
-    // --- Local computation: fused v_component + masking → s_selfs ---
-    // Pre-generate masking elements (sequential, RNG is stateful).
-    let maskings: Vec<F> = (0..n).map(|_| io.masking_field_element::<F>()).collect();
-    let party_id = io.id;
-
-    // Fused parallel computation: v_component + masking in one pass.
-    let s_selfs: Vec<F> = ms
-        .par_iter()
-        .zip(x_binary.par_iter())
-        .zip(maskings.par_iter())
-        .enumerate()
-        .with_min_len(256)
-        .map(|(idx, ((m, x), z))| {
-            if party_id == PartyID::ID0 {
-                return *z;
-            }
-
-            let beta = match party_id {
-                PartyID::ID0 => unreachable!(),
-                PartyID::ID1 => *m ^ x.a,
-                PartyID::ID2 => *m ^ x.b,
-            };
-
-            let mut v = F::zero();
-            let alpha_base = idx * k;
-            for i in 0..k {
-                let beta_bit = ((beta.0 >> i) & T::one()) == T::one();
-                let alpha = batch.alphas_flat[alpha_base + i];
-                let signed_alpha = if beta_bit { -alpha } else { alpha };
-                v += pow2[i] * signed_alpha;
-            }
-
-            if party_id == PartyID::ID1 {
-                v += F::from(Into::<u128>::into(beta.0));
-            }
-
-            v + *z
-        })
-        .collect();
-    let s_prevs = io.network.reshare_many(&s_selfs)?;
-
-    Ok(s_selfs
-        .into_iter()
-        .zip(s_prevs)
-        .map(|(s_self, s_prev)| Rep3PrimeFieldShare::new(s_self, s_prev))
-        .collect())
-}
+// ring_to_field_many, ring_to_field_b2a, r2f_b2a_preproc_many moved to casts.rs
+// as r2f_preproc_many, r2f_b2a_preproc, r2f_b2a_preproc_many
 
 // ---------------------------------------------------------------------------
 // Ring-domain EdaBits: B2A in Z_{2^K} via Protocol Π₂
@@ -907,10 +684,7 @@ where
         );
 
         if n == 0 {
-            return Ok(EdaBitsRingBatch {
-                gammas: Vec::new(),
-                alphas_flat: Vec::new(),
-            });
+            return Ok(EdaBitsRingBatch { gammas: Vec::new(), alphas_flat: Vec::new() });
         }
 
         let t_bytes = std::mem::size_of::<T>();
@@ -930,10 +704,7 @@ where
             self.cursor += n;
             self.persist_cursor();
             self.alpha2_flat.consume(flat_start, flat_end);
-            return Ok(EdaBitsRingBatch {
-                gammas,
-                alphas_flat,
-            });
+            return Ok(EdaBitsRingBatch { gammas, alphas_flat });
         }
 
         // P0/P1: regenerate from RNG seeds.
@@ -977,8 +748,7 @@ where
             g2_bytes = s2;
         } else {
             // P1: interleaved from seed2 (P1↔P0 = P0↔P1 shared stream).
-            interleaved =
-                seek_and_generate(self.seed2, self.pos2, item_byte_offset, interleaved_bytes);
+            interleaved = seek_and_generate(self.seed2, self.pos2, item_byte_offset, interleaved_bytes);
             g2_bytes = Vec::new();
         }
 
@@ -1011,10 +781,7 @@ where
             .collect();
 
         self.cursor += n;
-        Ok(EdaBitsRingBatch {
-            gammas,
-            alphas_flat,
-        })
+        Ok(EdaBitsRingBatch { gammas, alphas_flat })
     }
 }
 
@@ -1061,10 +828,7 @@ impl<T: IntRing2k> LazyEdaBitsRing<T> {
             });
         }
         let meta = backing_store::read_meta(&meta_path)?;
-        assert_eq!(
-            meta.party_id_byte,
-            backing_store::party_id_to_byte(party_id)
-        );
+        assert_eq!(meta.party_id_byte, backing_store::party_id_to_byte(party_id));
         let alpha2_flat = if party_id == PartyID::ID2 && meta.total > 0 {
             let data_path = dir.join(format!("{suffix}.alpha2"));
             backing_store::BackingStore::load_from_file(&data_path)?
@@ -1126,31 +890,23 @@ where
         let (all_bytes1, g2_bytes) = {
             let mut a = vec![0u8; num * stride];
             let mut b = vec![0u8; num * stride]; // rng2 same stride (both rngs advance equally)
-            rayon::join(
-                || eda_rand.rng1.fill_bytes(&mut a),
-                || eda_rand.rng2.fill_bytes(&mut b),
-            );
+            rayon::join(|| eda_rand.rng1.fill_bytes(&mut a), || eda_rand.rng2.fill_bytes(&mut b));
             (a, b)
         };
 
         let mut alpha_2_all = vec![RingElement(T::zero()); num * k];
-        alpha_2_all
-            .par_chunks_mut(k)
-            .enumerate()
-            .with_min_len(256)
-            .for_each(|(i, chunk)| {
-                let base = i * stride;
-                let g1_val = T::from_le_bytes(&all_bytes1[base..base + t_bytes]);
-                let g2_val = T::from_le_bytes(&g2_bytes[base..base + t_bytes]);
-                let gamma = g1_val ^ g2_val;
-                for j in 0..k {
-                    let a_start = base + t_bytes + j * t_bytes;
-                    let alpha_1 =
-                        RingElement(T::from_le_bytes(&all_bytes1[a_start..a_start + t_bytes]));
-                    let gamma_bit = ((gamma >> j) & T::one()) == T::one();
-                    chunk[j] = RingElement(T::from(gamma_bit)) - alpha_1;
-                }
-            });
+        alpha_2_all.par_chunks_mut(k).enumerate().with_min_len(256).for_each(|(i, chunk)| {
+            let base = i * stride;
+            let g1_val = T::from_le_bytes(&all_bytes1[base..base + t_bytes]);
+            let g2_val = T::from_le_bytes(&g2_bytes[base..base + t_bytes]);
+            let gamma = g1_val ^ g2_val;
+            for j in 0..k {
+                let a_start = base + t_bytes + j * t_bytes;
+                let alpha_1 = RingElement(T::from_le_bytes(&all_bytes1[a_start..a_start + t_bytes]));
+                let gamma_bit = ((gamma >> j) & T::one()) == T::one();
+                chunk[j] = RingElement(T::from(gamma_bit)) - alpha_1;
+            }
+        });
         io.network().send_many(PartyID::ID2, &alpha_2_all)?;
     }
 
@@ -1162,135 +918,10 @@ where
         Vec::new()
     };
 
-    Ok(LazyEdaBitsRing::new(
-        seed1,
-        pos1,
-        seed2,
-        pos2,
-        num,
-        alpha2_flat,
-        party_id,
-    ))
+    Ok(LazyEdaBitsRing::new(seed1, pos1, seed2, pos2, num, alpha2_flat, party_id))
 }
 
-/// Ring-domain B2A: convert binary XOR-shares to arithmetic ring shares.
-///
-/// Online communication: 2 rounds (1 broadcast + 1 reshare_many).
-pub fn ring_b2a_many<T: IntRing2k, N: Rep3Network>(
-    x_binary: &[Rep3RingShare<T>],
-    batch: &EdaBitsRingBatch<T>,
-    io: &mut IoContext<N>,
-) -> eyre::Result<Vec<Rep3RingShare<T>>>
-where
-    Standard: Distribution<T>,
-{
-    let n = x_binary.len();
-    if n == 0 {
-        return Ok(Vec::new());
-    }
-    debug_assert_eq!(batch.gammas.len(), n);
-    debug_assert_eq!(batch.alphas_flat.len(), n * T::K);
-
-    let k = T::K;
-
-    // Precompute powers of 2 in the ring.
-    let pow2: Vec<RingElement<T>> = {
-        let mut pow2 = Vec::with_capacity(k);
-        let mut cur = RingElement(T::one());
-        for _ in 0..k {
-            pow2.push(cur);
-            cur = cur + cur;
-        }
-        pow2
-    };
-
-    // --- Round 1: P0 broadcasts masked values ---
-    let ms: Vec<RingElement<T>> = if io.id == PartyID::ID0 {
-        let ms: Vec<_> = x_binary
-            .iter()
-            .zip(&batch.gammas)
-            .map(|(x, gamma)| x.a ^ x.b ^ *gamma)
-            .collect();
-        io.network.send_many(PartyID::ID1, &ms)?;
-        io.network.send_many(PartyID::ID2, &ms)?;
-        ms
-    } else {
-        io.network.recv_many(PartyID::ID0)?
-    };
-
-    // --- Local computation + masking ---
-    let maskings: Vec<RingElement<T>> = (0..n)
-        .map(|_| io.rngs.rand.masking_element::<RingElement<T>>())
-        .collect();
-    let party_id = io.id;
-
-    let s_selfs: Vec<RingElement<T>> = ms
-        .iter()
-        .zip(x_binary.iter())
-        .zip(maskings.iter())
-        .enumerate()
-        .map(|(idx, ((m, x), z))| {
-            if party_id == PartyID::ID0 {
-                return *z;
-            }
-
-            let beta = match party_id {
-                PartyID::ID0 => unreachable!(),
-                PartyID::ID1 => *m ^ x.a,
-                PartyID::ID2 => *m ^ x.b,
-            };
-
-            let mut v = RingElement(T::zero());
-            let alpha_base = idx * k;
-            for i in 0..k {
-                let beta_bit = ((beta.0 >> i) & T::one()) == T::one();
-                let alpha = batch.alphas_flat[alpha_base + i];
-                let signed_alpha = if beta_bit { -alpha } else { alpha };
-                v = v + pow2[i] * signed_alpha;
-            }
-
-            if party_id == PartyID::ID1 {
-                v = v + beta;
-            }
-
-            v + *z
-        })
-        .collect();
-
-    // --- Round 2: reshare ---
-    let s_prevs = io.network.reshare_many(&s_selfs)?;
-
-    Ok(s_selfs
-        .into_iter()
-        .zip(s_prevs)
-        .map(|(s_self, s_prev)| Rep3RingShare::new_ring(s_self, s_prev))
-        .collect())
-}
-
-/// EdaBits-aided upcast: convert binary XOR-shares from ring T to arithmetic
-/// shares in larger ring U, using ring-domain edaBits for the B2A step.
-///
-/// Online communication: 2 rounds (same as `ring_b2a_many`), replacing the
-/// O(log K) Kogge-Stone rounds of the full `conversion::b2a_many`.
-pub fn upcast_many_from_binary<T, U, N>(
-    binary: &[Rep3RingShare<T>],
-    batch: &EdaBitsRingBatch<U>,
-    io: &mut IoContext<N>,
-) -> eyre::Result<Vec<Rep3RingShare<U>>>
-where
-    T: IntRing2k + AsPrimitive<U>,
-    U: IntRing2k,
-    N: Rep3Network,
-    Standard: Distribution<T> + Distribution<U>,
-{
-    assert!(T::K < U::K);
-    // Zero-extend binary shares T→U (preserves XOR secret sharing).
-    let upcasted: Vec<Rep3RingShare<U>> = binary
-        .par_iter()
-        .map(|s| Rep3RingShare::new_ring(RingElement(s.a.0.as_()), RingElement(s.b.0.as_())))
-        .collect();
-    ring_b2a_many(&upcasted, batch, io)
-}
+// ring_b2a_many moved to conversion.rs as b2a_preproc_many
 
 // ---------------------------------------------------------------------------
 // EdaBitsPool: pre-generated edaBits/daBits for batched conversions
@@ -1301,15 +932,15 @@ pub use super::pool::PreprocessingPool;
 #[cfg(all(test, feature = "test-utils"))]
 mod tests {
     use super::*;
+    use crate::protocols::rep3_ring::casts::{r2f_preproc_many, r2f_b2a_preproc, r2f_b2a_preproc_many};
+    use crate::protocols::rep3_ring::conversion::b2a_preproc_many;
 
-    use ark_bn254::Fr;
-    use crate::protocols::rep3::{
-        combine_field_element, combine_field_elements, share_field_element,
-    };
+    use crate::protocols::rep3::{combine_field_element, combine_field_elements, share_field_element};
     use crate::protocols::rep3_ring::{
-        combine_ring_element, combine_ring_element_binary, ring::bit::Bit as RingBit,
-        share_ring_element, share_ring_element_binary,
+        combine_ring_element, combine_ring_element_binary, ring::bit::Bit as RingBit, share_ring_element,
+        share_ring_element_binary,
     };
+    use ark_bn254::Fr;
     use rand::{RngCore, SeedableRng};
     use rand_chacha::ChaCha20Rng;
 
@@ -1338,42 +969,6 @@ mod tests {
     }
 
     #[test]
-    fn b2a_ring_to_field_masked_recovers_x() {
-        let mut rng = ChaCha20Rng::seed_from_u64(0xBADA55);
-        let x_u32 = rng.next_u32();
-        let r_u32 = rng.next_u32();
-        let x_u64 = x_u32 as u64;
-        let r_u64 = r_u32 as u64;
-
-        let x_ring_shares = share_ring_element::<u64, _>(RingElement(x_u64), &mut rng);
-        let r_ring_shares = share_ring_element::<u64, _>(RingElement(r_u64), &mut rng);
-
-        let r_fp = Fr::from(r_u64);
-        let r_fp_shares = share_field_element::<Fr, _>(r_fp, &mut rng);
-
-        let edas: [DaRing<u64, Fr>; 3] = std::array::from_fn(|i| DaRing {
-            r_ring: r_ring_shares[i],
-            r_fp: r_fp_shares[i],
-        });
-
-        let outputs: [Rep3PrimeFieldShare<Fr>; 3] = run_rep3_local_test_with_coordinator(
-            1,
-            |i| (x_ring_shares[i], edas[i].clone()),
-            || (),
-            |(x_share, eda), mut io_ctx| {
-                let io = io_ctx.main();
-                ring_to_field::<u64, Fr, _>(x_share, eda, io).map_err(Into::into)
-            },
-            |(), _net| Ok(()),
-        )
-        .0;
-
-        let opened = combine_field_element(outputs[0], outputs[1], outputs[2]);
-        let expected = Fr::from(x_u64);
-        assert_eq!(opened, expected);
-    }
-
-    #[test]
     fn b2a_ring_to_field_masked_many_matches_single() {
         const NVALS: usize = 8;
         let mut rng = ChaCha20Rng::seed_from_u64(0x1234_5678);
@@ -1382,27 +977,18 @@ mod tests {
         let xs_u64 = (0..NVALS).map(|_| rng.next_u64()).collect::<Vec<_>>();
         let rs_u64 = xs_u64.iter().map(|&x| x >> 1).collect::<Vec<_>>();
 
-        let x_shares_per_val = xs_u64
-            .iter()
-            .map(|&x| share_ring_element::<u64, _>(RingElement(x), &mut rng))
-            .collect::<Vec<_>>();
-        let r_ring_shares_per_val = rs_u64
-            .iter()
-            .map(|&r| share_ring_element::<u64, _>(RingElement(r), &mut rng))
-            .collect::<Vec<_>>();
-        let r_fp_shares_per_val = rs_u64
-            .iter()
-            .map(|&r| share_field_element::<Fr, _>(Fr::from(r), &mut rng))
-            .collect::<Vec<_>>();
+        let x_shares_per_val =
+            xs_u64.iter().map(|&x| share_ring_element::<u64, _>(RingElement(x), &mut rng)).collect::<Vec<_>>();
+        let r_ring_shares_per_val =
+            rs_u64.iter().map(|&r| share_ring_element::<u64, _>(RingElement(r), &mut rng)).collect::<Vec<_>>();
+        let r_fp_shares_per_val =
+            rs_u64.iter().map(|&r| share_field_element::<Fr, _>(Fr::from(r), &mut rng)).collect::<Vec<_>>();
 
         let x_ring_shares: [Vec<Rep3RingShare<u64>>; 3] =
             std::array::from_fn(|pid| x_shares_per_val.iter().map(|s| s[pid]).collect());
         let eda_shares: [Vec<DaRing<u64, Fr>>; 3] = std::array::from_fn(|pid| {
             (0..NVALS)
-                .map(|i| DaRing {
-                    r_ring: r_ring_shares_per_val[i][pid],
-                    r_fp: r_fp_shares_per_val[i][pid],
-                })
+                .map(|i| DaRing { r_ring: r_ring_shares_per_val[i][pid], r_fp: r_fp_shares_per_val[i][pid] })
                 .collect()
         });
 
@@ -1412,7 +998,7 @@ mod tests {
             || (),
             |(x_shares, edas), mut io_ctx| {
                 let io = io_ctx.main();
-                ring_to_field_many::<u64, Fr, _>(&x_shares, &edas, io).map_err(Into::into)
+                r2f_preproc_many::<u64, Fr, _>(&x_shares, &edas, io).map_err(Into::into)
             },
             |(), _net| Ok(()),
         )
@@ -1448,11 +1034,7 @@ mod tests {
                 let gamma_bit = ((gamma >> b) & 1u64) == 1u64;
                 let alpha_1 = outputs[0][i].alphas[b];
                 let alpha_2 = outputs[2][i].alphas[b];
-                assert_eq!(
-                    alpha_1 + alpha_2,
-                    Fr::from(gamma_bit as u64),
-                    "alpha mismatch at value {i}, bit {b}"
-                );
+                assert_eq!(alpha_1 + alpha_2, Fr::from(gamma_bit as u64), "alpha mismatch at value {i}, bit {b}");
                 // P1 also holds alpha_1
                 assert_eq!(outputs[1][i].alphas[b], alpha_1);
             }
@@ -1484,11 +1066,7 @@ mod tests {
                 let gamma_bit = ((gamma >> b) & 1u64) == 1u64;
                 let alpha_1 = outputs[0].alphas_flat[i * k + b];
                 let alpha_2 = outputs[2].alphas_flat[i * k + b];
-                assert_eq!(
-                    alpha_1 + alpha_2,
-                    Fr::from(gamma_bit as u64),
-                    "lazy alpha mismatch at value {i}, bit {b}"
-                );
+                assert_eq!(alpha_1 + alpha_2, Fr::from(gamma_bit as u64), "lazy alpha mismatch at value {i}, bit {b}");
                 // P1 also holds alpha_1
                 assert_eq!(outputs[1].alphas_flat[i * k + b], alpha_1);
             }
@@ -1500,10 +1078,8 @@ mod tests {
         const NUM: usize = 16;
         let mut rng = ChaCha20Rng::seed_from_u64(0x1A2B_B2A_001);
         let xs = (0..NUM).map(|_| rng.next_u64()).collect::<Vec<_>>();
-        let per_val_shares = xs
-            .iter()
-            .map(|&x| share_ring_element_binary::<u64, _>(RingElement(x), &mut rng))
-            .collect::<Vec<_>>();
+        let per_val_shares =
+            xs.iter().map(|&x| share_ring_element_binary::<u64, _>(RingElement(x), &mut rng)).collect::<Vec<_>>();
         let x_bin_shares: [Vec<Rep3RingShare<u64>>; 3] =
             std::array::from_fn(|pid| per_val_shares.iter().map(|s| s[pid]).collect());
 
@@ -1514,8 +1090,7 @@ mod tests {
             |x_shares, mut io_ctx| {
                 let mut lazy = random_edabits_lazy::<u64, Fr, _>(NUM, &mut io_ctx)?;
                 let batch = lazy.take_batch(NUM)?;
-                ring_to_field_b2a_many::<u64, Fr, _>(&x_shares, &batch, io_ctx.main())
-                    .map_err(Into::into)
+                r2f_b2a_preproc_many::<u64, Fr, _>(&x_shares, &batch, io_ctx.main()).map_err(Into::into)
             },
             |(), _net| Ok(()),
         )
@@ -1538,11 +1113,8 @@ mod tests {
             || (),
             |x_share, mut io_ctx| {
                 let mut local_rng = ChaCha20Rng::seed_from_u64(0xB2A_EDA_0002);
-                let eda = random_edabits::<u64, Fr, _>(1, &mut local_rng, &mut io_ctx)?
-                    .into_iter()
-                    .next()
-                    .unwrap();
-                ring_to_field_b2a::<u64, Fr, _>(x_share, eda, io_ctx.main()).map_err(Into::into)
+                let eda = random_edabits::<u64, Fr, _>(1, &mut local_rng, &mut io_ctx)?.into_iter().next().unwrap();
+                r2f_b2a_preproc::<u64, Fr, _>(x_share, eda, io_ctx.main()).map_err(Into::into)
             },
             |(), _net| Ok(()),
         )
@@ -1553,14 +1125,12 @@ mod tests {
     }
 
     #[test]
-    fn ring_to_field_b2a_many_recovers_xs_u64() {
+    fn r2f_b2a_preproc_many_recovers_xs_u64() {
         const NUM: usize = 16;
         let mut rng = ChaCha20Rng::seed_from_u64(0xB2A_EDA_1001);
         let xs = (0..NUM).map(|_| rng.next_u64()).collect::<Vec<_>>();
-        let per_val_shares = xs
-            .iter()
-            .map(|&x| share_ring_element_binary::<u64, _>(RingElement(x), &mut rng))
-            .collect::<Vec<_>>();
+        let per_val_shares =
+            xs.iter().map(|&x| share_ring_element_binary::<u64, _>(RingElement(x), &mut rng)).collect::<Vec<_>>();
         let x_bin_shares: [Vec<Rep3RingShare<u64>>; 3] =
             std::array::from_fn(|pid| per_val_shares.iter().map(|s| s[pid]).collect());
 
@@ -1575,8 +1145,7 @@ mod tests {
                     gammas: edas.iter().map(|e| e.gamma).collect(),
                     alphas_flat: edas.into_iter().flat_map(|e| e.alphas).collect(),
                 };
-                ring_to_field_b2a_many::<u64, Fr, _>(&x_shares, &batch, io_ctx.main())
-                    .map_err(Into::into)
+                r2f_b2a_preproc_many::<u64, Fr, _>(&x_shares, &batch, io_ctx.main()).map_err(Into::into)
             },
             |(), _net| Ok(()),
         )
@@ -1587,7 +1156,7 @@ mod tests {
         assert_eq!(combined, expected);
     }
 
-    /// Test 3 sequential `ring_to_field_b2a_many` calls on the same io_ctx,
+    /// Test 3 sequential `r2f_b2a_preproc_many` calls on the same io_ctx,
     /// mimicking the operand Q pattern: first u32, then u16, then u16.
     #[test]
     fn sequential_b2a_mixed_rings_on_same_io_ctx() {
@@ -1623,50 +1192,41 @@ mod tests {
             std::array::from_fn(|pid| per.iter().map(|s| s[pid]).collect())
         };
 
-        let outputs: [(
-            Vec<Rep3PrimeFieldShare<Fr>>,
-            Vec<Rep3PrimeFieldShare<Fr>>,
-            Vec<Rep3PrimeFieldShare<Fr>>,
-        ); 3] = run_rep3_local_test_with_coordinator(
-            1,
-            |i| {
-                (
-                    id_shares[i].clone(),
-                    left_shares[i].clone(),
-                    right_shares[i].clone(),
-                )
-            },
-            || (),
-            |(id_sh, left_sh, right_sh), mut io_ctx| {
-                // Generate lazy edaBits for u32 and u16
-                let mut lazy_u32 = random_edabits_lazy::<u32, Fr, _>(NUM, &mut io_ctx)?;
-                let mut lazy_u16 = random_edabits_lazy::<u16, Fr, _>(2 * NUM, &mut io_ctx)?;
+        let outputs: [(Vec<Rep3PrimeFieldShare<Fr>>, Vec<Rep3PrimeFieldShare<Fr>>, Vec<Rep3PrimeFieldShare<Fr>>); 3] =
+            run_rep3_local_test_with_coordinator(
+                1,
+                |i| (id_shares[i].clone(), left_shares[i].clone(), right_shares[i].clone()),
+                || (),
+                |(id_sh, left_sh, right_sh), mut io_ctx| {
+                    // Generate lazy edaBits for u32 and u16
+                    let mut lazy_u32 = random_edabits_lazy::<u32, Fr, _>(NUM, &mut io_ctx)?;
+                    let mut lazy_u16 = random_edabits_lazy::<u16, Fr, _>(2 * NUM, &mut io_ctx)?;
 
-                let io = io_ctx.main();
+                    let io = io_ctx.main();
 
-                // Call 1: u32 identity
-                let identity = {
-                    let batch = lazy_u32.take_batch(NUM)?;
-                    ring_to_field_b2a_many::<u32, Fr, _>(&id_sh, &batch, io)?
-                };
+                    // Call 1: u32 identity
+                    let identity = {
+                        let batch = lazy_u32.take_batch(NUM)?;
+                        r2f_b2a_preproc_many::<u32, Fr, _>(&id_sh, &batch, io)?
+                    };
 
-                // Call 2: u16 left
-                let left = {
-                    let batch = lazy_u16.take_batch(NUM)?;
-                    ring_to_field_b2a_many::<u16, Fr, _>(&left_sh, &batch, io)?
-                };
+                    // Call 2: u16 left
+                    let left = {
+                        let batch = lazy_u16.take_batch(NUM)?;
+                        r2f_b2a_preproc_many::<u16, Fr, _>(&left_sh, &batch, io)?
+                    };
 
-                // Call 3: u16 right
-                let right = {
-                    let batch = lazy_u16.take_batch(NUM)?;
-                    ring_to_field_b2a_many::<u16, Fr, _>(&right_sh, &batch, io)?
-                };
+                    // Call 3: u16 right
+                    let right = {
+                        let batch = lazy_u16.take_batch(NUM)?;
+                        r2f_b2a_preproc_many::<u16, Fr, _>(&right_sh, &batch, io)?
+                    };
 
-                Ok((identity, left, right))
-            },
-            |(), _net| Ok(()),
-        )
-        .0;
+                    Ok((identity, left, right))
+                },
+                |(), _net| Ok(()),
+            )
+            .0;
 
         // Verify identity (u32)
         let id_combined = combine_field_elements(&outputs[0].0, &outputs[1].0, &outputs[2].0);
@@ -1695,10 +1255,8 @@ mod tests {
 
         // Values for batch 2 (the one we verify)
         let xs: Vec<u16> = (0..BATCH2).map(|_| rng.next_u32() as u16).collect();
-        let per_val_shares = xs
-            .iter()
-            .map(|&x| share_ring_element_binary::<u16, _>(RingElement(x), &mut rng))
-            .collect::<Vec<_>>();
+        let per_val_shares =
+            xs.iter().map(|&x| share_ring_element_binary::<u16, _>(RingElement(x), &mut rng)).collect::<Vec<_>>();
         let x_bin_shares: [Vec<Rep3RingShare<u16>>; 3] =
             std::array::from_fn(|pid| per_val_shares.iter().map(|s| s[pid]).collect());
 
@@ -1714,8 +1272,7 @@ mod tests {
 
                 // Now take batch2 at cursor=BATCH1 (odd) — this tests the word alignment fix
                 let batch = lazy.take_batch(BATCH2)?;
-                ring_to_field_b2a_many::<u16, Fr, _>(&x_shares, &batch, io_ctx.main())
-                    .map_err(Into::into)
+                r2f_b2a_preproc_many::<u16, Fr, _>(&x_shares, &batch, io_ctx.main()).map_err(Into::into)
             },
             |(), _net| Ok(()),
         )
@@ -1723,10 +1280,7 @@ mod tests {
 
         let combined = combine_field_elements(&outputs[0], &outputs[1], &outputs[2]);
         let expected: Vec<Fr> = xs.iter().map(|&x| Fr::from(x as u64)).collect();
-        assert_eq!(
-            combined, expected,
-            "u16 lazy B2A mismatch after cursor offset"
-        );
+        assert_eq!(combined, expected, "u16 lazy B2A mismatch after cursor offset");
     }
 
     /// Helper: run preprocess + B2A + bit-inject roundtrip.
@@ -1742,10 +1296,8 @@ mod tests {
         // Random u64 values for B2A
         let xs: Vec<u64> = (0..NUM_U64).map(|_| rng.next_u64()).collect();
         let x_bin_shares: [Vec<Rep3RingShare<u64>>; 3] = {
-            let per = xs
-                .iter()
-                .map(|&x| share_ring_element_binary::<u64, _>(RingElement(x), &mut rng))
-                .collect::<Vec<_>>();
+            let per =
+                xs.iter().map(|&x| share_ring_element_binary::<u64, _>(RingElement(x), &mut rng)).collect::<Vec<_>>();
             std::array::from_fn(|pid| per.iter().map(|s| s[pid]).collect())
         };
 
@@ -1764,27 +1316,18 @@ mod tests {
                 1,
                 |i| (x_bin_shares[i].clone(), bit_shares[i].clone()),
                 || (),
-                move |(x_sh, bit_sh): (Vec<Rep3RingShare<u64>>, Vec<Rep3RingShare<RingBit>>),
-                      mut io_ctx| {
-                    let pool_dir = std::env::temp_dir().join(format!(
-                        "mpc-core-test-preproc-batched-{}",
-                        io_ctx.party_idx()
-                    ));
-                    let mut pool = preprocess_pool::<Fr, _>(
-                        &pool_dir,
-                        [0, 0, 0, NUM_U64, 0],
-                        NUM_DABITS,
-                        &mut io_ctx,
-                    )?;
+                move |(x_sh, bit_sh): (Vec<Rep3RingShare<u64>>, Vec<Rep3RingShare<RingBit>>), mut io_ctx| {
+                    let pool_dir =
+                        std::env::temp_dir().join(format!("mpc-core-test-preproc-batched-{}", io_ctx.party_idx()));
+                    let mut pool = preprocess_pool::<Fr, _>(&pool_dir, [0, 0, 0, NUM_U64, 0], NUM_DABITS, 0, 0, &mut io_ctx)?;
 
                     // B2A via edaBits
                     let batch = pool.take_edabits::<u64>(NUM_U64)?;
-                    let b2a = ring_to_field_b2a_many::<u64, Fr, _>(&x_sh, &batch, io_ctx.main())?;
+                    let b2a = r2f_b2a_preproc_many::<u64, Fr, _>(&x_sh, &batch, io_ctx.main())?;
 
                     // Bit inject via daBits
                     let dbatch = pool.take_dabits(NUM_DABITS)?;
-                    let inj =
-                        dabits::bit_inject_field_many::<Fr, _>(&bit_sh, &dbatch, io_ctx.main())?;
+                    let inj = crate::protocols::rep3_ring::conversion::bit_inject_field_preproc_many::<Fr, _>(&bit_sh, &dbatch, io_ctx.main())?;
 
                     Ok((b2a, inj))
                 },
@@ -1816,10 +1359,8 @@ mod tests {
         // Random u64 values for B2A
         let xs: Vec<u64> = (0..NUM_U64).map(|_| rng.next_u64()).collect();
         let x_bin_shares: [Vec<Rep3RingShare<u64>>; 3] = {
-            let per = xs
-                .iter()
-                .map(|&x| share_ring_element_binary::<u64, _>(RingElement(x), &mut rng))
-                .collect::<Vec<_>>();
+            let per =
+                xs.iter().map(|&x| share_ring_element_binary::<u64, _>(RingElement(x), &mut rng)).collect::<Vec<_>>();
             std::array::from_fn(|pid| per.iter().map(|s| s[pid]).collect())
         };
 
@@ -1845,16 +1386,10 @@ mod tests {
                 || (),
                 move |(x_sh, bit_sh): Input, mut io_ctx| {
                     let party_id = io_ctx.party_id();
-                    let pool_dir =
-                        base_dir_for_workers.join(format!("party_{}", usize::from(party_id)));
+                    let pool_dir = base_dir_for_workers.join(format!("party_{}", usize::from(party_id)));
                     std::fs::create_dir_all(&pool_dir)?;
 
-                    let mut pool = preprocess_pool::<Fr, _>(
-                        &pool_dir,
-                        [0, 0, 0, NUM_U64, 0],
-                        NUM_DABITS,
-                        &mut io_ctx,
-                    )?;
+                    let mut pool = preprocess_pool::<Fr, _>(&pool_dir, [0, 0, 0, NUM_U64, 0], NUM_DABITS, 0, 0, &mut io_ctx)?;
 
                     // Load back from disk and consume from the loaded pool.
                     let mut loaded = PreprocessingPool::<Fr>::load(&pool_dir, party_id)?;
@@ -1862,11 +1397,10 @@ mod tests {
                     assert_eq!(pool.remaining_counts(), loaded.remaining_counts());
 
                     let batch = loaded.take_edabits::<u64>(NUM_U64)?;
-                    let b2a = ring_to_field_b2a_many::<u64, Fr, _>(&x_sh, &batch, io_ctx.main())?;
+                    let b2a = r2f_b2a_preproc_many::<u64, Fr, _>(&x_sh, &batch, io_ctx.main())?;
 
                     let dbatch = loaded.take_dabits(NUM_DABITS)?;
-                    let inj =
-                        dabits::bit_inject_field_many::<Fr, _>(&bit_sh, &dbatch, io_ctx.main())?;
+                    let inj = crate::protocols::rep3_ring::conversion::bit_inject_field_preproc_many::<Fr, _>(&bit_sh, &dbatch, io_ctx.main())?;
 
                     Ok((b2a, inj))
                 },
@@ -1877,18 +1411,12 @@ mod tests {
         // Verify B2A
         let b2a_combined = combine_field_elements(&outputs[0].0, &outputs[1].0, &outputs[2].0);
         let b2a_expected: Vec<Fr> = xs.iter().map(|&x| Fr::from(x)).collect();
-        assert_eq!(
-            b2a_combined, b2a_expected,
-            "preprocess_into_dir B2A mismatch"
-        );
+        assert_eq!(b2a_combined, b2a_expected, "preprocess_into_dir B2A mismatch");
 
         // Verify bit injection
         let inj_combined = combine_field_elements(&outputs[0].1, &outputs[1].1, &outputs[2].1);
         let inj_expected: Vec<Fr> = bits.iter().map(|&b| Fr::from(b as u64)).collect();
-        assert_eq!(
-            inj_combined, inj_expected,
-            "preprocess_into_dir bit inject mismatch"
-        );
+        assert_eq!(inj_combined, inj_expected, "preprocess_into_dir bit inject mismatch");
 
         let _ = std::fs::remove_dir_all(&base_dir);
     }
@@ -1928,9 +1456,7 @@ mod tests {
                 .collect::<Vec<_>>();
             std::array::from_fn(|pid| per.iter().map(|s| s[pid]).collect())
         };
-        let init_bits: Vec<bool> = (0..INITIAL_DABITS)
-            .map(|_| (rng.next_u32() & 1) == 1)
-            .collect();
+        let init_bits: Vec<bool> = (0..INITIAL_DABITS).map(|_| (rng.next_u32() & 1) == 1).collect();
         let init_bit_shares: [Vec<Rep3RingShare<RingBit>>; 3] = {
             let per = init_bits
                 .iter()
@@ -1948,9 +1474,7 @@ mod tests {
                 .collect::<Vec<_>>();
             std::array::from_fn(|pid| per.iter().map(|s| s[pid]).collect())
         };
-        let ext_bits: Vec<bool> = (0..EXTRA_DABITS)
-            .map(|_| (rng.next_u32() & 1) == 1)
-            .collect();
+        let ext_bits: Vec<bool> = (0..EXTRA_DABITS).map(|_| (rng.next_u32() & 1) == 1).collect();
         let ext_bit_shares: [Vec<Rep3RingShare<RingBit>>; 3] = {
             let per = ext_bits
                 .iter()
@@ -1980,30 +1504,23 @@ mod tests {
                 || (),
                 move |(init_x, init_b, ext_x, ext_b): Input, mut io_ctx| {
                     // Phase 1: create initial pool and consume everything.
-                    let pool_dir = std::env::temp_dir()
-                        .join(format!("mpc-core-test-extend-{}", io_ctx.party_idx()));
-                    let mut pool = preprocess_pool::<Fr, _>(
-                        &pool_dir,
-                        [0, 0, 0, INITIAL_U64, 0],
-                        INITIAL_DABITS,
-                        &mut io_ctx,
-                    )?;
+                    let pool_dir = std::env::temp_dir().join(format!("mpc-core-test-extend-{}", io_ctx.party_idx()));
+                    let mut pool =
+                        preprocess_pool::<Fr, _>(&pool_dir, [0, 0, 0, INITIAL_U64, 0], INITIAL_DABITS, 0, 0, &mut io_ctx)?;
                     let batch = pool.take_edabits::<u64>(INITIAL_U64)?;
-                    let _ = ring_to_field_b2a_many::<u64, Fr, _>(&init_x, &batch, io_ctx.main())?;
+                    let _ = r2f_b2a_preproc_many::<u64, Fr, _>(&init_x, &batch, io_ctx.main())?;
                     let dbatch = pool.take_dabits(INITIAL_DABITS)?;
-                    let _ =
-                        dabits::bit_inject_field_many::<Fr, _>(&init_b, &dbatch, io_ctx.main())?;
+                    let _ = crate::protocols::rep3_ring::conversion::bit_inject_field_preproc_many::<Fr, _>(&init_b, &dbatch, io_ctx.main())?;
 
                     // Phase 2: extend pool to cover extra items.
                     let deficit_counts = [0, 0, 0, EXTRA_U64, 0];
-                    extend_pool_batched(&mut pool, deficit_counts, EXTRA_DABITS, &mut io_ctx)?;
+                    extend_pool_batched(&mut pool, deficit_counts, EXTRA_DABITS, 0, 0, &mut io_ctx)?;
 
                     // Phase 3: consume extension items and verify.
                     let batch2 = pool.take_edabits::<u64>(EXTRA_U64)?;
-                    let b2a = ring_to_field_b2a_many::<u64, Fr, _>(&ext_x, &batch2, io_ctx.main())?;
+                    let b2a = r2f_b2a_preproc_many::<u64, Fr, _>(&ext_x, &batch2, io_ctx.main())?;
                     let dbatch2 = pool.take_dabits(EXTRA_DABITS)?;
-                    let inj =
-                        dabits::bit_inject_field_many::<Fr, _>(&ext_b, &dbatch2, io_ctx.main())?;
+                    let inj = crate::protocols::rep3_ring::conversion::bit_inject_field_preproc_many::<Fr, _>(&ext_b, &dbatch2, io_ctx.main())?;
 
                     Ok((b2a, inj))
                 },
@@ -2039,25 +1556,21 @@ mod tests {
             .collect();
 
         // Create binary (XOR) shares of each value.
-        let bin_shares: Vec<[Rep3RingShare<U66>; 3]> = values
-            .iter()
-            .map(|v| share_ring_element_binary(*v, &mut rng))
-            .collect();
+        let bin_shares: Vec<[Rep3RingShare<U66>; 3]> =
+            values.iter().map(|v| share_ring_element_binary(*v, &mut rng)).collect();
 
         let (results, _) = run_rep3_local_test_with_coordinator(
             0,
             |party_idx| {
-                let party_bins: Vec<Rep3RingShare<U66>> =
-                    bin_shares.iter().map(|s| s[party_idx]).collect();
+                let party_bins: Vec<Rep3RingShare<U66>> = bin_shares.iter().map(|s| s[party_idx]).collect();
                 party_bins
             },
             || (),
-            move |party_bins: Vec<Rep3RingShare<U66>>,
-                  mut io_ctx: IoContextPool<LocalRep3TestWorkerNet>| {
+            move |party_bins: Vec<Rep3RingShare<U66>>, mut io_ctx: IoContextPool<LocalRep3TestWorkerNet>| {
                 let mut lazy = random_edabits_ring_lazy::<U66, _>(n, &mut io_ctx)?;
                 let batch = lazy.take_batch(n)?;
                 let io = io_ctx.main();
-                let arith = ring_b2a_many(&party_bins, &batch, io)?;
+                let arith = b2a_preproc_many(&party_bins, &batch, io)?;
                 Ok(arith)
             },
             |(), _net| Ok(()),

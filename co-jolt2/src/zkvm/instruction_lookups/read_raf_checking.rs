@@ -2019,7 +2019,7 @@ where
     F: JoltField,
     N: Rep3NetworkWorker,
 {
-    use mpc_core::protocols::rep3_ring::edabits;
+    use mpc_core::protocols::rep3_ring::casts;
 
     let n_il = interleaved_idx.len();
     let n_id = identity_idx.len();
@@ -2045,7 +2045,7 @@ where
         for lr_chunk in lr.chunks(chunk_size) {
             let _c = trace_span!("q_polys_b2a_chunk", kind = "lr", chunk_len = lr_chunk.len()).entered();
             let lr_batch = pool.take_edabits::<T::Half>(lr_chunk.len())?;
-            let out = edabits::ring_to_field_b2a_many::<T::Half, F, _>(lr_chunk, &lr_batch, io_ctx.main())?;
+            let out = casts::r2f_b2a_preproc_many::<T::Half, F, _>(lr_chunk, &lr_batch, io_ctx.main())?;
             lr_result.extend(out);
         }
         drop(_lr);
@@ -2066,7 +2066,7 @@ where
             let _c = trace_span!("q_polys_b2a_chunk", kind = "id", chunk_len = id_chunk.len()).entered();
             let id_shares: Vec<Rep3RingShare<T>> = id_chunk.iter().map(|b| downcast::<LookupIndexInt, T>(*b)).collect();
             let id_batch = pool.take_edabits::<T>(id_shares.len())?;
-            let out = edabits::ring_to_field_b2a_many::<T, F, _>(&id_shares, &id_batch, io_ctx.main())?;
+            let out = casts::r2f_b2a_preproc_many::<T, F, _>(&id_shares, &id_batch, io_ctx.main())?;
             out_all.extend(out);
         }
         drop(_id);

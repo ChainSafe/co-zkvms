@@ -6,8 +6,9 @@ pub mod arithmetic;
 pub mod binary;
 pub mod casts;
 pub mod conversion;
-pub mod preprocessing;
-pub use preprocessing::{daPoint, dabits, edabits, wrap_mask};
+pub use crate::preprocessing::{daPoint, dabits, edabits, wrap_mask};
+/// Re-export preprocessing module for backwards compatibility.
+pub use crate::preprocessing;
 mod detail;
 pub mod gadgets;
 pub mod ring;

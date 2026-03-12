@@ -8,7 +8,7 @@ use jolt_core::zkvm::ram::remap_address;
 use jolt_core::zkvm::witness::{compute_d_parameter, VirtualPolynomial, DTH_ROOT_OF_K};
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{arithmetic as rep3_arith, PartyID, Rep3PrimeFieldShare};
-use mpc_core::protocols::rep3_ring::casts::binary_ring_to_field_many;
+use mpc_core::protocols::rep3_ring::casts::r2f_b2a_many;
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use rayon::prelude::*;
@@ -81,7 +81,7 @@ pub fn build_initial_memory_state(
 /// Public regions (bytecode, inputs) use trivial shares. Advice regions
 /// (trusted, untrusted) are packed from `Rep3RingShare<u8>` byte shares into
 /// `Rep3RingShare<u64>` word shares, then converted to field shares via
-/// `binary_ring_to_field_many` (one MPC round).
+/// `r2f_b2a_many` (one MPC round).
 pub(crate) fn build_initial_memory_state_shared<F: JoltField, N: Rep3NetworkWorker>(
     ram_preprocessing: &jolt_core::zkvm::ram::RAMPreprocessing,
     program_io: &Rep3ProgramIOInput,
@@ -104,7 +104,7 @@ pub(crate) fn build_initial_memory_state_shared<F: JoltField, N: Rep3NetworkWork
     let trusted_advice_start = remap_address(memory_layout.trusted_advice_start, memory_layout).unwrap() as usize;
     if !program_io.trusted_advice.is_empty() {
         let trusted_words = Rep3ProgramIOInput::pack_advice_words(&program_io.trusted_advice);
-        let trusted_field: Vec<Rep3PrimeFieldShare<F>> = binary_ring_to_field_many(&trusted_words, io_ctx.main())?;
+        let trusted_field: Vec<Rep3PrimeFieldShare<F>> = r2f_b2a_many(&trusted_words, io_ctx.main())?;
         for (i, share) in trusted_field.into_iter().enumerate() {
             initial_memory_state[trusted_advice_start + i] = share;
         }
@@ -114,7 +114,7 @@ pub(crate) fn build_initial_memory_state_shared<F: JoltField, N: Rep3NetworkWork
     let untrusted_advice_start = remap_address(memory_layout.untrusted_advice_start, memory_layout).unwrap() as usize;
     if !program_io.untrusted_advice.is_empty() {
         let untrusted_words = Rep3ProgramIOInput::pack_advice_words(&program_io.untrusted_advice);
-        let untrusted_field: Vec<Rep3PrimeFieldShare<F>> = binary_ring_to_field_many(&untrusted_words, io_ctx.main())?;
+        let untrusted_field: Vec<Rep3PrimeFieldShare<F>> = r2f_b2a_many(&untrusted_words, io_ctx.main())?;
         for (i, share) in untrusted_field.into_iter().enumerate() {
             initial_memory_state[untrusted_advice_start + i] = share;
         }
@@ -178,7 +178,7 @@ impl<F: JoltField> Rep3RamDagWorker<F> {
         // ring→field conversion to minimize peak RSS.
         let mut final_memory_ring = std::mem::take(&mut sm.prover_state.final_memory_state.data);
         final_memory_ring.truncate(dram_convert_len);
-        let dram_field: Vec<Rep3PrimeFieldShare<F>> = binary_ring_to_field_many(&final_memory_ring, io_ctx.main())?;
+        let dram_field: Vec<Rep3PrimeFieldShare<F>> = r2f_b2a_many(&final_memory_ring, io_ctx.main())?;
         drop(final_memory_ring);
 
         // Build val_final as a mixed polynomial: keep known-public regions public,

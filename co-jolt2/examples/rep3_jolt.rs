@@ -371,7 +371,6 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         let counts = pp.edabit_counts;
         let num_dabits = pp.dabits;
         log_preproc_size_estimates(counts, num_dabits);
-        #[cfg(feature = "ring-msm")]
         let budget = {
             use co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget;
             compute_edabit_budget(pp.trace_len)
@@ -386,13 +385,20 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                     let (rem_eda, rem_da) = pool.remaining_counts();
                     let deficit_counts: [usize; 5] = std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
                     let deficit_dabits = num_dabits.saturating_sub(rem_da);
+                    let deficit_re64 = budget
+                        .ring_edabits_u64
+                        .saturating_sub(pool.remaining_ring_edabits_u64());
+                    let deficit_re128 = budget
+                        .ring_edabits_u128
+                        .saturating_sub(pool.remaining_ring_edabits_u128());
                     #[cfg(feature = "ring-msm")]
                     let (deficit_wm, deficit_re) = (
                         budget.wrap_masks.saturating_sub(pool.remaining_wrap_masks()),
                         budget.ring_edabits_u66.saturating_sub(pool.remaining_ring_edabits_u66()),
                     );
 
-                    let need_extend = deficit_counts.iter().any(|&d| d > 0) || deficit_dabits > 0;
+                    let need_extend = deficit_counts.iter().any(|&d| d > 0) || deficit_dabits > 0
+                        || deficit_re64 > 0 || deficit_re128 > 0;
                     #[cfg(feature = "ring-msm")]
                     let need_extend = need_extend || deficit_wm > 0 || deficit_re > 0;
 
@@ -406,8 +412,8 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                             &mut pool,
                             deficit_counts,
                             deficit_dabits,
-                            0,
-                            0,
+                            deficit_re64,
+                            deficit_re128,
                             &mut io_ctx,
                         )?;
                         #[cfg(feature = "ring-msm")]
@@ -438,8 +444,8 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                             &pool_dir,
                             counts,
                             num_dabits,
-                            0,
-                            0,
+                            budget.ring_edabits_u64,
+                            budget.ring_edabits_u128,
                             &mut io_ctx,
                         )?
                     }

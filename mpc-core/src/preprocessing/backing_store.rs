@@ -482,7 +482,12 @@ impl<F> BackingStore<F> {
                 v[start_elem..end_elem].copy_from_slice(data);
                 Ok(())
             }
-            BackingStore::FileBacked { file, len, .. } => {
+            BackingStore::FileBacked {
+                file,
+                len,
+                append_offset,
+                ..
+            } => {
                 if end_elem > *len {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidInput,
@@ -496,7 +501,14 @@ impl<F> BackingStore<F> {
                         std::mem::size_of_val(data),
                     )
                 };
-                Self::file_write_all_at(file, byte_offset, bytes)
+                Self::file_write_all_at(file, byte_offset, bytes)?;
+                // Track high-water mark so that subsequent extend() appends
+                // after all written data instead of overwriting it.
+                let end_byte = byte_offset + bytes.len() as u64;
+                if end_byte > *append_offset {
+                    *append_offset = end_byte;
+                }
+                Ok(())
             }
             BackingStore::Empty => {
                 if start_elem != 0 {
@@ -544,7 +556,12 @@ impl<F> BackingStore<F> {
                 v[start_elem..end_elem].copy_from_slice(&decoded);
                 Ok(())
             }
-            BackingStore::FileBacked { file, len, .. } => {
+            BackingStore::FileBacked {
+                file,
+                len,
+                append_offset,
+                ..
+            } => {
                 if end_elem > *len {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidInput,
@@ -554,7 +571,12 @@ impl<F> BackingStore<F> {
                     ));
                 }
                 let (byte_offset, _) = Self::byte_range(start_elem, end_elem);
-                Self::file_write_all_at(file, byte_offset, bytes)
+                Self::file_write_all_at(file, byte_offset, bytes)?;
+                let end_byte = byte_offset + bytes.len() as u64;
+                if end_byte > *append_offset {
+                    *append_offset = end_byte;
+                }
+                Ok(())
             }
             BackingStore::Empty => {
                 if start_elem != 0 {

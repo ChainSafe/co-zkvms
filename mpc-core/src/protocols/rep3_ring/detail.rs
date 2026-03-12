@@ -349,8 +349,8 @@ pub(crate) fn unsigned_ge<T: IntRing2k, N: Rep3Network>(
 where
     Standard: Distribution<T>,
 {
-    let a_bits = conversion::a2b_selector(x, io_context)?;
-    let b_bits = conversion::a2b_selector(y, io_context)?;
+    let a_bits = conversion::a2b(x, io_context)?;
+    let b_bits = conversion::a2b(y, io_context)?;
     let (_, r) = low_depth_binary_sub_with_carry(&a_bits, &b_bits, io_context)?;
     Ok(r)
 }
@@ -377,7 +377,7 @@ pub(crate) fn unsigned_ge_const_lhs<T: IntRing2k, N: Rep3Network>(
 where
     Standard: Distribution<T>,
 {
-    let b_bits = conversion::a2b_selector(y, io_context)?;
+    let b_bits = conversion::a2b(y, io_context)?;
     let (_, r) = low_depth_binary_sub_from_const_with_carry(&x, &b_bits, io_context)?;
     Ok(r)
 }
@@ -391,7 +391,7 @@ pub(crate) fn unsigned_ge_const_rhs<T: IntRing2k, N: Rep3Network>(
 where
     Standard: Distribution<T>,
 {
-    let a_bits = conversion::a2b_selector(x, io_context)?;
+    let a_bits = conversion::a2b(x, io_context)?;
     let (_, r) = low_depth_binary_sub_by_const_with_carry(&a_bits, &y, io_context)?;
     Ok(r)
 }

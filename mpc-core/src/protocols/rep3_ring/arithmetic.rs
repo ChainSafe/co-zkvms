@@ -575,7 +575,7 @@ where
     Standard: Distribution<T>,
 {
     let diff = sub(a, b);
-    let bits = conversion::a2b_selector(diff, io_context)?;
+    let bits = conversion::a2b(diff, io_context)?;
     let is_zero = binary::is_zero(&bits, io_context)?;
     Ok(is_zero)
 }

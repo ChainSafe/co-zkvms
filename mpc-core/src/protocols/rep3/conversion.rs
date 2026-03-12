@@ -13,34 +13,16 @@ use crate::field::PrimeField;
 use num_bigint::BigUint;
 use serde::{Deserialize, Serialize};
 
-/// This enum defines which arithmetic-to-binary (and vice-versa) implementation is used.
+/// Selects between online and preprocessed MPC execution modes.
 #[derive(
     Debug, Clone, Copy, Default, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord, Hash,
 )]
-pub enum A2BType {
-    /// The arithmetic-to-binary conversion is directly done using "Bit Decomposition", while the binary-to-arithmetic conversion is done using "Bit Composition". This process has a larger number of communication rounds with less communicated bytes.
+pub enum MPCType {
+    /// Online MPC execution (no preprocessing required).
     #[default]
-    Direct,
-}
-
-/// Depending on the `A2BType` of the io_context, this function selects the appropriate implementation for the arithmetic-to-binary conversion.
-pub fn a2b_selector<F: PrimeField, N: Rep3Network>(
-    x: Rep3PrimeFieldShare<F>,
-    io_context: &mut IoContext<N>,
-) -> std::io::Result<Rep3BigUintShare<F>> {
-    match io_context.a2b_type {
-        A2BType::Direct => a2b(x, io_context),
-    }
-}
-
-/// Depending on the `A2BType` of the io_context, this function selects the appropriate implementation for the binary-to-arithmetic conversion.
-pub fn b2a_selector<F: PrimeField, N: Rep3Network>(
-    x: &Rep3BigUintShare<F>,
-    io_context: &mut IoContext<N>,
-) -> std::io::Result<Rep3PrimeFieldShare<F>> {
-    match io_context.a2b_type {
-        A2BType::Direct => b2a(x, io_context),
-    }
+    Online,
+    /// Preprocessed MPC execution (uses correlated randomness generated offline).
+    Preprocessed,
 }
 
 /// Transforms the replicated shared value x from an arithmetic sharing to a binary sharing. I.e., x = x_1 + x_2 + x_3 gets transformed into x = x'_1 xor x'_2 xor x'_3.

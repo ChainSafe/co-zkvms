@@ -578,120 +578,7 @@ pub fn random_dabits_lazy<F: PrimeField, N: Rep3NetworkWorker>(
     ))
 }
 
-// ---------------------------------------------------------------------------
-// Online: bit_inject_field_many (Π₁)
-// ---------------------------------------------------------------------------
-
-/// Convert binary Rep3 bit shares to arithmetic field shares using Π₁ daBits.
-///
-/// **Protocol (1 round, 3 bits):**
-/// 1. P0 broadcasts m₀ = b.a ⊕ b.b ⊕ γ to P1,P2
-/// 2. P1 sends m₁ = θ ⊕ b.a to P0
-/// 3. All compute σ, then ⟦b⟧^A = (−1)^σ · ⟦v⟧^A + ⟦β⟧^A_{G₁}
-pub fn bit_inject_field_many<F: PrimeField, N: Rep3Network>(
-    x: &[Rep3RingShare<Bit>],
-    batch: &DaBitBatch<F>,
-    io: &mut IoContext<N>,
-) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
-    let n = x.len();
-    if n == 0 {
-        return Ok(Vec::new());
-    }
-    debug_assert_eq!(batch.gammas.len(), n);
-    debug_assert_eq!(batch.thetas.len(), n);
-    debug_assert_eq!(batch.v_shares.len(), n);
-
-    let party_id = io.id;
-
-    // --- Round 1: P0 broadcasts m₀, P1 sends m₁ ---
-    // Use u8 for network (Bit lacks CanonicalSerialize).
-    let (m0s, m1s): (Vec<u8>, Vec<u8>) = match party_id {
-        PartyID::ID0 => {
-            // m₀ = x.a ⊕ x.b ⊕ γ
-            let m0s: Vec<u8> = x
-                .iter()
-                .zip(&batch.gammas)
-                .map(|(xi, &gamma)| (xi.a.0.convert() ^ xi.b.0.convert() ^ gamma) as u8)
-                .collect();
-            io.network.send_many(PartyID::ID1, &m0s)?;
-            io.network.send_many(PartyID::ID2, &m0s)?;
-            let m1s: Vec<u8> = io.network.recv_many(PartyID::ID1)?;
-            (m0s, m1s)
-        }
-        PartyID::ID1 => {
-            let m0s: Vec<u8> = io.network.recv_many(PartyID::ID0)?;
-            // m₁ = θ ⊕ x.a (P1.a = s₁₂)
-            let m1s: Vec<u8> = x
-                .iter()
-                .zip(&batch.thetas)
-                .map(|(xi, &theta)| (xi.a.0.convert() ^ theta) as u8)
-                .collect();
-            io.network.send_many(PartyID::ID0, &m1s)?;
-            (m0s, m1s)
-        }
-        PartyID::ID2 => {
-            let m0s: Vec<u8> = io.network.recv_many(PartyID::ID0)?;
-            (m0s, vec![])
-        }
-    };
-
-    // --- Local computation ---
-    let results: Vec<Rep3PrimeFieldShare<F>> = match party_id {
-        PartyID::ID0 => {
-            x.iter()
-                .zip(m0s.iter())
-                .zip(m1s.iter())
-                .zip(batch.gammas.iter())
-                .zip(batch.v_shares.iter())
-                .map(|((((xi, &_m0), &m1), &gamma), v)| {
-                    // σ = m₁ ⊕ x.a ⊕ x.b ⊕ γ
-                    let sigma = (m1 != 0) ^ xi.a.0.convert() ^ xi.b.0.convert() ^ gamma;
-                    let neg1_sigma = if sigma { -F::one() } else { F::one() };
-                    // P0: no β addition (β unknown to P0)
-                    Rep3PrimeFieldShare::new(v.a * neg1_sigma, v.b * neg1_sigma)
-                })
-                .collect()
-        }
-        PartyID::ID1 => {
-            m0s.iter()
-                .zip(x.iter())
-                .zip(batch.thetas.iter())
-                .zip(batch.v_shares.iter())
-                .map(|(((&m0, xi), &theta), v)| {
-                    // β = m₀ ⊕ x.a (P1.a = s₁₂)
-                    let beta = (m0 != 0) ^ xi.a.0.convert();
-                    let sigma = beta ^ theta;
-                    let neg1_sigma = if sigma { -F::one() } else { F::one() };
-                    // P1: add β to .a (s₁₂ component)
-                    Rep3PrimeFieldShare::new(
-                        v.a * neg1_sigma + F::from(beta as u64),
-                        v.b * neg1_sigma,
-                    )
-                })
-                .collect()
-        }
-        PartyID::ID2 => {
-            m0s.iter()
-                .zip(x.iter())
-                .zip(batch.thetas.iter())
-                .zip(batch.v_shares.iter())
-                .map(|(((&m0, xi), &theta), v)| {
-                    // β = m₀ ⊕ x.b (P2.b = s₁₂)
-                    let beta = (m0 != 0) ^ xi.b.0.convert();
-                    let sigma = beta ^ theta;
-                    let neg1_sigma = if sigma { -F::one() } else { F::one() };
-                    // P2: add β to .b (s₁₂ component)
-                    Rep3PrimeFieldShare::new(
-                        v.a * neg1_sigma,
-                        v.b * neg1_sigma + F::from(beta as u64),
-                    )
-                })
-                .collect()
-        }
-    };
-
-    Ok(results)
-}
+// bit_inject_field_many moved to conversion.rs as bit_inject_field_preproc_many
 
 // ---------------------------------------------------------------------------
 // Helpers (shared with edabits.rs)
@@ -766,7 +653,7 @@ mod tests {
                 let n = x_shares.len();
                 let mut lazy = random_dabits_lazy::<Fr, _>(n, &mut io_ctx)?;
                 let batch = lazy.take_batch(n)?;
-                bit_inject_field_many::<Fr, _>(&x_shares, &batch, io_ctx.main()).map_err(Into::into)
+                crate::protocols::rep3_ring::conversion::bit_inject_field_preproc_many::<Fr, _>(&x_shares, &batch, io_ctx.main()).map_err(Into::into)
             },
             |(): (), _net| Ok(()),
         )

@@ -8,6 +8,7 @@ pub mod conversion;
 pub mod detail;
 pub mod id;
 pub mod network;
+pub mod pointshare;
 pub mod rngs;
 pub mod types;
 #[cfg(feature = "test-utils")]

@@ -8,12 +8,14 @@ use crate::{
     protocols::{
         rep3::{
             self,
-            conversion::A2BType,
+            conversion::MPCType,
             network::{IoContext, Rep3Network},
         },
         rep3_ring,
     },
 };
+use crate::preprocessing::edabits::EdaBitsRingBatch;
+use crate::preprocessing::dabits::DaBitBatch;
 use itertools::{Itertools, izip};
 use crate::field::PrimeField;
 use crate::protocols::{
@@ -27,32 +29,6 @@ use rand::{distributions::Standard, prelude::Distribution};
 use std::ops::Neg;
 
 use rayon::prelude::*;
-
-/// Depending on the `A2BType` of the io_context, this function selects the appropriate implementation for the arithmetic-to-binary conversion.
-pub fn a2b_selector<T: IntRing2k, N: Rep3Network>(
-    x: Rep3RingShare<T>,
-    io_context: &mut IoContext<N>,
-) -> std::io::Result<Rep3RingShare<T>>
-where
-    Standard: Distribution<T>,
-{
-    match io_context.a2b_type {
-        A2BType::Direct => a2b(x, io_context),
-    }
-}
-
-/// Depending on the `A2BType` of the io_context, this function selects the appropriate implementation for the binary-to-arithmetic conversion.
-pub fn b2a_selector<T: IntRing2k, N: Rep3Network>(
-    x: &Rep3RingShare<T>,
-    io_context: &mut IoContext<N>,
-) -> std::io::Result<Rep3RingShare<T>>
-where
-    Standard: Distribution<T>,
-{
-    match io_context.a2b_type {
-        A2BType::Direct => b2a(x, io_context),
-    }
-}
 
 /// Transforms the replicated shared value x from an arithmetic sharing to a binary sharing. I.e., x = x_1 + x_2 + x_3 gets transformed into x = x'_1 xor x'_2 xor x'_3.
 pub fn a2b<T: IntRing2k, N: Rep3Network>(
@@ -502,4 +478,218 @@ pub fn bit_inject_from_bits_to_field_many<F: PrimeField, N: Rep3Network>(
     let d = rep3::arithmetic::arithmetic_xor_many(&b0, &b1, io_context)?;
     let e = rep3::arithmetic::arithmetic_xor_many(&d, &b2, io_context)?;
     Ok(e)
+}
+
+// ---------------------------------------------------------------------------
+// Preprocessed conversions (moved from edabits.rs and dabits.rs)
+// ---------------------------------------------------------------------------
+
+/// Ring-domain B2A: convert binary XOR-shares to arithmetic ring shares
+/// using preprocessed EdaBits (Protocol Π₂ in ring domain).
+///
+/// Online communication: 2 rounds (1 broadcast + 1 reshare_many).
+#[tracing::instrument(skip_all, level = "trace")]
+pub fn b2a_preproc_many<T: IntRing2k, N: Rep3Network>(
+    x_binary: &[Rep3RingShare<T>],
+    batch: &EdaBitsRingBatch<T>,
+    io: &mut IoContext<N>,
+) -> eyre::Result<Vec<Rep3RingShare<T>>>
+where
+    Standard: Distribution<T>,
+{
+    let n = x_binary.len();
+    if n == 0 {
+        return Ok(Vec::new());
+    }
+    debug_assert_eq!(batch.gammas.len(), n);
+    debug_assert_eq!(batch.alphas_flat.len(), n * T::K);
+
+    let k = T::K;
+
+    // Precompute powers of 2 in the ring.
+    let pow2: Vec<RingElement<T>> = {
+        let mut pow2 = Vec::with_capacity(k);
+        let mut cur = RingElement(T::one());
+        for _ in 0..k {
+            pow2.push(cur);
+            cur = cur + cur;
+        }
+        pow2
+    };
+
+    // --- Round 1: P0 broadcasts masked values ---
+    let ms: Vec<RingElement<T>> = if io.id == PartyID::ID0 {
+        let ms: Vec<_> = x_binary.iter().zip(&batch.gammas).map(|(x, gamma)| x.a ^ x.b ^ *gamma).collect();
+        io.network.send_many(PartyID::ID1, &ms)?;
+        io.network.send_many(PartyID::ID2, &ms)?;
+        ms
+    } else {
+        io.network.recv_many(PartyID::ID0)?
+    };
+
+    // --- Local computation + masking ---
+    let maskings: Vec<RingElement<T>> = (0..n).map(|_| io.rngs.rand.masking_element::<RingElement<T>>()).collect();
+    let party_id = io.id;
+
+    let s_selfs: Vec<RingElement<T>> = ms
+        .iter()
+        .zip(x_binary.iter())
+        .zip(maskings.iter())
+        .enumerate()
+        .map(|(idx, ((m, x), z))| {
+            if party_id == PartyID::ID0 {
+                return *z;
+            }
+
+            let beta = match party_id {
+                PartyID::ID0 => unreachable!(),
+                PartyID::ID1 => *m ^ x.a,
+                PartyID::ID2 => *m ^ x.b,
+            };
+
+            let mut v = RingElement(T::zero());
+            let alpha_base = idx * k;
+            for i in 0..k {
+                let beta_bit = ((beta.0 >> i) & T::one()) == T::one();
+                let alpha = batch.alphas_flat[alpha_base + i];
+                let signed_alpha = if beta_bit { -alpha } else { alpha };
+                v = v + pow2[i] * signed_alpha;
+            }
+
+            if party_id == PartyID::ID1 {
+                v = v + beta;
+            }
+
+            v + *z
+        })
+        .collect();
+
+    // --- Round 2: reshare ---
+    let s_prevs = io.network.reshare_many(&s_selfs)?;
+
+    Ok(s_selfs.into_iter().zip(s_prevs).map(|(s_self, s_prev)| Rep3RingShare::new_ring(s_self, s_prev)).collect())
+}
+
+/// Convert binary Rep3 bit shares to arithmetic field shares using Π₁ daBits.
+///
+/// **Protocol (1 round, 3 bits):**
+/// 1. P0 broadcasts m₀ = b.a ⊕ b.b ⊕ γ to P1,P2
+/// 2. P1 sends m₁ = θ ⊕ b.a to P0
+/// 3. All compute σ, then ⟦b⟧^A = (−1)^σ · ⟦v⟧^A + ⟦β⟧^A_{G₁}
+pub fn bit_inject_field_preproc_many<F: PrimeField, N: Rep3Network>(
+    x: &[Rep3RingShare<Bit>],
+    batch: &DaBitBatch<F>,
+    io: &mut IoContext<N>,
+) -> eyre::Result<Vec<Rep3PrimeFieldShare<F>>> {
+    let n = x.len();
+    if n == 0 {
+        return Ok(Vec::new());
+    }
+    debug_assert_eq!(batch.gammas.len(), n);
+    debug_assert_eq!(batch.thetas.len(), n);
+    debug_assert_eq!(batch.v_shares.len(), n);
+
+    let party_id = io.id;
+
+    // --- Round 1: P0 broadcasts m₀, P1 sends m₁ ---
+    let (m0s, m1s): (Vec<u8>, Vec<u8>) = match party_id {
+        PartyID::ID0 => {
+            let m0s: Vec<u8> = x
+                .iter()
+                .zip(&batch.gammas)
+                .map(|(xi, &gamma)| (xi.a.0.convert() ^ xi.b.0.convert() ^ gamma) as u8)
+                .collect();
+            io.network.send_many(PartyID::ID1, &m0s)?;
+            io.network.send_many(PartyID::ID2, &m0s)?;
+            let m1s: Vec<u8> = io.network.recv_many(PartyID::ID1)?;
+            (m0s, m1s)
+        }
+        PartyID::ID1 => {
+            let m0s: Vec<u8> = io.network.recv_many(PartyID::ID0)?;
+            let m1s: Vec<u8> = x
+                .iter()
+                .zip(&batch.thetas)
+                .map(|(xi, &theta)| (xi.a.0.convert() ^ theta) as u8)
+                .collect();
+            io.network.send_many(PartyID::ID0, &m1s)?;
+            (m0s, m1s)
+        }
+        PartyID::ID2 => {
+            let m0s: Vec<u8> = io.network.recv_many(PartyID::ID0)?;
+            (m0s, vec![])
+        }
+    };
+
+    // --- Local computation ---
+    let results: Vec<Rep3PrimeFieldShare<F>> = match party_id {
+        PartyID::ID0 => {
+            x.iter()
+                .zip(m0s.iter())
+                .zip(m1s.iter())
+                .zip(batch.gammas.iter())
+                .zip(batch.v_shares.iter())
+                .map(|((((xi, &_m0), &m1), &gamma), v)| {
+                    let sigma = (m1 != 0) ^ xi.a.0.convert() ^ xi.b.0.convert() ^ gamma;
+                    let neg1_sigma = if sigma { -F::one() } else { F::one() };
+                    Rep3PrimeFieldShare::new(v.a * neg1_sigma, v.b * neg1_sigma)
+                })
+                .collect()
+        }
+        PartyID::ID1 => {
+            m0s.iter()
+                .zip(x.iter())
+                .zip(batch.thetas.iter())
+                .zip(batch.v_shares.iter())
+                .map(|(((&m0, xi), &theta), v)| {
+                    let beta = (m0 != 0) ^ xi.a.0.convert();
+                    let sigma = beta ^ theta;
+                    let neg1_sigma = if sigma { -F::one() } else { F::one() };
+                    Rep3PrimeFieldShare::new(
+                        v.a * neg1_sigma + F::from(beta as u64),
+                        v.b * neg1_sigma,
+                    )
+                })
+                .collect()
+        }
+        PartyID::ID2 => {
+            m0s.iter()
+                .zip(x.iter())
+                .zip(batch.thetas.iter())
+                .zip(batch.v_shares.iter())
+                .map(|(((&m0, xi), &theta), v)| {
+                    let beta = (m0 != 0) ^ xi.b.0.convert();
+                    let sigma = beta ^ theta;
+                    let neg1_sigma = if sigma { -F::one() } else { F::one() };
+                    Rep3PrimeFieldShare::new(
+                        v.a * neg1_sigma,
+                        v.b * neg1_sigma + F::from(beta as u64),
+                    )
+                })
+                .collect()
+        }
+    };
+
+    Ok(results)
+}
+
+// ---------------------------------------------------------------------------
+// MPCType-based selectors
+// ---------------------------------------------------------------------------
+
+/// Dispatch B2A conversion based on `io_context.mpc_type`.
+///
+/// - `Online` → Kogge-Stone adder (`b2a_many`)
+/// - `Preprocessed` → EdaBits Protocol Π₂ (`b2a_preproc_many`)
+pub fn b2a_many_selector<T: IntRing2k, N: Rep3Network>(
+    x: &[Rep3RingShare<T>],
+    batch: Option<&EdaBitsRingBatch<T>>,
+    io_context: &mut IoContext<N>,
+) -> eyre::Result<Vec<Rep3RingShare<T>>>
+where
+    Standard: Distribution<T>,
+{
+    match io_context.mpc_type {
+        MPCType::Online => Ok(b2a_many(x, io_context)?),
+        MPCType::Preprocessed => b2a_preproc_many(x, batch.expect("b2a_many_selector: preprocessed mode requires batch"), io_context),
+    }
 }

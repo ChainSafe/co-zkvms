@@ -18,6 +18,8 @@ use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkCoordinator, 
 use mpc_core::protocols::rep3::PartyID;
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 #[cfg(feature = "ring-msm")]
+use mpc_core::protocols::rep3;
+#[cfg(feature = "ring-msm")]
 use mpc_core::protocols::rep3_ring;
 #[cfg(feature = "ring-msm")]
 use mpc_core::protocols::rep3_ring::conversion as ring_conv;
@@ -974,7 +976,7 @@ fn compute_row_commitment_shares_ring<N: Rep3NetworkWorker>(
 
         // Ring B2A via edaBits Π₂ — 2 rounds
         let ring_edabits = preproc.take_ring_edabits_u66(num_shared)?;
-        let val_arith: Vec<Rep3RingShare<U66>> = rep3_ring::edabits::ring_b2a_many(&bin_ext, &ring_edabits, &mut io)?;
+        let val_arith: Vec<Rep3RingShare<U66>> = rep3_ring::conversion::b2a_preproc_many(&bin_ext, &ring_edabits, &mut io)?;
         let diff_u66: Vec<Rep3RingShare<U66>> = arith_ext.iter().zip(val_arith.iter()).map(|(a, v)| *a - *v).collect();
 
         // Extract m bits via DaBit mask+open (1 round)
@@ -1062,7 +1064,7 @@ fn compute_row_commitment_shares_ring<N: Rep3NetworkWorker>(
 
         if !bits_all.is_empty() {
             let filtered_batch = batch.select(&dp_selected);
-            let corr_add = rep3_ring::daPoint::dot_product_dapoints(&bits_all, &q_all, &filtered_batch, &mut io)?;
+            let corr_add = rep3::pointshare::dot_product_dapoints(&bits_all, &q_all, &filtered_batch, &mut io)?;
             if row < row_commitments.len() {
                 row_commitments[row] += msm - corr_add;
             }
@@ -1977,7 +1979,7 @@ mod tests {
 
                 // Online: dot product
                 let total_corr_add =
-                    rep3_ring::daPoint::dot_product_dapoints(&bits_all, &q_all, &batch, io_ctx.main())?;
+                    rep3::pointshare::dot_product_dapoints(&bits_all, &q_all, &batch, io_ctx.main())?;
 
                 Ok(party_msm - total_corr_add)
             },
