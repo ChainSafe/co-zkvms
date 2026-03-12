@@ -14,11 +14,11 @@ use jolt_core::jolt_optimizations;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
+#[cfg(feature = "ring-msm")]
+use mpc_core::protocols::rep3;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::PartyID;
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
-#[cfg(feature = "ring-msm")]
-use mpc_core::protocols::rep3;
 #[cfg(feature = "ring-msm")]
 use mpc_core::protocols::rep3_ring;
 #[cfg(feature = "ring-msm")]
@@ -28,6 +28,8 @@ use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use mpc_core::protocols::rep3_ring::ring::bit::Bit;
 #[cfg(feature = "ring-msm")]
 use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
+#[cfg(feature = "ring-msm")]
+use mpc_core::protocols::rep3_ring::ring::u34::U34;
 #[cfg(feature = "ring-msm")]
 use mpc_core::protocols::rep3_ring::ring::u66::U66;
 #[cfg(feature = "ring-msm")]
@@ -48,6 +50,10 @@ type DoryFirstReduceShareMsg = ((Fq12, Fq12), DoryFirstReducePublicMsg);
 type DorySecondReducePublicMsg = (Option<G1Affine>, Option<G1Affine>);
 type DorySecondReduceShareMsg = (((Fq12, Fq12), (G2Affine, G2Affine)), DorySecondReducePublicMsg, (G2Affine, G2Affine));
 type DoryInitShareMsg = (usize, Vec<G1Affine>);
+#[cfg(all(feature = "ring-msm", feature = "rv64"))]
+type DoryCarryRing = U66;
+#[cfg(all(feature = "ring-msm", not(feature = "rv64")))]
+type DoryCarryRing = U34;
 
 // =============================================================================
 // Rep3CommitmentScheme implementation
@@ -117,7 +123,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
                 }
             }
 
-            type CommitResult = eyre::Result<(MaybeShared<DoryCommitment>, MaybeShared<Vec<JoltG1Wrapper>>)>;
+            type CommitResult = eyre::Result<(MaybeShared<DoryCommitment>, MaybeShared<DoryOpeningProofHint>)>;
 
             // rayon::join: local polys in parallel (branch A), U64Scalars sequentially (branch B).
             let (local_results, ring_results): (Vec<CommitResult>, Vec<CommitResult>) = rayon::join(
@@ -146,7 +152,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
             );
 
             // Merge results back into original order.
-            let mut out: Vec<Option<(MaybeShared<DoryCommitment>, MaybeShared<Vec<JoltG1Wrapper>>)>> =
+            let mut out: Vec<Option<(MaybeShared<DoryCommitment>, MaybeShared<DoryOpeningProofHint>)>> =
                 (0..polys.len()).map(|_| None).collect();
             for (&i, r) in local_idxs.iter().zip(local_results) {
                 out[i] = Some(r?);
@@ -815,20 +821,22 @@ pub fn setup_g2_projective(setup: &<DoryCommitmentScheme as CommitmentScheme>::P
 /// Returns `2 * num_coeffs` points ordered to match consumption in
 /// `compute_row_commitment_shares_ring`: for each row, [q0_segment, q1_segment].
 ///
-/// Q points: `q0[c] = 2^64 * g1_vec[c]`, `q1[c] = 2 * q0[c]` for c in 0..num_columns.
+/// Q points: `q0[c] = 2^XLEN * g1_vec[c]`, `q1[c] = 2 * q0[c]` for c in 0..num_columns.
 #[tracing::instrument(skip_all)]
 pub fn precompute_dapoint_qs(
     setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
     num_coeffs: usize,
     num_columns: usize,
 ) -> Vec<G1Projective> {
+    use jolt_common::constants::XLEN;
+
     let g1_proj = &setup_g1_projective(setup)[..num_columns];
 
     let q0_cols: Vec<G1Projective> = g1_proj
         .iter()
         .map(|b| {
             let mut p = *b;
-            for _ in 0..64 {
+            for _ in 0..XLEN {
                 p.double_in_place();
             }
             p
@@ -930,7 +938,7 @@ fn compute_row_commitment_shares_ring<N: Rep3NetworkWorker>(
     preproc: &mut PreprocessingPool<Fr>,
 ) -> eyre::Result<Vec<G1Projective>> {
     use crate::zkvm::instruction::types::rep3_operand::Rep3Operand;
-    use jolt_common::constants::XlenInt;
+    use jolt_common::constants::{XlenInt, XLEN};
     use mpc_core::protocols::rep3_ring::casts::downcast;
 
     let sigma = DoryGlobals::get_num_columns().log_2();
@@ -951,47 +959,55 @@ fn compute_row_commitment_shares_ring<N: Rep3NetworkWorker>(
     // Partition coefficients: extract shared-only binary + arithmetic shares,
     // and build a position map from global index → shared index.
     let mut shared_pos_map: Vec<Option<usize>> = vec![None; n];
-    let mut shared_bins: Vec<Rep3RingShare<u64>> = Vec::new();
-    let mut shared_ariths_u64: Vec<Rep3RingShare<u64>> = Vec::new();
+    let mut shared_bins: Vec<Rep3RingShare<XlenInt>> = Vec::new();
+    let mut shared_ariths: Vec<Rep3RingShare<XlenInt>> = Vec::new();
     for (i, coeff) in poly.coeffs.iter().enumerate() {
         if let Rep3Operand::Shared { binary, arithmetic, .. } = coeff {
             shared_pos_map[i] = Some(shared_bins.len());
-            shared_bins.push(Rep3RingShare { a: RingElement(binary.a.0 as u64), b: RingElement(binary.b.0 as u64) });
-            shared_ariths_u64.push(downcast(arithmetic.unwrap()));
+            shared_bins.push(*binary);
+            shared_ariths.push(downcast(arithmetic.unwrap()));
         }
     }
     let num_shared = shared_bins.len();
 
     // Ring B2A + wrap extraction only for shared coefficients.
     let (m0_bin, m1_bin) = if num_shared > 0 {
-        // Zero-extend shared u64 → U66.
-        let arith_ext: Vec<Rep3RingShare<U66>> = shared_ariths_u64
+        // Zero-extend shared xlen value → Dory carry ring.
+        let arith_ext: Vec<Rep3RingShare<DoryCarryRing>> = shared_ariths
             .iter()
-            .map(|s| Rep3RingShare { a: RingElement(U66::new(s.a.0 as u128)), b: RingElement(U66::new(s.b.0 as u128)) })
+            .map(|s| Rep3RingShare {
+                a: RingElement(DoryCarryRing::try_from(s.a.0 as u128).expect("xlen share fits in Dory carry ring")),
+                b: RingElement(DoryCarryRing::try_from(s.b.0 as u128).expect("xlen share fits in Dory carry ring")),
+            })
             .collect();
-        let bin_ext: Vec<Rep3RingShare<U66>> = shared_bins
+        let bin_ext: Vec<Rep3RingShare<DoryCarryRing>> = shared_bins
             .iter()
-            .map(|s| Rep3RingShare { a: RingElement(U66::new(s.a.0 as u128)), b: RingElement(U66::new(s.b.0 as u128)) })
+            .map(|s| Rep3RingShare {
+                a: RingElement(DoryCarryRing::try_from(s.a.0 as u128).expect("xlen share fits in Dory carry ring")),
+                b: RingElement(DoryCarryRing::try_from(s.b.0 as u128).expect("xlen share fits in Dory carry ring")),
+            })
             .collect();
 
         // Ring B2A via edaBits Π₂ — 2 rounds
-        let ring_edabits = preproc.take_ring_edabits_u66(num_shared)?;
-        let val_arith: Vec<Rep3RingShare<U66>> = rep3_ring::conversion::b2a_preproc_many(&bin_ext, &ring_edabits, &mut io)?;
-        let diff_u66: Vec<Rep3RingShare<U66>> = arith_ext.iter().zip(val_arith.iter()).map(|(a, v)| *a - *v).collect();
+        let ring_edabits = preproc.take_ring_edabits_dory(num_shared)?;
+        let val_arith: Vec<Rep3RingShare<DoryCarryRing>> =
+            rep3_ring::conversion::b2a_preproc_many(&bin_ext, &ring_edabits, &mut io)?;
+        let diff: Vec<Rep3RingShare<DoryCarryRing>> =
+            arith_ext.iter().zip(val_arith.iter()).map(|(a, v)| *a - *v).collect();
 
         // Extract m bits via DaBit mask+open (1 round)
         let wrap_masks = preproc.take_wrap_masks(num_shared)?;
-        let (m0, m1) = rep3_ring::wrap_mask::extract_wrap_m2_from_diff_u66_many(&diff_u66, &wrap_masks, &mut io)?;
+        let (m0, m1) = rep3_ring::wrap_mask::extract_wrap_m2_from_diff_many(&diff, &wrap_masks, &mut io)?;
         (m0, m1)
     } else {
         (Vec::new(), Vec::new())
     };
 
-    // Precompute q0/q1 for all columns: q0[c] = 2^64*Γ1[c], q1[c] = 2*q0[c].
+    // Precompute q0/q1 for all columns: q0[c] = 2^XLEN*Γ1[c], q1[c] = 2*q0[c].
     let mut q0_cols: Vec<G1Projective> = Vec::with_capacity(num_columns);
     for b in g1_proj.iter() {
         let mut p = *b;
-        for _ in 0..64 {
+        for _ in 0..XLEN {
             p.double_in_place();
         }
         q0_cols.push(p);
@@ -1024,8 +1040,8 @@ fn compute_row_commitment_shares_ring<N: Rep3NetworkWorker>(
             .iter()
             .map(|op| match op {
                 Rep3Operand::Shared { arithmetic, .. } => {
-                    let arith_u64: Rep3RingShare<u64> = downcast(arithmetic.unwrap());
-                    arith_u64.a.0
+                    let arith_xlen: Rep3RingShare<XlenInt> = downcast(arithmetic.unwrap());
+                    arith_xlen.a.0 as u64
                 }
                 Rep3Operand::Public(v) => {
                     if party_id == PartyID::ID0 {
@@ -1657,6 +1673,8 @@ mod tests {
     #[cfg(feature = "ring-msm")]
     #[test]
     fn dory_u64_scalars_commit_correct() {
+        use jolt_common::constants::{ArithmeticWideInt, XlenInt};
+
         let mut rng = ChaCha12Rng::seed_from_u64(0);
 
         crate::poly::commitment::dory::test_support::init_dory_globals(256, 512);
@@ -1666,7 +1684,7 @@ mod tests {
         let num_rows = DoryGlobals::get_max_num_rows();
 
         let len = 1usize << num_vars;
-        let values: Vec<u64> = (0..len).map(|_| rng.r#gen()).collect();
+        let values: Vec<u64> = (0..len).map(|_| rng.r#gen::<XlenInt>() as u64).collect();
         let coeffs_fr: Vec<Fr> = values.iter().copied().map(Fr::from).collect();
 
         let setup = <DoryCommitmentScheme as CommitmentScheme>::setup_prover((2 * sigma).max(num_vars));
@@ -1677,17 +1695,12 @@ mod tests {
         vanilla_hint.resize(num_rows, JoltGroupWrapper(G1Projective::zero()));
 
         // Share each value in both arithmetic (ArithmeticWideInt) and XOR (XlenInt) ring forms.
-        use jolt_common::constants::{ArithmeticWideInt, XlenInt};
         let all_arith_shares: Vec<_> = values
             .iter()
-            .map(|&v| {
-                rep3_ring::share_ring_element(RingElement(v as ArithmeticWideInt), &mut rng)
-            })
+            .map(|&v| rep3_ring::share_ring_element(RingElement(v as ArithmeticWideInt), &mut rng))
             .collect();
-        let all_bin_shares: Vec<_> = values
-            .iter()
-            .map(|&v| rep3_ring::share_ring_element_binary(RingElement(v as XlenInt), &mut rng))
-            .collect();
+        let all_bin_shares: Vec<_> =
+            values.iter().map(|&v| rep3_ring::share_ring_element_binary(RingElement(v as XlenInt), &mut rng)).collect();
 
         let polys_by_party: [Rep3MultilinearPolynomial<Fr>; 3] = std::array::from_fn(|pid| {
             let shares: Vec<Rep3RingShare<ArithmeticWideInt>> = all_arith_shares.iter().map(|s| s[pid]).collect();
@@ -1704,18 +1717,9 @@ mod tests {
             move |poly, mut io_ctx| {
                 use mpc_core::protocols::rep3_ring::edabits;
 
-                let pool_dir =
-                    std::env::temp_dir().join(format!("co-jolt2-dory-test-{}", io_ctx.party_idx()));
-                let mut preproc = edabits::preprocess_pool::<Fr, _>(
-                    &pool_dir,
-                    [0, 0, 0, 0, 0],
-                    0,
-                    len,
-                    len,
-                    0,
-                    0,
-                    &mut io_ctx,
-                )?;
+                let pool_dir = std::env::temp_dir().join(format!("co-jolt2-dory-test-{}", io_ctx.party_idx()));
+                let mut preproc =
+                    edabits::preprocess_pool::<Fr, _>(&pool_dir, [0, 0, 0, 0, 0], 0, len, len, 0, 0, &mut io_ctx)?;
 
                 // daPoints for Dory wrap correction (depend on SRS)
                 let qs = precompute_dapoint_qs(&setup, len, num_columns);
@@ -1760,6 +1764,7 @@ mod tests {
     #[test]
     fn dory_u64_scalars_mixed_public_shared_commit_correct() {
         use crate::zkvm::instruction::types::rep3_operand::Rep3Operand;
+        use jolt_common::constants::{ArithmeticWideInt, XlenInt};
         use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
 
         let mut rng = ChaCha12Rng::seed_from_u64(0);
@@ -1772,7 +1777,7 @@ mod tests {
 
         let len = 1usize << num_vars;
         // Every other value is public (even indices), the rest are shared.
-        let values: Vec<u64> = (0..len).map(|_| rng.r#gen()).collect();
+        let values: Vec<u64> = (0..len).map(|_| rng.r#gen::<XlenInt>() as u64).collect();
         let is_public: Vec<bool> = (0..len).map(|i| i % 2 == 0).collect();
         let coeffs_fr: Vec<Fr> = values.iter().copied().map(Fr::from).collect();
 
@@ -1784,7 +1789,6 @@ mod tests {
         vanilla_hint.resize(num_rows, JoltGroupWrapper(G1Projective::zero()));
 
         // Share shared values in both arithmetic and XOR ring forms.
-        use jolt_common::constants::{ArithmeticWideInt, XlenInt};
         let all_arith_shares: Vec<Option<[Rep3RingShare<ArithmeticWideInt>; 3]>> = values
             .iter()
             .zip(is_public.iter())
@@ -1832,18 +1836,9 @@ mod tests {
             move |poly, mut io_ctx| {
                 use mpc_core::protocols::rep3_ring::edabits;
 
-                let pool_dir = std::env::temp_dir()
-                    .join(format!("co-jolt2-dory-test2-{}", io_ctx.party_idx()));
-                let mut preproc = edabits::preprocess_pool::<Fr, _>(
-                    &pool_dir,
-                    [0, 0, 0, 0, 0],
-                    0,
-                    len,
-                    len,
-                    0,
-                    0,
-                    &mut io_ctx,
-                )?;
+                let pool_dir = std::env::temp_dir().join(format!("co-jolt2-dory-test2-{}", io_ctx.party_idx()));
+                let mut preproc =
+                    edabits::preprocess_pool::<Fr, _>(&pool_dir, [0, 0, 0, 0, 0], 0, len, len, 0, 0, &mut io_ctx)?;
 
                 // daPoints (depend on SRS)
                 let qs = precompute_dapoint_qs(&setup, len, num_columns);
@@ -1976,8 +1971,7 @@ mod tests {
                 bits_all.extend(m1_bin.iter().copied());
 
                 // Online: dot product
-                let total_corr_add =
-                    rep3::pointshare::dot_product_dapoints(&bits_all, &q_all, &batch, io_ctx.main())?;
+                let total_corr_add = rep3::pointshare::dot_product_dapoints(&bits_all, &q_all, &batch, io_ctx.main())?;
 
                 Ok(party_msm - total_corr_add)
             },

@@ -27,9 +27,9 @@ pub struct PreprocessingBudget {
     pub ring_edabits_u64: usize,
     /// Ring edaBits (u128) for ring-domain upcast B2A (rv64 only).
     pub ring_edabits_u128: usize,
-    /// Ring edaBits (U66) for ring-domain B2A in Dory wrap correction (1 per committed coefficient).
+    /// Ring edaBits for the architecture-selected Dory carry ring (1 per committed coefficient).
     #[cfg(feature = "ring-msm")]
-    pub ring_edabits_u66: usize,
+    pub ring_edabits_dory: usize,
 }
 
 impl std::fmt::Debug for PreprocessingBudget {
@@ -45,8 +45,8 @@ impl std::fmt::Debug for PreprocessingBudget {
         #[cfg(feature = "ring-msm")]
         write!(
             f,
-            "; daPoints: {}; wrapMasks: {}; ringEdaBitsU66: {}",
-            self.dapoints, self.wrap_masks, self.ring_edabits_u66
+            "; daPoints: {}; wrapMasks: {}; ringEdaBitsDory: {}",
+            self.dapoints, self.wrap_masks, self.ring_edabits_dory
         )?;
         Ok(())
     }
@@ -126,7 +126,7 @@ pub fn compute_edabit_budget(trace_len: usize) -> PreprocessingBudget {
         let padded_n = n.next_power_of_two();
         budget.dapoints = 2 * 2 * padded_n;
         budget.wrap_masks = 2 * padded_n;
-        budget.ring_edabits_u66 = 2 * padded_n;
+        budget.ring_edabits_dory = 2 * padded_n;
     }
 
     for phase in 0..PHASES {

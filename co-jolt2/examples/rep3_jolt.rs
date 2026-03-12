@@ -10,13 +10,13 @@ static GLOBAL: tracy_client::ProfiledAllocator<tikv_jemallocator::Jemalloc> =
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 use ark_bn254::Fr;
-use rand::SeedableRng;
-use rand_chacha::ChaCha12Rng;
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
 use mpc_net::config::{NetworkConfig, NetworkConfigFile};
 use mpc_net::rep3::quic::{Rep3QuicMpcNetWorker, Rep3QuicNetCoordinator};
 use mpc_net::topology::{MpcStarNetCoordinator, MpcStarNetWorker};
+use rand::SeedableRng;
+use rand_chacha::ChaCha12Rng;
 use serde::{Deserialize, Serialize};
 use tracing::{info, info_span, trace_span, warn};
 
@@ -386,20 +386,18 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                     let (rem_eda, rem_da) = pool.remaining_counts();
                     let deficit_counts: [usize; 5] = std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
                     let deficit_dabits = num_dabits.saturating_sub(rem_da);
-                    let deficit_re64 = budget
-                        .ring_edabits_u64
-                        .saturating_sub(pool.remaining_ring_edabits_u64());
-                    let deficit_re128 = budget
-                        .ring_edabits_u128
-                        .saturating_sub(pool.remaining_ring_edabits_u128());
+                    let deficit_re64 = budget.ring_edabits_u64.saturating_sub(pool.remaining_ring_edabits_u64());
+                    let deficit_re128 = budget.ring_edabits_u128.saturating_sub(pool.remaining_ring_edabits_u128());
                     #[cfg(feature = "ring-msm")]
                     let (deficit_wm, deficit_re) = (
                         budget.wrap_masks.saturating_sub(pool.remaining_wrap_masks()),
-                        budget.ring_edabits_u66.saturating_sub(pool.remaining_ring_edabits_u66()),
+                        budget.ring_edabits_dory.saturating_sub(pool.remaining_ring_edabits_dory()),
                     );
 
-                    let need_extend = deficit_counts.iter().any(|&d| d > 0) || deficit_dabits > 0
-                        || deficit_re64 > 0 || deficit_re128 > 0;
+                    let need_extend = deficit_counts.iter().any(|&d| d > 0)
+                        || deficit_dabits > 0
+                        || deficit_re64 > 0
+                        || deficit_re128 > 0;
                     #[cfg(feature = "ring-msm")]
                     let need_extend = need_extend || deficit_wm > 0 || deficit_re > 0;
 
@@ -424,8 +422,8 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                             deficit_dabits,
                             deficit_wm,
                             deficit_re,
-                            0,
-                            0,
+                            deficit_re64,
+                            deficit_re128,
                             &mut io_ctx,
                         )?;
                         match pool.save(&pool_dir) {
@@ -457,9 +455,9 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                             counts,
                             num_dabits,
                             budget.wrap_masks,
-                            budget.ring_edabits_u66,
-                            0,
-                            0,
+                            budget.ring_edabits_dory,
+                            budget.ring_edabits_u64,
+                            budget.ring_edabits_u128,
                             &mut io_ctx,
                         )?
                     }
@@ -548,20 +546,18 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                 let (rem_eda, rem_da) = pool.remaining_counts();
                 let deficit_counts: [usize; 5] = std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
                 let deficit_dabits = num_dabits.saturating_sub(rem_da);
-                let deficit_re64 = budget
-                    .ring_edabits_u64
-                    .saturating_sub(pool.remaining_ring_edabits_u64());
-                let deficit_re128 = budget
-                    .ring_edabits_u128
-                    .saturating_sub(pool.remaining_ring_edabits_u128());
+                let deficit_re64 = budget.ring_edabits_u64.saturating_sub(pool.remaining_ring_edabits_u64());
+                let deficit_re128 = budget.ring_edabits_u128.saturating_sub(pool.remaining_ring_edabits_u128());
                 #[cfg(feature = "ring-msm")]
                 let (deficit_wm, deficit_re) = (
                     budget.wrap_masks.saturating_sub(pool.remaining_wrap_masks()),
-                    budget.ring_edabits_u66.saturating_sub(pool.remaining_ring_edabits_u66()),
+                    budget.ring_edabits_dory.saturating_sub(pool.remaining_ring_edabits_dory()),
                 );
 
-                let need_extend = deficit_counts.iter().any(|&d| d > 0) || deficit_dabits > 0
-                    || deficit_re64 > 0 || deficit_re128 > 0;
+                let need_extend = deficit_counts.iter().any(|&d| d > 0)
+                    || deficit_dabits > 0
+                    || deficit_re64 > 0
+                    || deficit_re128 > 0;
                 #[cfg(feature = "ring-msm")]
                 let need_extend = need_extend || deficit_wm > 0 || deficit_re > 0;
 
@@ -618,7 +614,7 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                         counts,
                         num_dabits,
                         budget.wrap_masks,
-                        budget.ring_edabits_u66,
+                        budget.ring_edabits_dory,
                         budget.ring_edabits_u64,
                         budget.ring_edabits_u128,
                         &mut io_ctx,
