@@ -42,9 +42,7 @@ impl<const E: Endianness, F: JoltField> std::ops::Index<usize> for OpeningPoint<
     }
 }
 
-impl<const E: Endianness, F: JoltField> std::ops::Index<std::ops::RangeFull>
-    for OpeningPoint<E, F>
-{
+impl<const E: Endianness, F: JoltField> std::ops::Index<std::ops::RangeFull> for OpeningPoint<E, F> {
     type Output = [F::Challenge];
 
     fn index(&self, _index: std::ops::RangeFull) -> &Self::Output {
@@ -151,6 +149,7 @@ pub enum SumcheckId {
 pub enum OpeningId {
     Committed(CommittedPolynomial, SumcheckId),
     Virtual(VirtualPolynomial, SumcheckId),
+    ReducedOpeningClaim(u32),
     UntrustedAdvice,
     TrustedAdvice,
 }
@@ -206,14 +205,7 @@ where
         } else {
             vec![] // Will be populated later
         };
-        Self {
-            polynomials,
-            sumcheck_id,
-            input_claims: claims,
-            rlc_coeffs,
-            opening_point,
-            sumcheck_claim: None,
-        }
+        Self { polynomials, sumcheck_id, input_claims: claims, rlc_coeffs, opening_point, sumcheck_claim: None }
     }
 
     fn prepare_sumcheck(&mut self, gammas: &[F]) {
@@ -232,12 +224,8 @@ where
         }
 
         if self.polynomials.len() > 1 {
-            let reduced_claim = self
-                .rlc_coeffs
-                .par_iter()
-                .zip(self.input_claims.par_iter())
-                .map(|(gamma, claim)| *gamma * claim)
-                .sum();
+            let reduced_claim =
+                self.rlc_coeffs.par_iter().zip(self.input_claims.par_iter()).map(|(gamma, claim)| *gamma * claim).sum();
             self.input_claims = vec![reduced_claim];
         }
     }
@@ -256,11 +244,7 @@ where
     }
 
     fn input_claim(&self) -> F {
-        assert_eq!(
-            self.input_claims.len(),
-            1,
-            "Input claims should have been reduced by now"
-        );
+        assert_eq!(self.input_claims.len(), 1, "Input claims should have been reduced by now");
         self.input_claims[0]
     }
 
@@ -273,10 +257,7 @@ where
         eq_eval * self.sumcheck_claim.unwrap()
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.to_vec())
     }
 
@@ -364,9 +345,7 @@ where
         #[cfg(test)]
         {
             let mut virtual_openings = self.appended_virtual_openings.borrow_mut();
-            if let Some(index) = virtual_openings
-                .iter()
-                .position(|id| id == &OpeningId::Virtual(polynomial, sumcheck))
+            if let Some(index) = virtual_openings.iter().position(|id| id == &OpeningId::Virtual(polynomial, sumcheck))
             {
                 virtual_openings.remove(index);
             }
@@ -462,9 +441,7 @@ where
             transcript.append_scalar(&claim);
         }
         #[cfg(test)]
-        self.appended_virtual_openings
-            .borrow_mut()
-            .push(key);
+        self.appended_virtual_openings.borrow_mut().push(key);
     }
 
     pub fn append_untrusted_advice<T: Transcript>(
@@ -473,8 +450,7 @@ where
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claim: F,
     ) {
-        self.openings
-            .insert(OpeningId::UntrustedAdvice, (opening_point, claim));
+        self.openings.insert(OpeningId::UntrustedAdvice, (opening_point, claim));
         if self.zk_mode {
             self.pending_claims.push(claim);
             self.pending_claim_ids.push(OpeningId::UntrustedAdvice);
@@ -489,8 +465,7 @@ where
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claim: F,
     ) {
-        self.openings
-            .insert(OpeningId::TrustedAdvice, (opening_point, claim));
+        self.openings.insert(OpeningId::TrustedAdvice, (opening_point, claim));
         if self.zk_mode {
             self.pending_claims.push(claim);
             self.pending_claim_ids.push(OpeningId::TrustedAdvice);
@@ -660,13 +635,7 @@ where
             .map(|poly| {
                 let key = OpeningId::Committed(*poly, sumcheck);
                 let claim = self.openings.get(&key).map(|opening| opening.1).unwrap_or(F::zero());
-                self.openings.insert(
-                    key,
-                    (
-                        OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone()),
-                        claim,
-                    ),
-                );
+                self.openings.insert(key, (OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone()), claim));
                 if self.zk_mode {
                     self.pending_claim_ids.push(key);
                     self.pending_claims.push(claim);
@@ -678,13 +647,12 @@ where
             transcript.append_scalars(&claims);
         }
 
-        self.sumchecks
-            .push(OpeningProofReductionSumcheck::new_verifier_instance(
-                polynomials,
-                sumcheck,
-                opening_point,
-                claims,
-            ));
+        self.sumchecks.push(OpeningProofReductionSumcheck::new_verifier_instance(
+            polynomials,
+            sumcheck,
+            opening_point,
+            claims,
+        ));
     }
 
     pub fn append_sparse<T: Transcript>(
@@ -697,13 +665,7 @@ where
         for label in polynomials.into_iter() {
             let key = OpeningId::Committed(label, sumcheck);
             let claim = self.openings.get(&key).map(|opening| opening.1).unwrap_or(F::zero());
-            self.openings.insert(
-                key,
-                (
-                    OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone()),
-                    claim,
-                ),
-            );
+            self.openings.insert(key, (OpeningPoint::<BIG_ENDIAN, F>::new(opening_point.clone()), claim));
             if self.zk_mode {
                 self.pending_claim_ids.push(key);
                 self.pending_claims.push(claim);
@@ -712,13 +674,12 @@ where
                 transcript.append_scalar(&claim);
             }
 
-            self.sumchecks
-                .push(OpeningProofReductionSumcheck::new_verifier_instance(
-                    vec![label],
-                    sumcheck,
-                    opening_point.clone(),
-                    vec![claim],
-                ));
+            self.sumchecks.push(OpeningProofReductionSumcheck::new_verifier_instance(
+                vec![label],
+                sumcheck,
+                opening_point.clone(),
+                vec![claim],
+            ));
         }
     }
 
@@ -753,8 +714,7 @@ where
     ) {
         if let Some((_, claim)) = self.openings.get(&OpeningId::UntrustedAdvice) {
             let claim = *claim;
-            self.openings
-                .insert(OpeningId::UntrustedAdvice, (opening_point.clone(), claim));
+            self.openings.insert(OpeningId::UntrustedAdvice, (opening_point.clone(), claim));
             if self.zk_mode {
                 self.pending_claims.push(claim);
                 self.pending_claim_ids.push(OpeningId::UntrustedAdvice);
@@ -762,8 +722,7 @@ where
                 transcript.append_scalar(&claim);
             }
         } else {
-            self.openings
-                .insert(OpeningId::UntrustedAdvice, (opening_point.clone(), F::zero()));
+            self.openings.insert(OpeningId::UntrustedAdvice, (opening_point.clone(), F::zero()));
             self.pending_claims.push(F::zero());
             self.pending_claim_ids.push(OpeningId::UntrustedAdvice);
         }
@@ -776,8 +735,7 @@ where
     ) {
         if let Some((_, claim)) = self.openings.get(&OpeningId::TrustedAdvice) {
             let claim = *claim;
-            self.openings
-                .insert(OpeningId::TrustedAdvice, (opening_point.clone(), claim));
+            self.openings.insert(OpeningId::TrustedAdvice, (opening_point.clone(), claim));
             if self.zk_mode {
                 self.pending_claims.push(claim);
                 self.pending_claim_ids.push(OpeningId::TrustedAdvice);
@@ -785,8 +743,7 @@ where
                 transcript.append_scalar(&claim);
             }
         } else {
-            self.openings
-                .insert(OpeningId::TrustedAdvice, (opening_point.clone(), F::zero()));
+            self.openings.insert(OpeningId::TrustedAdvice, (opening_point.clone(), F::zero()));
             self.pending_claims.push(F::zero());
             self.pending_claim_ids.push(OpeningId::TrustedAdvice);
         }
@@ -813,11 +770,7 @@ where
 
     /// Verifies that the given `reduced_opening_proof` (consisting of a sumcheck proof
     /// and a single opening proof) indeed proves the openings accumulated.
-    pub fn reduce_and_verify<
-        C: JoltCurve,
-        ProofTranscript: Transcript,
-        PCS: CommitmentScheme<Field = F>,
-    >(
+    pub fn reduce_and_verify<C: JoltCurve, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         &mut self,
         pcs_setup: &PCS::VerifierSetup,
         commitment_map: &mut HashMap<CommittedPolynomial, PCS::Commitment>,
@@ -827,46 +780,24 @@ where
         let total_challenges_needed: usize = self
             .sumchecks
             .iter()
-            .map(|sumcheck| {
-                if sumcheck.polynomials.len() > 1 {
-                    sumcheck.polynomials.len()
-                } else {
-                    1
-                }
-            })
+            .map(|sumcheck| if sumcheck.polynomials.len() > 1 { sumcheck.polynomials.len() } else { 1 })
             .sum();
 
         let all_gammas: Vec<F> = transcript.challenge_vector(total_challenges_needed);
 
         let mut gamma_offsets = vec![0];
         for sumcheck in self.sumchecks.iter() {
-            let num_gammas = if sumcheck.polynomials.len() > 1 {
-                sumcheck.polynomials.len()
-            } else {
-                1
-            };
+            let num_gammas = if sumcheck.polynomials.len() > 1 { sumcheck.polynomials.len() } else { 1 };
             gamma_offsets.push(gamma_offsets.last().unwrap() + num_gammas);
         }
 
-        self.sumchecks
-            .par_iter_mut()
-            .zip(gamma_offsets.par_iter())
-            .for_each(|(sumcheck, &offset)| {
-                let num_gammas = if sumcheck.polynomials.len() > 1 {
-                    sumcheck.polynomials.len()
-                } else {
-                    1
-                };
-                let gammas_slice = &all_gammas[offset..offset + num_gammas];
-                sumcheck.prepare_sumcheck(gammas_slice);
-            });
+        self.sumchecks.par_iter_mut().zip(gamma_offsets.par_iter()).for_each(|(sumcheck, &offset)| {
+            let num_gammas = if sumcheck.polynomials.len() > 1 { sumcheck.polynomials.len() } else { 1 };
+            let gammas_slice = &all_gammas[offset..offset + num_gammas];
+            sumcheck.prepare_sumcheck(gammas_slice);
+        });
 
-        let num_sumcheck_rounds = self
-            .sumchecks
-            .iter()
-            .map(|opening| opening.opening_point.len())
-            .max()
-            .unwrap();
+        let num_sumcheck_rounds = self.sumchecks.iter().map(|opening| opening.opening_point.len()).max().unwrap();
 
         self.sumchecks
             .iter_mut()
@@ -874,8 +805,7 @@ where
             .for_each(|(opening, claim)| opening.sumcheck_claim = Some(*claim));
 
         // Verify the sumcheck
-        let r_sumcheck =
-            self.verify_batch_opening_reduction(&reduced_opening_proof.sumcheck_proof, transcript)?;
+        let r_sumcheck = self.verify_batch_opening_reduction(&reduced_opening_proof.sumcheck_proof, transcript)?;
 
         transcript.append_scalars(&reduced_opening_proof.sumcheck_claims);
 
@@ -885,20 +815,17 @@ where
             gamma_powers.push(gamma_powers[i - 1] * gamma);
         }
 
-        let mut blindfold_rlc_map = BTreeMap::new();
-        for (gamma_power, sumcheck) in gamma_powers.iter().zip(self.sumchecks.iter()) {
-            for (coeff, polynomial) in sumcheck.rlc_coeffs.iter().zip(sumcheck.polynomials.iter()) {
-                *blindfold_rlc_map.entry(*polynomial).or_insert(F::zero()) += *coeff * gamma_power;
-            }
+        let opening_ids: Vec<OpeningId> =
+            (0..self.sumchecks.len()).map(|idx| OpeningId::ReducedOpeningClaim(idx as u32)).collect();
+        for (opening_id, claim) in opening_ids.iter().zip(reduced_opening_proof.sumcheck_claims.iter()) {
+            self.openings.insert(*opening_id, (OpeningPoint::new(r_sumcheck.clone()), *claim));
         }
         // Compute the commitment for the reduced opening proof by homomorphically combining
         // the commitments of the individual polynomials.
         let joint_commitment = {
             let mut rlc_map = HashMap::new();
             for (gamma, sumcheck) in gamma_powers.iter().zip(self.sumchecks.iter()) {
-                for (coeff, polynomial) in
-                    sumcheck.rlc_coeffs.iter().zip(sumcheck.polynomials.iter())
-                {
+                for (coeff, polynomial) in sumcheck.rlc_coeffs.iter().zip(sumcheck.polynomials.iter()) {
                     if let Some(value) = rlc_map.get_mut(&polynomial) {
                         *value += *coeff * gamma;
                     } else {
@@ -907,20 +834,15 @@ where
                 }
             }
 
-            let (coeffs, commitments): (Vec<F>, Vec<PCS::Commitment>) = rlc_map
-                .into_iter()
-                .map(|(k, v)| (v, commitment_map.remove(k).unwrap()))
-                .unzip();
+            let (coeffs, commitments): (Vec<F>, Vec<PCS::Commitment>) =
+                rlc_map.into_iter().map(|(k, v)| (v, commitment_map.remove(k).unwrap())).unzip();
             debug_assert!(commitment_map.is_empty(), "Every commitment should be used");
 
             PCS::combine_commitments(&commitments, &coeffs)
         };
 
         #[cfg(test)]
-        assert_eq!(
-            joint_commitment, reduced_opening_proof.joint_commitment,
-            "joint commitment mismatch"
-        );
+        assert_eq!(joint_commitment, reduced_opening_proof.joint_commitment, "joint commitment mismatch");
 
         // Compute joint claim = ∑ᵢ γⁱ⋅ claimᵢ
         let joint_claim: F = gamma_powers
@@ -933,13 +855,19 @@ where
                 *coeff * claim * lagrange_eval
             })
             .sum();
+        let constraint_coeffs: Vec<F> = gamma_powers
+            .iter()
+            .zip(self.sumchecks.iter())
+            .map(|(coeff, opening)| {
+                let r_slice = &r_sumcheck[..num_sumcheck_rounds - opening.opening_point.len()];
+                let lagrange_eval: F = r_slice.iter().map(|r| F::one() - r).product();
+                *coeff * lagrange_eval
+            })
+            .collect();
 
         self.blindfold_opening_data = Some(BlindfoldOpeningData {
-            opening_ids: blindfold_rlc_map
-                .keys()
-                .map(|poly| OpeningId::Committed(*poly, SumcheckId::OpeningReduction))
-                .collect(),
-            constraint_coeffs: blindfold_rlc_map.values().copied().collect(),
+            opening_ids,
+            constraint_coeffs,
             joint_claim,
         });
 

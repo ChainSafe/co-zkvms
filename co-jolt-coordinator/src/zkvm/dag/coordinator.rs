@@ -15,17 +15,15 @@ use jolt_core::poly::opening_proof::{OpeningId, ReducedOpeningProof};
 use jolt_core::subprotocols::blindfold::OpeningProofData;
 #[cfg(feature = "zk")]
 use jolt_core::subprotocols::blindfold::{
-    pedersen_generator_count_for_r1cs, BakedPublicInputs, BlindFoldProof, BlindFoldProver,
-    BlindFoldVerifier, BlindFoldVerifierInput, BlindFoldWitness, ExtraConstraintWitness,
-    FinalOutputWitness, InputClaimConstraint, OutputClaimConstraint, RelaxedR1CSInstance,
-    RoundWitness, StageConfig, StageWitness, ValueSource, VerifierR1CSBuilder, ZkStageData,
+    pedersen_generator_count_for_r1cs, BakedPublicInputs, BlindFoldProof, BlindFoldProver, BlindFoldVerifier,
+    BlindFoldVerifierInput, BlindFoldWitness, ExtraConstraintWitness, FinalOutputWitness, InputClaimConstraint,
+    OutputClaimConstraint, RelaxedR1CSInstance, RoundWitness, StageConfig, StageWitness, ValueSource,
+    VerifierR1CSBuilder, ZkStageData,
 };
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::dag::proof_serialization::{Claims, JoltProof};
 use jolt_core::zkvm::instruction_lookups::D as LOOKUP_D;
-use jolt_core::zkvm::witness::{
-    compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K,
-};
+use jolt_core::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K};
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 use mpc_core::MaybeShared;
 #[cfg(feature = "zk")]
@@ -48,18 +46,13 @@ impl Rep3JoltDag {
     where
         F: JoltField,
         ProofTranscript: Transcript,
-        PCS: CommitmentScheme<Field = F>
-            + Rep3CommitmentScheme<F, ProofTranscript>
-            + ZkEvalCommitment<Bn254Curve>,
+        PCS: CommitmentScheme<Field = F> + Rep3CommitmentScheme<F, ProofTranscript> + ZkEvalCommitment<Bn254Curve>,
         N: Rep3NetworkCoordinator,
     {
         // --- Receive trace_length from workers ---
         let trace_lengths: Vec<usize> = network.receive_responses()?;
         let trace_length = trace_lengths[0];
-        eyre::ensure!(
-            trace_lengths.iter().all(|&t| t == trace_length),
-            "trace_length mismatch across parties"
-        );
+        eyre::ensure!(trace_lengths.iter().all(|&t| t == trace_length), "trace_length mismatch across parties");
         state.trace_length = trace_length;
         let padded_trace_length = trace_length.next_power_of_two();
 
@@ -70,8 +63,7 @@ impl Rep3JoltDag {
         let ram_K = state.ram_K;
         let bytecode_d = state.preprocessing.shared.bytecode.d;
         let _dory_guard = DoryGlobals::initialize(DTH_ROOT_OF_K, padded_trace_length);
-        let _poly_guard =
-            AllCommittedPolynomials::initialize(compute_d_parameter(ram_K), bytecode_d);
+        let _poly_guard = AllCommittedPolynomials::initialize(compute_d_parameter(ram_K), bytecode_d);
         #[cfg(feature = "zk")]
         let mut experimental_zk_rng = Self::experimental_zk_sumchecks_enabled().then(thread_rng);
 
@@ -80,21 +72,15 @@ impl Rep3JoltDag {
         Self::receive_commitments::<F, PCS, ProofTranscript, N>(&mut state, network)?;
 
         // --- Receive untrusted advice commitment from workers ---
-        Self::receive_untrusted_advice_commitment::<F, PCS, ProofTranscript, N>(
-            &mut state, network,
-        )?;
+        Self::receive_untrusted_advice_commitment::<F, PCS, ProofTranscript, N>(&mut state, network)?;
 
         // --- Append advice commitments to transcript (matching vanilla ordering) ---
         if let Some(ref untrusted_advice_commitment) = state.untrusted_advice_commitment {
-            state
-                .transcript
-                .append_serializable(untrusted_advice_commitment);
+            state.transcript.append_serializable(untrusted_advice_commitment);
         }
 
         if let Some(ref trusted_advice_commitment) = state.trusted_advice_commitment {
-            state
-                .transcript
-                .append_serializable(trusted_advice_commitment);
+            state.transcript.append_serializable(trusted_advice_commitment);
         }
         drop(_recv_commits);
 
@@ -112,9 +98,7 @@ impl Rep3JoltDag {
         #[cfg(feature = "zk")]
         let (proof, _r_stage2) = if let Some(rng) = experimental_zk_rng.as_mut() {
             let pedersen_gens = Self::pedersen_generators::<F, PCS>(
-                state
-                    .pcs_setup
-                    .expect("StateManager::pcs_setup must be set for experimental DAG ZK sumchecks"),
+                state.pcs_setup.expect("StateManager::pcs_setup must be set for experimental DAG ZK sumchecks"),
                 Self::blindfold_pedersen_generator_count(&state),
             );
             let (proof, _r_stage2, zk_material) = HybridBatchedSumcheck::prove_zk(
@@ -125,33 +109,20 @@ impl Rep3JoltDag {
                 &pedersen_gens,
                 rng,
             )?;
-            state
-                .blindfold_accumulator
-                .push_stage_data(Self::stage_data_from_instances(
-                    "stage2",
-                    &stage2_hybrid,
-                    &state.accumulator,
-                    zk_material,
-                ));
+            state.blindfold_accumulator.push_stage_data(Self::stage_data_from_instances(
+                "stage2",
+                &stage2_hybrid,
+                &state.accumulator,
+                zk_material,
+            ));
             (proof, _r_stage2)
         } else {
-            HybridBatchedSumcheck::prove(
-                &stage2_hybrid,
-                &mut state.accumulator,
-                &mut state.transcript,
-                network,
-            )?
+            HybridBatchedSumcheck::prove(&stage2_hybrid, &mut state.accumulator, &mut state.transcript, network)?
         };
         #[cfg(not(feature = "zk"))]
-        let (proof, _r_stage2) = HybridBatchedSumcheck::prove(
-            &stage2_hybrid,
-            &mut state.accumulator,
-            &mut state.transcript,
-            network,
-        )?;
-        state
-            .proofs
-            .insert(ProofKeys::Stage2Sumcheck, ProofData::SumcheckProof(proof));
+        let (proof, _r_stage2) =
+            HybridBatchedSumcheck::prove(&stage2_hybrid, &mut state.accumulator, &mut state.transcript, network)?;
+        state.proofs.insert(ProofKeys::Stage2Sumcheck, ProofData::SumcheckProof(proof));
         drop(_stage2);
 
         // -------------------------------------------------------------------
@@ -162,50 +133,33 @@ impl Rep3JoltDag {
         let stage3_instances = stages.stage3_instances(&mut state, network)?;
 
         #[cfg(feature = "zk")]
-        let (stage3_proof, _r_stage3) =
-            if let Some(rng) = experimental_zk_rng.as_mut() {
-                let pedersen_gens = Self::pedersen_generators::<F, PCS>(
-                    state
-                        .pcs_setup
-                        .expect("StateManager::pcs_setup must be set for experimental DAG ZK sumchecks"),
-                    Self::blindfold_pedersen_generator_count(&state),
-                );
-                let (proof, _r_stage3, zk_material) = HybridBatchedSumcheck::prove_zk(
-                    &stage3_instances,
-                    &mut state.accumulator,
-                    &mut state.transcript,
-                    network,
-                    &pedersen_gens,
-                    rng,
-                )?;
-                state
-                    .blindfold_accumulator
-                    .push_stage_data(Self::stage_data_from_instances(
-                        "stage3",
-                        &stage3_instances,
-                        &state.accumulator,
-                        zk_material,
-                    ));
-                (proof, _r_stage3)
-            } else {
-                HybridBatchedSumcheck::prove(
-                    &stage3_instances,
-                    &mut state.accumulator,
-                    &mut state.transcript,
-                    network,
-                )?
-            };
+        let (stage3_proof, _r_stage3) = if let Some(rng) = experimental_zk_rng.as_mut() {
+            let pedersen_gens = Self::pedersen_generators::<F, PCS>(
+                state.pcs_setup.expect("StateManager::pcs_setup must be set for experimental DAG ZK sumchecks"),
+                Self::blindfold_pedersen_generator_count(&state),
+            );
+            let (proof, _r_stage3, zk_material) = HybridBatchedSumcheck::prove_zk(
+                &stage3_instances,
+                &mut state.accumulator,
+                &mut state.transcript,
+                network,
+                &pedersen_gens,
+                rng,
+            )?;
+            state.blindfold_accumulator.push_stage_data(Self::stage_data_from_instances(
+                "stage3",
+                &stage3_instances,
+                &state.accumulator,
+                zk_material,
+            ));
+            (proof, _r_stage3)
+        } else {
+            HybridBatchedSumcheck::prove(&stage3_instances, &mut state.accumulator, &mut state.transcript, network)?
+        };
         #[cfg(not(feature = "zk"))]
-        let (stage3_proof, _r_stage3) = HybridBatchedSumcheck::prove(
-            &stage3_instances,
-            &mut state.accumulator,
-            &mut state.transcript,
-            network,
-        )?;
-        state.proofs.insert(
-            ProofKeys::Stage3Sumcheck,
-            ProofData::SumcheckProof(stage3_proof),
-        );
+        let (stage3_proof, _r_stage3) =
+            HybridBatchedSumcheck::prove(&stage3_instances, &mut state.accumulator, &mut state.transcript, network)?;
+        state.proofs.insert(ProofKeys::Stage3Sumcheck, ProofData::SumcheckProof(stage3_proof));
         drop(_stage3);
 
         // -------------------------------------------------------------------
@@ -217,39 +171,29 @@ impl Rep3JoltDag {
 
         if !stage4_instances.is_empty() {
             #[cfg(feature = "zk")]
-            let (stage4_proof, _r_stage4) =
-                if let Some(rng) = experimental_zk_rng.as_mut() {
-                    let pedersen_gens = Self::pedersen_generators::<F, PCS>(
-                        state
-                            .pcs_setup
-                            .expect("StateManager::pcs_setup must be set for experimental DAG ZK sumchecks"),
-                        Self::blindfold_pedersen_generator_count(&state),
-                    );
-                    let (proof, _r_stage4, zk_material) = HybridBatchedSumcheck::prove_zk(
-                        &stage4_instances,
-                        &mut state.accumulator,
-                        &mut state.transcript,
-                        network,
-                        &pedersen_gens,
-                        rng,
-                    )?;
-                    state
-                        .blindfold_accumulator
-                        .push_stage_data(Self::stage_data_from_instances(
-                            "stage4",
-                            &stage4_instances,
-                            &state.accumulator,
-                            zk_material,
-                        ));
-                    (proof, _r_stage4)
-                } else {
-                    HybridBatchedSumcheck::prove(
-                        &stage4_instances,
-                        &mut state.accumulator,
-                        &mut state.transcript,
-                        network,
-                    )?
-                };
+            let (stage4_proof, _r_stage4) = if let Some(rng) = experimental_zk_rng.as_mut() {
+                let pedersen_gens = Self::pedersen_generators::<F, PCS>(
+                    state.pcs_setup.expect("StateManager::pcs_setup must be set for experimental DAG ZK sumchecks"),
+                    Self::blindfold_pedersen_generator_count(&state),
+                );
+                let (proof, _r_stage4, zk_material) = HybridBatchedSumcheck::prove_zk(
+                    &stage4_instances,
+                    &mut state.accumulator,
+                    &mut state.transcript,
+                    network,
+                    &pedersen_gens,
+                    rng,
+                )?;
+                state.blindfold_accumulator.push_stage_data(Self::stage_data_from_instances(
+                    "stage4",
+                    &stage4_instances,
+                    &state.accumulator,
+                    zk_material,
+                ));
+                (proof, _r_stage4)
+            } else {
+                HybridBatchedSumcheck::prove(&stage4_instances, &mut state.accumulator, &mut state.transcript, network)?
+            };
             #[cfg(not(feature = "zk"))]
             let (stage4_proof, _r_stage4) = HybridBatchedSumcheck::prove(
                 &stage4_instances,
@@ -257,10 +201,7 @@ impl Rep3JoltDag {
                 &mut state.transcript,
                 network,
             )?;
-            state.proofs.insert(
-                ProofKeys::Stage4Sumcheck,
-                ProofData::SumcheckProof(stage4_proof),
-            );
+            state.proofs.insert(ProofKeys::Stage4Sumcheck, ProofData::SumcheckProof(stage4_proof));
         }
         drop(_stage4);
 
@@ -269,53 +210,36 @@ impl Rep3JoltDag {
         // -------------------------------------------------------------------
 
         let _stage5 = info_span!("stage5_reduce_and_prove").entered();
-        let poly_keys: Vec<CommittedPolynomial> =
-            AllCommittedPolynomials::iter().copied().collect();
-        let mut commitment_map: HashMap<CommittedPolynomial, PCS::Commitment> = poly_keys
-            .into_iter()
-            .zip(state.commitments.iter().cloned())
-            .collect();
+        let poly_keys: Vec<CommittedPolynomial> = AllCommittedPolynomials::iter().copied().collect();
+        let mut commitment_map: HashMap<CommittedPolynomial, PCS::Commitment> =
+            poly_keys.into_iter().zip(state.commitments.iter().cloned()).collect();
 
-        let pcs_setup = state
-            .pcs_setup
-            .expect("StateManager::pcs_setup must be set for reduce_and_prove (stage5)");
-        let reduced = state
-            .accumulator
-            .reduce_and_prove::<PCS, ProofTranscript, N>(
-                &mut commitment_map,
-                pcs_setup,
-                &mut state.transcript,
-                network,
-            )?;
+        let pcs_setup = state.pcs_setup.expect("StateManager::pcs_setup must be set for reduce_and_prove (stage5)");
+        let reduced = state.accumulator.reduce_and_prove::<PCS, ProofTranscript, N>(
+            &mut commitment_map,
+            pcs_setup,
+            &mut state.transcript,
+            network,
+        )?;
         state.stage5_y_blinding = reduced.y_blinding;
         #[cfg(feature = "zk")]
         if let Some(y_blinding) = reduced.y_blinding {
-            state
-                .blindfold_accumulator
-                .set_opening_proof_data(OpeningProofData {
-                    opening_ids: reduced.opening_ids.clone(),
-                    constraint_coeffs: reduced.constraint_coeffs.clone(),
-                    joint_claim: reduced.joint_claim,
-                    y_blinding,
-                });
+            state.blindfold_accumulator.set_opening_proof_data(OpeningProofData {
+                opening_ids: reduced.opening_ids.clone(),
+                constraint_coeffs: reduced.constraint_coeffs.clone(),
+                joint_claim: reduced.joint_claim,
+                y_blinding,
+            });
         }
         #[cfg(feature = "zk")]
         let blindfold_proof = if Self::experimental_zk_sumchecks_enabled() {
-            Some(Self::prove_blindfold::<F, ProofTranscript, PCS>(
-                &mut state,
-                &reduced.joint_opening_proof,
-            ))
+            Some(Self::prove_blindfold::<F, ProofTranscript, PCS>(&mut state, &reduced.joint_opening_proof))
         } else {
             None
         };
         state.proofs.insert(
             ProofKeys::ReducedOpeningProof,
-            ProofData::ReducedOpeningProof(ReducedOpeningProof::<
-                F,
-                Bn254Curve,
-                PCS,
-                ProofTranscript,
-            > {
+            ProofData::ReducedOpeningProof(ReducedOpeningProof::<F, Bn254Curve, PCS, ProofTranscript> {
                 sumcheck_proof: reduced.sumcheck_proof,
                 sumcheck_claims: reduced.sumcheck_claims,
                 joint_opening_proof: reduced.joint_opening_proof,
@@ -345,10 +269,7 @@ impl Rep3JoltDag {
     }
 
     #[cfg(feature = "zk")]
-    fn pedersen_generators<F, PCS>(
-        pcs_setup: &PCS::ProverSetup,
-        count: usize,
-    ) -> PedersenGenerators<Bn254Curve>
+    fn pedersen_generators<F, PCS>(pcs_setup: &PCS::ProverSetup, count: usize) -> PedersenGenerators<Bn254Curve>
     where
         F: JoltField,
         PCS: CommitmentScheme<Field = F> + ZkEvalCommitment<Bn254Curve>,
@@ -367,15 +288,11 @@ impl Rep3JoltDag {
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     {
-        let max_coeffs = [
-            4usize,
-            LOOKUP_D + 1,
-            compute_d_parameter(state.ram_K) + 1,
-            state.preprocessing.shared.bytecode.d + 1,
-        ]
-        .into_iter()
-        .max()
-        .unwrap_or(1);
+        let max_coeffs =
+            [4usize, LOOKUP_D + 1, compute_d_parameter(state.ram_K) + 1, state.preprocessing.shared.bytecode.d + 1]
+                .into_iter()
+                .max()
+                .unwrap_or(1);
         max_coeffs.next_power_of_two()
     }
 
@@ -405,11 +322,8 @@ impl Rep3JoltDag {
                 continue;
             }
             let challenge_values = instance.input_constraint_challenge_values(accumulator);
-            let opening_values: Vec<F> = constraint
-                .required_openings
-                .iter()
-                .map(|id| accumulator.get_opening(*id))
-                .collect();
+            let opening_values: Vec<F> =
+                constraint.required_openings.iter().map(|id| accumulator.get_opening(*id)).collect();
             let expected_input_claim = constraint.evaluate(&opening_values, &challenge_values);
             assert_eq!(
                 expected_input_claim,
@@ -426,10 +340,7 @@ impl Rep3JoltDag {
             blinding_factors: zk_material.blinding_factors,
             challenges: zk_material.challenges.clone(),
             batching_coefficients: zk_material.batching_coefficients,
-            output_constraints: instances
-                .iter()
-                .map(BatchedSumcheckInstance::output_claim_constraint)
-                .collect(),
+            output_constraints: instances.iter().map(BatchedSumcheckInstance::output_claim_constraint).collect(),
             constraint_challenge_values: instances
                 .iter()
                 .map(|instance| {
@@ -438,10 +349,7 @@ impl Rep3JoltDag {
                     instance.output_constraint_challenge_values(r_slice)
                 })
                 .collect(),
-            input_constraints: instances
-                .iter()
-                .map(BatchedSumcheckInstance::input_claim_constraint)
-                .collect(),
+            input_constraints: instances.iter().map(BatchedSumcheckInstance::input_claim_constraint).collect(),
             input_constraint_challenge_values: instances
                 .iter()
                 .map(|instance| instance.input_constraint_challenge_values(accumulator))
@@ -476,7 +384,7 @@ impl Rep3JoltDag {
         let mut baked_challenges = Vec::new();
         let mut baked_output_challenges = Vec::new();
         let mut baked_input_challenges = Vec::new();
-        let mut oc_blocks = Vec::with_capacity(zk_stages.len());
+        let mut oc_blocks: Vec<Vec<OpeningId>> = Vec::with_capacity(zk_stages.len());
 
         for (stage_idx, zk_data) in zk_stages.iter().enumerate() {
             initial_claims.push(zk_data.initial_claim);
@@ -491,8 +399,7 @@ impl Rep3JoltDag {
                 for coeff in coeffs[..coeffs.len() - 1].iter().rev() {
                     next_claim = *coeff + challenge * next_claim;
                 }
-                let expected_claimed_sum =
-                    F::from_u64(2) * coeffs[0] + coeffs[1..].iter().copied().sum::<F>();
+                let expected_claimed_sum = F::from_u64(2) * coeffs[0] + coeffs[1..].iter().copied().sum::<F>();
                 assert_eq!(
                     expected_claimed_sum,
                     current_claim,
@@ -500,8 +407,7 @@ impl Rep3JoltDag {
                     stage_idx + 1,
                     round_idx + 1,
                 );
-                let round_witness =
-                    RoundWitness::with_claimed_sum(coeffs.clone(), challenge, current_claim);
+                let round_witness = RoundWitness::with_claimed_sum(coeffs.clone(), challenge, current_claim);
                 let mut config = if round_idx == 0 {
                     StageConfig::new_chain(1, poly_degree)
                 } else {
@@ -527,18 +433,19 @@ impl Rep3JoltDag {
                         .map(|id| state.accumulator.get_opening(*id))
                         .collect();
                     if !batched_constraint.terms.is_empty() {
-                        let expected_initial_claim =
-                            batched_constraint.evaluate(&opening_values, &challenge_values);
+                        let expected_initial_claim = batched_constraint.evaluate(&opening_values, &challenge_values);
                         assert_eq!(
                             expected_initial_claim,
                             current_claim,
                             "BlindFold initial-claim constraint mismatch at stage {} start",
                             stage_idx + 1,
                         );
+                        config = config.with_input_constraint(batched_constraint);
+                        baked_input_challenges.extend_from_slice(&challenge_values);
+                        Some(FinalOutputWitness::general(challenge_values, opening_values))
+                    } else {
+                        None
                     }
-                    config = config.with_input_constraint(batched_constraint);
-                    baked_input_challenges.extend_from_slice(&challenge_values);
-                    Some(FinalOutputWitness::general(challenge_values, opening_values))
                 } else {
                     None
                 };
@@ -548,13 +455,9 @@ impl Rep3JoltDag {
                         for values in &zk_data.constraint_challenge_values {
                             challenge_values.extend_from_slice(values);
                         }
-                        let opening_values: Vec<F> = constraint
-                            .required_openings
-                            .iter()
-                            .map(|id| state.accumulator.get_opening(*id))
-                            .collect();
-                        let expected_output_claim =
-                            constraint.evaluate(&opening_values, &challenge_values);
+                        let opening_values: Vec<F> =
+                            constraint.required_openings.iter().map(|id| state.accumulator.get_opening(*id)).collect();
+                        let expected_output_claim = constraint.evaluate(&opening_values, &challenge_values);
                         assert_eq!(
                             expected_output_claim,
                             next_claim,
@@ -575,12 +478,8 @@ impl Rep3JoltDag {
                     (Some(initial_input), Some(final_output)) => {
                         StageWitness::with_both(vec![round_witness], initial_input, final_output)
                     }
-                    (Some(initial_input), None) => {
-                        StageWitness::with_initial_input(vec![round_witness], initial_input)
-                    }
-                    (None, Some(final_output)) => {
-                        StageWitness::with_final_output(vec![round_witness], final_output)
-                    }
+                    (Some(initial_input), None) => StageWitness::with_initial_input(vec![round_witness], initial_input),
+                    (None, Some(final_output)) => StageWitness::with_final_output(vec![round_witness], final_output),
                     (None, None) => StageWitness::new(vec![round_witness]),
                 });
 
@@ -590,20 +489,24 @@ impl Rep3JoltDag {
             }
         }
 
-        let extra_constraints = vec![OutputClaimConstraint::linear(vec![(
-            ValueSource::one(),
-            ValueSource::challenge(0),
-        )])];
+        let extra_constraints = vec![OutputClaimConstraint::linear(
+            stage5_data
+                .opening_ids
+                .iter()
+                .enumerate()
+                .map(|(idx, opening_id)| (ValueSource::challenge(idx), ValueSource::opening(*opening_id)))
+                .collect(),
+        )];
         let baked = BakedPublicInputs {
             challenges: baked_challenges,
-            initial_claims: Vec::new(),
+            initial_claims: initial_claims.clone(),
             batching_coefficients: Vec::new(),
             output_constraint_challenges: baked_output_challenges,
             input_constraint_challenges: baked_input_challenges,
-            extra_constraint_challenges: vec![stage5_data.joint_claim],
+            extra_constraint_challenges: stage5_data.constraint_coeffs.clone(),
         };
         let r1cs =
-            VerifierR1CSBuilder::<F>::new_with_extra(&stage_configs, &extra_constraints, &baked, oc_blocks)
+            VerifierR1CSBuilder::<F>::new_with_extra(&stage_configs, &extra_constraints, &baked, oc_blocks.clone())
                 .build();
 
         let hyrax_c = r1cs.hyrax.C;
@@ -616,17 +519,27 @@ impl Rep3JoltDag {
             let vals: Vec<F> = zk_data.output_claims.iter().map(|(_, value)| *value).collect();
             output_claims_values.extend_from_slice(&vals);
             let block_rows = vals.len().div_ceil(hyrax_c.max(1));
-            output_claims_values.resize(
-                output_claims_values.len() + block_rows * hyrax_c - vals.len(),
-                F::zero(),
-            );
+            output_claims_values.resize(output_claims_values.len() + block_rows * hyrax_c - vals.len(), F::zero());
         }
 
+        let extra_opening_values: Vec<F> =
+            stage5_data.opening_ids.iter().map(|id| state.accumulator.get_opening(*id)).collect();
+        let expected_stage5_joint_claim: F = stage5_data
+            .constraint_coeffs
+            .iter()
+            .zip(extra_opening_values.iter())
+            .map(|(coeff, opening)| *coeff * *opening)
+            .sum();
+        assert_eq!(
+            expected_stage5_joint_claim,
+            stage5_data.joint_claim,
+            "DAG stage5 BlindFold linear relation must match the stored joint claim",
+        );
         let extra_witness = ExtraConstraintWitness {
             output_value: stage5_data.joint_claim,
             blinding: stage5_data.y_blinding,
-            challenge_values: vec![stage5_data.joint_claim],
-            opening_values: Vec::new(),
+            challenge_values: stage5_data.constraint_coeffs.clone(),
+            opening_values: extra_opening_values,
         };
         let blindfold_witness = BlindFoldWitness::with_output_claims(
             initial_claims,
@@ -635,9 +548,9 @@ impl Rep3JoltDag {
             output_claims_values,
         );
         let z = blindfold_witness.assign(&r1cs);
-        r1cs
-            .check_satisfaction(&z)
-            .expect("DAG BlindFold witness must satisfy the verifier R1CS");
+        if let Err(row) = r1cs.check_satisfaction(&z) {
+            panic!("DAG BlindFold witness must satisfy the verifier R1CS at row {row}");
+        }
         let witness: Vec<F> = z[1..].to_vec();
 
         let mut round_commitments = Vec::new();
@@ -647,15 +560,10 @@ impl Rep3JoltDag {
             round_blindings.extend_from_slice(&zk_data.blinding_factors);
         }
 
-        let pcs_setup = state
-            .pcs_setup
-            .expect("PCS setup must be present for DAG BlindFold proving");
-        let pedersen_generators = Self::pedersen_generators::<F, PCS>(
-            pcs_setup,
-            pedersen_generator_count_for_r1cs(&r1cs),
-        );
-        let eval_commitments =
-            vec![PCS::eval_commitment(joint_opening_proof).expect("missing eval commitment")];
+        let pcs_setup = state.pcs_setup.expect("PCS setup must be present for DAG BlindFold proving");
+        let pedersen_generators =
+            Self::pedersen_generators::<F, PCS>(pcs_setup, pedersen_generator_count_for_r1cs(&r1cs));
+        let eval_commitments = vec![PCS::eval_commitment(joint_opening_proof).expect("missing eval commitment")];
 
         let hyrax = &r1cs.hyrax;
         let regular_noncoeff_start = (hyrax.R_coeff + hyrax.output_claims_rows) * hyrax.C;
@@ -685,10 +593,7 @@ impl Rep3JoltDag {
 
         assert_eq!(
             round_commitments.len(),
-            zk_stages
-                .iter()
-                .map(|stage| stage.round_commitments.len())
-                .sum::<usize>(),
+            zk_stages.iter().map(|stage| stage.round_commitments.len()).sum::<usize>(),
             "BlindFold round commitment count mismatch",
         );
         assert_eq!(
@@ -706,16 +611,8 @@ impl Rep3JoltDag {
             hyrax.regular_noncoeff_rows(),
             "BlindFold non-coeff row commitment count mismatch",
         );
-        assert_eq!(
-            eval_commitments.len(),
-            extra_constraints.len(),
-            "BlindFold eval commitment count mismatch",
-        );
-        assert_eq!(
-            w_row_blindings.len(),
-            hyrax.R_prime,
-            "BlindFold W-row blinding count mismatch",
-        );
+        assert_eq!(eval_commitments.len(), extra_constraints.len(), "BlindFold eval commitment count mismatch",);
+        assert_eq!(w_row_blindings.len(), hyrax.R_prime, "BlindFold W-row blinding count mismatch",);
 
         let (real_instance, real_witness) = RelaxedR1CSInstance::<F, Bn254Curve>::new_non_relaxed(
             &witness,
@@ -740,9 +637,7 @@ impl Rep3JoltDag {
                 &blindfold_proof,
                 &BlindFoldVerifierInput {
                     round_commitments: real_instance.round_commitments.clone(),
-                    output_claims_row_commitments: real_instance
-                        .output_claims_row_commitments
-                        .clone(),
+                    output_claims_row_commitments: real_instance.output_claims_row_commitments.clone(),
                     eval_commitments: real_instance.eval_commitments.clone(),
                 },
                 &mut blindfold_verify_transcript,
@@ -763,8 +658,7 @@ impl Rep3JoltDag {
         N: Rep3NetworkCoordinator,
     {
         // Receive commitment shares from all 3 parties
-        let all_commitment_shares: Vec<Vec<MaybeShared<PCS::Commitment>>> =
-            network.receive_responses()?;
+        let all_commitment_shares: Vec<Vec<MaybeShared<PCS::Commitment>>> = network.receive_responses()?;
 
         eyre::ensure!(
             all_commitment_shares.len() == 3,
@@ -776,13 +670,9 @@ impl Rep3JoltDag {
         // Combine commitment shares
         let combined_commitments: Vec<PCS::Commitment> = (0..num_polys)
             .map(|i| {
-                let shares: Vec<&MaybeShared<PCS::Commitment>> = all_commitment_shares
-                    .iter()
-                    .map(|party_shares| &party_shares[i])
-                    .collect();
-                <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::combine_commitment_shares(
-                    &shares,
-                )
+                let shares: Vec<&MaybeShared<PCS::Commitment>> =
+                    all_commitment_shares.iter().map(|party_shares| &party_shares[i]).collect();
+                <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::combine_commitment_shares(&shares)
             })
             .collect();
 
@@ -812,21 +702,13 @@ impl Rep3JoltDag {
             commitments.len()
         );
 
-        let present: Vec<MaybeShared<PCS::Commitment>> =
-            commitments.into_iter().flatten().collect();
+        let present: Vec<MaybeShared<PCS::Commitment>> = commitments.into_iter().flatten().collect();
         state.untrusted_advice_commitment = if present.is_empty() {
             None
         } else {
-            eyre::ensure!(
-                present.len() == 3,
-                "expected untrusted advice commitment shares from all 3 parties"
-            );
+            eyre::ensure!(present.len() == 3, "expected untrusted advice commitment shares from all 3 parties");
             let shares: Vec<&MaybeShared<PCS::Commitment>> = present.iter().collect();
-            Some(
-                <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::combine_commitment_shares(
-                    &shares,
-                ),
-            )
+            Some(<PCS as Rep3CommitmentScheme<F, ProofTranscript>>::combine_commitment_shares(&shares))
         };
         Ok(())
     }
