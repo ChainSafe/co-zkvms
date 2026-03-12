@@ -10,6 +10,11 @@ members = [
     "mpc-core",
     "mpc-types",
 ]
+exclude = [
+    "jolt-sdk",
+    "examples/fibonacci",
+    "examples/sha2-chain",
+]
 default-members = [
     "co-jolt2",
     "co-jolt-coordinator",

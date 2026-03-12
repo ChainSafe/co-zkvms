@@ -21,11 +21,11 @@ set -euo pipefail
 #   - host_proxy pre-built: make -C co-jolt-coordinator/enclave build-host-proxy
 #
 # Usage:
-#   DEBUG=1 bash co-jolt2/examples/run_e2e_nitro.sh
+#   DEBUG=1 bash examples/run_e2e_nitro.sh
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CO_JOLT2_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-REPO_DIR="$(cd "$CO_JOLT2_DIR/.." && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+CO_JOLT2_DIR="$REPO_DIR/co-jolt2"
 
 export RUSTFLAGS="${RUSTFLAGS:--A warnings}"
 
@@ -78,8 +78,11 @@ cd "$REPO_DIR"
 
 cargo build --release \
   -p co-jolt2 --bin worker \
-  -p co-jolt2 --bin client \
   -p mpc-net --bin gen_configs
+
+cargo build --release \
+  --manifest-path "$REPO_DIR/examples/sha2-chain/Cargo.toml" \
+  --target-dir "$REPO_DIR/target"
 
 echo "Build complete."
 
@@ -173,11 +176,10 @@ WORKER_ADDRS="127.0.0.1:${USER_LISTEN_BASE_PORT}"
 WORKER_ADDRS="${WORKER_ADDRS},127.0.0.1:$((USER_LISTEN_BASE_PORT + 1))"
 WORKER_ADDRS="${WORKER_ADDRS},127.0.0.1:$((USER_LISTEN_BASE_PORT + 2))"
 
-echo "Running client (workers=$WORKER_ADDRS)..."
+echo "Running sha2-chain client (workers=$WORKER_ADDRS)..."
 
-"$REPO_DIR/target/release/client" \
-  -w "$WORKER_ADDRS" \
-  -t "$TRACE_DIR"
+"$REPO_DIR/target/release/sha2-chain" \
+  -w "$WORKER_ADDRS"
 
 echo ""
 echo "=== Nitro Enclave E2E Test PASSED ==="

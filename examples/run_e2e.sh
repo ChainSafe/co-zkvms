@@ -10,12 +10,12 @@ set -euo pipefail
 #   tls   — coordinator uses TLS-over-TCP (emulated TEE, mimics vsock+TLS)
 #
 # Usage:
-#   TRANSPORT=quic bash co-jolt2/examples/run_e2e.sh
-#   TRANSPORT=tls  bash co-jolt2/examples/run_e2e.sh
+#   TRANSPORT=quic bash examples/run_e2e.sh
+#   TRANSPORT=tls  bash examples/run_e2e.sh
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CO_JOLT2_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-REPO_DIR="$(cd "$CO_JOLT2_DIR/.." && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+CO_JOLT2_DIR="$REPO_DIR/co-jolt2"
 
 export RUSTFLAGS="${RUSTFLAGS:--A warnings}"
 
@@ -42,8 +42,11 @@ cd "$REPO_DIR"
 cargo build --release \
   -p co-jolt-coordinator --bin coordinator \
   -p co-jolt2 --bin worker \
-  -p co-jolt2 --bin client \
   -p mpc-net --bin gen_configs
+
+cargo build --release \
+  --manifest-path "$REPO_DIR/examples/sha2-chain/Cargo.toml" \
+  --target-dir "$REPO_DIR/target"
 
 echo "Build complete."
 
@@ -120,11 +123,10 @@ WORKER_ADDRS="127.0.0.1:${USER_LISTEN_BASE_PORT}"
 WORKER_ADDRS="${WORKER_ADDRS},127.0.0.1:$((USER_LISTEN_BASE_PORT + 1))"
 WORKER_ADDRS="${WORKER_ADDRS},127.0.0.1:$((USER_LISTEN_BASE_PORT + 2))"
 
-echo "Running client (workers=$WORKER_ADDRS)..."
+echo "Running sha2-chain client (workers=$WORKER_ADDRS)..."
 
-"$REPO_DIR/target/release/client" \
-  -w "$WORKER_ADDRS" \
-  -t "$TRACE_DIR"
+"$REPO_DIR/target/release/sha2-chain" \
+  -w "$WORKER_ADDRS"
 
 echo ""
 echo "=== E2E Test PASSED (transport=$TRANSPORT) ==="

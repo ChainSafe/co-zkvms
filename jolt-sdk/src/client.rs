@@ -1,4 +1,4 @@
-//! `ProvingClient` — user-facing client for delegating proofs to TEE workers.
+//! `Client` — user-facing client for delegating proofs to TEE workers.
 //!
 //! The client connects to 3 workers via TLS, traces the guest program locally,
 //! generates 3-way secret shares, and sends each share to the corresponding
@@ -25,11 +25,11 @@ use rustls::pki_types::ServerName;
 use serde::{Deserialize, Serialize};
 use tracer::instruction::Cycle;
 
-use crate::host::jolt_device::Rep3ProgramIOInput;
-use crate::host::memory::Rep3Memory;
-use crate::host::program::share_trace;
-use crate::utils::compute_ram_k;
-use crate::zkvm::instruction::Rep3Cycle;
+use co_jolt2::host::jolt_device::Rep3ProgramIOInput;
+use co_jolt2::host::memory::Rep3Memory;
+use co_jolt2::host::program::share_trace;
+use co_jolt2::utils::compute_ram_k;
+use co_jolt2::zkvm::instruction::Rep3Cycle;
 
 /// Payload sent to each worker containing their secret share + public data.
 ///
@@ -92,11 +92,11 @@ impl WorkerConnection {
 ///
 /// All traffic is TLS-encrypted. Certificate validation is skipped because
 /// trust is established via TEE attestation, not PKI.
-pub struct ProvingClient {
+pub struct Client {
     workers: [WorkerConnection; 3],
 }
 
-impl ProvingClient {
+impl Client {
     /// Connect to 3 workers via TLS.
     pub fn connect(worker_addrs: [SocketAddr; 3]) -> eyre::Result<Self> {
         rustls::crypto::aws_lc_rs::default_provider().install_default().ok();
