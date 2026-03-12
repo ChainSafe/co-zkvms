@@ -157,6 +157,13 @@ pub enum OpeningId {
 
 pub type Openings<F> = BTreeMap<OpeningId, (OpeningPoint<BIG_ENDIAN, F>, F)>;
 
+#[derive(Clone, Debug)]
+pub struct BlindfoldOpeningData<F: JoltField> {
+    pub opening_ids: Vec<OpeningId>,
+    pub constraint_coeffs: Vec<F>,
+    pub joint_claim: F,
+}
+
 pub trait OpeningAccumulator<F: JoltField> {
     fn get_virtual_polynomial_opening(
         &self,
@@ -537,6 +544,7 @@ where
     zk_mode: bool,
     pending_claims: Vec<F>,
     pending_claim_ids: Vec<OpeningId>,
+    blindfold_opening_data: Option<BlindfoldOpeningData<F>>,
 }
 
 #[derive(CanonicalSerialize, CanonicalDeserialize, Clone, Debug)]
@@ -575,6 +583,7 @@ where
             zk_mode: false,
             pending_claims: vec![],
             pending_claim_ids: vec![],
+            blindfold_opening_data: None,
         }
     }
 
@@ -585,6 +594,7 @@ where
             zk_mode: true,
             pending_claims: vec![],
             pending_claim_ids: vec![],
+            blindfold_opening_data: None,
         }
     }
 
@@ -649,11 +659,7 @@ where
             .iter()
             .map(|poly| {
                 let key = OpeningId::Committed(*poly, sumcheck);
-                let claim = self.openings.get(&key).map(|opening| opening.1).unwrap_or_else(|| {
-                    self.pending_claim_ids.push(key);
-                    self.pending_claims.push(F::zero());
-                    F::zero()
-                });
+                let claim = self.openings.get(&key).map(|opening| opening.1).unwrap_or(F::zero());
                 self.openings.insert(
                     key,
                     (
@@ -661,6 +667,10 @@ where
                         claim,
                     ),
                 );
+                if self.zk_mode {
+                    self.pending_claim_ids.push(key);
+                    self.pending_claims.push(claim);
+                }
                 claim
             })
             .collect();
@@ -686,11 +696,7 @@ where
     ) {
         for label in polynomials.into_iter() {
             let key = OpeningId::Committed(label, sumcheck);
-            let claim = self.openings.get(&key).map(|opening| opening.1).unwrap_or_else(|| {
-                self.pending_claim_ids.push(key);
-                self.pending_claims.push(F::zero());
-                F::zero()
-            });
+            let claim = self.openings.get(&key).map(|opening| opening.1).unwrap_or(F::zero());
             self.openings.insert(
                 key,
                 (
@@ -698,6 +704,10 @@ where
                     claim,
                 ),
             );
+            if self.zk_mode {
+                self.pending_claim_ids.push(key);
+                self.pending_claims.push(claim);
+            }
             if !self.zk_mode {
                 transcript.append_scalar(&claim);
             }
@@ -797,6 +807,10 @@ where
         std::mem::take(&mut self.pending_claim_ids)
     }
 
+    pub fn take_blindfold_opening_data(&mut self) -> Option<BlindfoldOpeningData<F>> {
+        self.blindfold_opening_data.take()
+    }
+
     /// Verifies that the given `reduced_opening_proof` (consisting of a sumcheck proof
     /// and a single opening proof) indeed proves the openings accumulated.
     pub fn reduce_and_verify<
@@ -871,6 +885,12 @@ where
             gamma_powers.push(gamma_powers[i - 1] * gamma);
         }
 
+        let mut blindfold_rlc_map = BTreeMap::new();
+        for (gamma_power, sumcheck) in gamma_powers.iter().zip(self.sumchecks.iter()) {
+            for (coeff, polynomial) in sumcheck.rlc_coeffs.iter().zip(sumcheck.polynomials.iter()) {
+                *blindfold_rlc_map.entry(*polynomial).or_insert(F::zero()) += *coeff * gamma_power;
+            }
+        }
         // Compute the commitment for the reduced opening proof by homomorphically combining
         // the commitments of the individual polynomials.
         let joint_commitment = {
@@ -914,6 +934,15 @@ where
             })
             .sum();
 
+        self.blindfold_opening_data = Some(BlindfoldOpeningData {
+            opening_ids: blindfold_rlc_map
+                .keys()
+                .map(|poly| OpeningId::Committed(*poly, SumcheckId::OpeningReduction))
+                .collect(),
+            constraint_coeffs: blindfold_rlc_map.values().copied().collect(),
+            joint_claim,
+        });
+
         // Verify the reduced opening proof
         PCS::verify(
             &reduced_opening_proof.joint_opening_proof,
@@ -939,7 +968,7 @@ where
                 instance
             })
             .collect();
-        BatchedSumcheck::verify(sumcheck_proof, instances, None, transcript).map(|(_, r)| r)
+        BatchedSumcheck::verify(sumcheck_proof, instances, None, transcript).map(|(_, r, _)| r)
     }
 }
 

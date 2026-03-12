@@ -131,7 +131,7 @@ fn main() -> eyre::Result<()> {
         ram_k,
         twist_switch,
     );
-    JoltDAG::verify::<F, Bn254Curve, FS, PCS>(verifier_sm)
+    JoltDAG::verify::<F, FS, PCS>(verifier_sm)
         .map_err(|e| eyre::eyre!("{e:#}"))?;
 
     info!("proof verified successfully!");

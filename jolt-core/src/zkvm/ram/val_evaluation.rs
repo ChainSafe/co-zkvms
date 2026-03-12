@@ -1,6 +1,10 @@
 use num_traits::Zero;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint, ValueSource};
 use crate::{
     curve::JoltCurve,
     field::JoltField,
@@ -50,6 +54,8 @@ pub struct ValEvaluationSumcheck<F: JoltField> {
     prover_state: Option<ValEvaluationProverState<F>>,
     /// ram K parameter
     K: usize,
+    #[cfg(feature = "zk")]
+    r_cycle: Vec<F::Challenge>,
 }
 
 impl<F: JoltField> ValEvaluationSumcheck<F> {
@@ -121,6 +127,8 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
             num_rounds: T.log_2(),
             prover_state: Some(ValEvaluationProverState { inc, wa, lt }),
             K,
+            #[cfg(feature = "zk")]
+            r_cycle: r_cycle.r,
         }
     }
 
@@ -139,7 +147,7 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
             VirtualPolynomial::RamVal,
             SumcheckId::RamReadWriteChecking,
         );
-        let (r_address, _) = r.split_at(K.log_2());
+        let (r_address, r_cycle) = r.split_at(K.log_2());
 
         let accumulator = state_manager.get_verifier_accumulator();
         let total_memory_vars = K.log_2();
@@ -183,6 +191,8 @@ impl<F: JoltField> ValEvaluationSumcheck<F> {
             num_rounds: T.log_2(),
             prover_state: None,
             K,
+            #[cfg(feature = "zk")]
+            r_cycle: r_cycle.r,
         }
     }
 }
@@ -356,8 +366,59 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
         );
     }
 
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::linear(vec![
+            (
+                ValueSource::one(),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::RamVal,
+                    SumcheckId::RamReadWriteChecking,
+                )),
+            ),
+            (
+                ValueSource::neg_one(),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::RamValInit,
+                    SumcheckId::RamOutputCheck,
+                )),
+            ),
+        ])
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        Some(OutputClaimConstraint::product(vec![
+            ValueSource::challenge(0),
+            ValueSource::opening(OpeningId::Committed(
+                CommittedPolynomial::RamInc,
+                SumcheckId::RamValEvaluation,
+            )),
+            ValueSource::opening(OpeningId::Virtual(
+                VirtualPolynomial::RamRa,
+                SumcheckId::RamValEvaluation,
+            )),
+        ]))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        vec![lt_eval(sumcheck_challenges, &self.r_cycle)]
+    }
+
     #[cfg(feature = "allocative")]
     fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
         flamegraph.visit_root(self);
     }
+}
+
+#[cfg(feature = "zk")]
+fn lt_eval<F: JoltField>(lhs: &[F::Challenge], rhs: &[F::Challenge]) -> F {
+    let mut lt_eval = F::zero();
+    let mut eq_term = F::one();
+    for (x, y) in lhs.iter().zip(rhs.iter()) {
+        lt_eval += (F::one() - x) * y * eq_term;
+        eq_term *= F::one() - x - y + *x * y + *x * y;
+    }
+    lt_eval
 }

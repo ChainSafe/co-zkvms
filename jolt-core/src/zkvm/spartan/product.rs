@@ -5,9 +5,11 @@ use crate::curve::JoltCurve;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::opening_proof::{
-    OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
-};
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
+use crate::poly::opening_proof::{OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN};
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint, ValueSource};
 use crate::subprotocols::sumcheck::SumcheckInstance;
 use crate::transcripts::Transcript;
 use crate::zkvm::dag::state_manager::StateManager;
@@ -16,6 +18,8 @@ use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 pub struct ProductVirtualizationSumcheck<F: JoltField> {
     input_claim: F,
     log_T: usize,
+    #[cfg(feature = "zk")]
+    r_cycle: Vec<F::Challenge>,
 }
 
 impl<F: JoltField> ProductVirtualizationSumcheck<F> {
@@ -33,6 +37,8 @@ impl<F: JoltField> ProductVirtualizationSumcheck<F> {
         Self {
             input_claim,
             log_T: r_point.r.len(),
+            #[cfg(feature = "zk")]
+            r_cycle: r_point.r,
         }
     }
 }
@@ -98,5 +104,36 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ProductVirtualizati
             SumcheckId::ProductVirtualization,
             opening_point.r,
         );
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::direct(OpeningId::Virtual(
+            VirtualPolynomial::Product,
+            SumcheckId::SpartanOuter,
+        ))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        Some(OutputClaimConstraint::product(vec![
+            ValueSource::challenge(0),
+            ValueSource::opening(OpeningId::Committed(
+                CommittedPolynomial::LeftInstructionInput,
+                SumcheckId::ProductVirtualization,
+            )),
+            ValueSource::opening(OpeningId::Committed(
+                CommittedPolynomial::RightInstructionInput,
+                SumcheckId::ProductVirtualization,
+            )),
+        ]))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        vec![EqPolynomial::mle(
+            &sumcheck_challenges.iter().rev().copied().collect::<Vec<_>>(),
+            &self.r_cycle,
+        )]
     }
 }

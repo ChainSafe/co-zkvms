@@ -6,6 +6,8 @@ use crate::curve::JoltCurve;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
 use crate::poly::multilinear_polynomial::BindingOrder;
 use crate::poly::opening_proof::{OpeningPoint, SumcheckId};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
@@ -28,6 +30,18 @@ pub struct SpartanDag<F: JoltField> {
     _marker: PhantomData<F>,
 }
 
+#[cfg(feature = "zk")]
+pub struct Stage1BlindfoldData<F: JoltField> {
+    pub tau: Vec<F::Challenge>,
+    pub challenges: Vec<F::Challenge>,
+    pub output_claim_ids: Vec<OpeningId>,
+}
+
+#[cfg(feature = "zk")]
+type Stage1VerifyResult<F> = Stage1BlindfoldData<F>;
+#[cfg(not(feature = "zk"))]
+type Stage1VerifyResult<F> = ();
+
 impl<F: JoltField> SpartanDag<F> {
     pub fn new<ProofTranscript: Transcript>(padded_trace_length: usize) -> Self {
         Self {
@@ -43,7 +57,7 @@ impl<F: JoltField> SpartanDag<F> {
     >(
         &mut self,
         sm: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
-    ) -> Result<(), anyhow::Error> {
+    ) -> Result<Stage1VerifyResult<F>, anyhow::Error> {
         let key = UniformSpartanKey::<F>::new(self.padded_trace_length);
         let num_rounds_x = key.num_rows_bits();
 
@@ -70,6 +84,7 @@ impl<F: JoltField> SpartanDag<F> {
             3, // degree 3: Az(x)*Bz(x)*Cz(x) with eq folded in
             &mut *sm.transcript.borrow_mut(),
         )?;
+        let stage1_challenges = r.clone();
 
         // Reverse r (outer sumcheck binds from top)
         let outer_sumcheck_r: Vec<F::Challenge> = r.into_iter().rev().collect();
@@ -192,7 +207,23 @@ impl<F: JoltField> SpartanDag<F> {
             }
         }
 
+        #[cfg(feature = "zk")]
+        let output_claim_ids = if is_zk {
+            let mut acc = accumulator.borrow_mut();
+            let _ = acc.take_pending_claims();
+            acc.take_pending_claim_ids()
+        } else {
+            Vec::new()
+        };
+
         drop(proofs);
+        #[cfg(feature = "zk")]
+        return Ok(Stage1BlindfoldData {
+            tau,
+            challenges: stage1_challenges,
+            output_claim_ids,
+        });
+        #[cfg(not(feature = "zk"))]
         Ok(())
     }
 

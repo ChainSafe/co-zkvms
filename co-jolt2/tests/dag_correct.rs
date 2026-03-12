@@ -184,7 +184,7 @@ fn dag_correct() {
         ram_K,
         rep3_proof_twist_switch_index(padded_len),
     );
-    JoltDAG::verify::<F, Bn254Curve, FS, PCS>(verifier_sm)
+    JoltDAG::verify::<F, FS, PCS>(verifier_sm)
         .expect("Vanilla verification of MPC proof failed");
 }
 

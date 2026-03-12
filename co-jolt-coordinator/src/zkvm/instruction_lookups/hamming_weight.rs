@@ -1,3 +1,5 @@
+#[cfg(feature = "zk")]
+use jolt_core::subprotocols::blindfold::{InputClaimConstraint, ProductTerm, ValueSource};
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::instruction_lookups::{D, LOG_K_CHUNK};
@@ -102,5 +104,22 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3HammingWeig
             &r_cycle,
             claims,
         );
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::sum_of_products(
+            (0..D)
+                .map(|i| ProductTerm::single(ValueSource::challenge(i)))
+                .collect(),
+        )
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(
+        &self,
+        _accumulator: &Rep3OpeningAccumulator<F>,
+    ) -> Vec<F> {
+        self.gamma.to_vec()
     }
 }

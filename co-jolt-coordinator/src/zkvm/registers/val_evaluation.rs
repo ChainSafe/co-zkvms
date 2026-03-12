@@ -1,6 +1,10 @@
 use jolt_common::constants::REGISTER_COUNT;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
+#[cfg(feature = "zk")]
+use jolt_core::poly::opening_proof::OpeningId;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
+#[cfg(feature = "zk")]
+use jolt_core::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint, ValueSource};
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 
@@ -19,6 +23,8 @@ const DEGREE: usize = 3;
 pub struct Rep3ValEvaluation<F: JoltField> {
     input_claim: F,
     num_rounds: usize,
+    #[cfg(feature = "zk")]
+    r_cycle: Vec<F::Challenge>,
 }
 
 impl<F: JoltField> Rep3ValEvaluation<F> {
@@ -36,6 +42,8 @@ impl<F: JoltField> Rep3ValEvaluation<F> {
         Self {
             input_claim: val_claim,
             num_rounds,
+            #[cfg(feature = "zk")]
+            r_cycle: opening_point.r[r_address_len..].to_vec(),
         }
     }
 
@@ -127,4 +135,43 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3ValEvaluati
             claims[1], // wa_claim
         );
     }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::direct(OpeningId::Virtual(
+            VirtualPolynomial::RegistersVal,
+            SumcheckId::RegistersReadWriteChecking,
+        ))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        Some(OutputClaimConstraint::product(vec![
+            ValueSource::challenge(0),
+            ValueSource::opening(OpeningId::Committed(
+                CommittedPolynomial::RdInc,
+                SumcheckId::RegistersValEvaluation,
+            )),
+            ValueSource::opening(OpeningId::Virtual(
+                VirtualPolynomial::RdWa,
+                SumcheckId::RegistersValEvaluation,
+            )),
+        ]))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        vec![lt_eval(sumcheck_challenges, &self.r_cycle)]
+    }
+}
+
+#[cfg(feature = "zk")]
+fn lt_eval<F: JoltField>(lhs: &[F::Challenge], rhs: &[F::Challenge]) -> F {
+    let mut lt_eval = F::zero();
+    let mut eq_term = F::one();
+    for (x, y) in lhs.iter().zip(rhs.iter()) {
+        lt_eval += (F::one() - x) * y * eq_term;
+        eq_term *= F::one() - x - y + *x * y + *x * y;
+    }
+    lt_eval
 }

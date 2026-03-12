@@ -1,9 +1,15 @@
 use jolt_common::constants::RAM_START_ADDRESS;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::eq_poly::EqPolynomial;
+#[cfg(feature = "zk")]
+use jolt_core::poly::opening_proof::OpeningId;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::poly::program_io_polynomial::ProgramIOPolynomial;
 use jolt_core::poly::range_mask_polynomial::RangeMaskPolynomial;
+#[cfg(feature = "zk")]
+use jolt_core::subprotocols::blindfold::{
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+};
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::ram::remap_address;
@@ -123,6 +129,39 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3OutputSumch
             claims[1],
         );
     }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        Some(OutputClaimConstraint::sum_of_products(vec![
+            ProductTerm::product(vec![
+                ValueSource::challenge(0),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::RamValFinal,
+                    SumcheckId::RamOutputCheck,
+                )),
+            ]),
+            ProductTerm::scaled(
+                ValueSource::neg_one(),
+                vec![ValueSource::challenge(0), ValueSource::challenge(1)],
+            ),
+        ]))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let io_mask = RangeMaskPolynomial::<F>::new(
+            remap_address(
+                self.program_io.memory_layout.input_start,
+                &self.program_io.memory_layout,
+            )
+            .unwrap() as u128,
+            remap_address(RAM_START_ADDRESS, &self.program_io.memory_layout).unwrap() as u128,
+        );
+        let val_io = ProgramIOPolynomial::new(&self.program_io);
+        let eq_eval = EqPolynomial::<F>::mle(&self.r_address, sumcheck_challenges);
+        let io_mask_eval = io_mask.evaluate_mle(sumcheck_challenges);
+        vec![eq_eval * io_mask_eval, val_io.evaluate(sumcheck_challenges)]
+    }
 }
 
 // ===========================================================================
@@ -238,5 +277,39 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3ValFinalSum
             wa_opening_point,
             claims[1],
         );
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::linear(vec![
+            (
+                ValueSource::one(),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::RamValFinal,
+                    SumcheckId::RamOutputCheck,
+                )),
+            ),
+            (
+                ValueSource::neg_one(),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::RamValInit,
+                    SumcheckId::RamOutputCheck,
+                )),
+            ),
+        ])
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        Some(OutputClaimConstraint::product(vec![
+            ValueSource::opening(OpeningId::Committed(
+                CommittedPolynomial::RamInc,
+                SumcheckId::RamValFinalEvaluation,
+            )),
+            ValueSource::opening(OpeningId::Virtual(
+                VirtualPolynomial::RamRa,
+                SumcheckId::RamValFinalEvaluation,
+            )),
+        ]))
     }
 }

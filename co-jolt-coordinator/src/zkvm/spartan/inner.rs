@@ -1,5 +1,7 @@
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::opening_proof::{OpeningId, OpeningPoint, SumcheckId, BIG_ENDIAN};
+#[cfg(feature = "zk")]
+use jolt_core::subprotocols::blindfold::InputClaimConstraint;
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::r1cs::inputs::{JoltR1CSInputs, ALL_R1CS_INPUTS};
@@ -124,5 +126,22 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3InnerSumche
         _claims: Vec<F>,
     ) {
         // No polynomial openings to cache (matches vanilla InnerSumcheck)
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::weighted_openings(&[
+            OpeningId::Virtual(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter),
+            OpeningId::Virtual(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter),
+            OpeningId::Virtual(VirtualPolynomial::SpartanCz, SumcheckId::SpartanOuter),
+        ])
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(
+        &self,
+        _accumulator: &Rep3OpeningAccumulator<F>,
+    ) -> Vec<F> {
+        vec![self.gamma, self.gamma.square()]
     }
 }

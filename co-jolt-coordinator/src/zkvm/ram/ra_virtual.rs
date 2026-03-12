@@ -1,8 +1,12 @@
+#[cfg(feature = "zk")]
+use jolt_core::poly::opening_proof::OpeningId;
 use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
+#[cfg(feature = "zk")]
+use jolt_core::subprotocols::blindfold::InputClaimConstraint;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::ram::ra_virtual::RaSumcheck;
-use jolt_core::zkvm::witness::CommittedPolynomial;
+use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 
 use crate::poly::opening_proof::Rep3OpeningAccumulator;
 use crate::subprotocols::sumcheck::PublicSumcheckInstance;
@@ -75,5 +79,22 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for RaSumcheck<F>
                 vec![claims[i]],
             );
         }
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::weighted_openings(&[
+            OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamValFinalEvaluation),
+            OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamReadWriteChecking),
+            OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation),
+        ])
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(
+        &self,
+        _accumulator: &Rep3OpeningAccumulator<F>,
+    ) -> Vec<F> {
+        vec![self.gamma()[1], self.gamma()[2]]
     }
 }

@@ -171,7 +171,15 @@ impl<F: JoltField> Rep3OpeningAccumulator<F> {
     }
 
     pub fn get_opening(&self, key: OpeningId) -> F {
-        self.openings.get(&key).unwrap().1
+        self.openings
+            .get(&key)
+            .unwrap_or_else(|| {
+                panic!(
+                    "opening not found for key {key:?}; cached openings: {}",
+                    self.openings.len()
+                )
+            })
+            .1
     }
 
     pub fn get_committed_polynomial_opening(

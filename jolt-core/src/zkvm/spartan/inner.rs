@@ -7,6 +7,8 @@ use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::opening_proof::{
     OpeningId, OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::InputClaimConstraint;
 use crate::subprotocols::sumcheck::SumcheckInstance;
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
@@ -122,5 +124,22 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for InnerSumcheck<F> {
         _opening_point: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         // No polynomial openings to cache for InnerSumcheck
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::weighted_openings(&[
+            OpeningId::Virtual(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter),
+            OpeningId::Virtual(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter),
+            OpeningId::Virtual(VirtualPolynomial::SpartanCz, SumcheckId::SpartanOuter),
+        ])
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(
+        &self,
+        _opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+    ) -> Vec<F> {
+        vec![self.gamma, self.gamma.square()]
     }
 }

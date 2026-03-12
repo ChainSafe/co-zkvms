@@ -1,7 +1,11 @@
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::identity_poly::UnmapRamAddressPolynomial;
 use jolt_core::poly::multilinear_polynomial::PolynomialEvaluation;
+#[cfg(feature = "zk")]
+use jolt_core::poly::opening_proof::OpeningId;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
+#[cfg(feature = "zk")]
+use jolt_core::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint, ValueSource};
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::witness::VirtualPolynomial;
@@ -97,5 +101,32 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3RafEvaluati
             ra_opening_point,
             claims[0],
         );
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::direct(OpeningId::Virtual(
+            VirtualPolynomial::RamAddress,
+            SumcheckId::SpartanOuter,
+        ))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        Some(OutputClaimConstraint::product(vec![
+            ValueSource::challenge(0),
+            ValueSource::opening(OpeningId::Virtual(
+                VirtualPolynomial::RamRa,
+                SumcheckId::RamRafEvaluation,
+            )),
+        ]))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        vec![
+            UnmapRamAddressPolynomial::<F>::new(self.log_K, self.start_address)
+                .evaluate(sumcheck_challenges),
+        ]
     }
 }

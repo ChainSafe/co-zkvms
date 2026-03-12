@@ -9,6 +9,8 @@ use jolt_core::poly::commitment::pedersen::PedersenGenerators;
 #[cfg(feature = "zk")]
 use jolt_core::poly::opening_proof::OpeningId;
 use jolt_core::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
+#[cfg(feature = "zk")]
+use jolt_core::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint};
 use jolt_core::poly::unipoly::{CompressedUniPoly, UniPoly};
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_core::transcripts::{AppendToTranscript, Transcript};
@@ -44,6 +46,29 @@ pub trait Rep3SumcheckInstance<F: JoltField, T: Transcript> {
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claims: Vec<F>,
     );
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::default()
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(
+        &self,
+        _accumulator: &Rep3OpeningAccumulator<F>,
+    ) -> Vec<F> {
+        Vec::new()
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        None
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, _sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        Vec::new()
+    }
 }
 
 pub trait PublicSumcheckInstance<F: JoltField, T: Transcript> {
@@ -69,6 +94,29 @@ pub trait PublicSumcheckInstance<F: JoltField, T: Transcript> {
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
         claims: Vec<F>,
     );
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::default()
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(
+        &self,
+        _accumulator: &Rep3OpeningAccumulator<F>,
+    ) -> Vec<F> {
+        Vec::new()
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        None
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, _sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        Vec::new()
+    }
 }
 
 pub enum BatchedSumcheckInstance<F: JoltField, T: Transcript> {
@@ -77,21 +125,21 @@ pub enum BatchedSumcheckInstance<F: JoltField, T: Transcript> {
 }
 
 impl<F: JoltField, T: Transcript> BatchedSumcheckInstance<F, T> {
-    fn degree(&self) -> usize {
+    pub fn degree(&self) -> usize {
         match self {
             BatchedSumcheckInstance::Secret(s) => s.degree(),
             BatchedSumcheckInstance::Public(s) => s.degree(),
         }
     }
 
-    fn num_rounds(&self) -> usize {
+    pub fn num_rounds(&self) -> usize {
         match self {
             BatchedSumcheckInstance::Secret(s) => s.num_rounds(),
             BatchedSumcheckInstance::Public(s) => s.num_rounds(),
         }
     }
 
-    fn input_claim_public(&self) -> F {
+    pub fn input_claim_public(&self) -> F {
         match self {
             BatchedSumcheckInstance::Secret(s) => s.input_claim_public(),
             BatchedSumcheckInstance::Public(s) => s.input_claim_public(),
@@ -121,6 +169,45 @@ impl<F: JoltField, T: Transcript> BatchedSumcheckInstance<F, T> {
             }
             BatchedSumcheckInstance::Public(s) => {
                 s.cache_openings(accumulator, transcript, opening_point, claims)
+            }
+        }
+    }
+
+    #[cfg(feature = "zk")]
+    pub fn input_claim_constraint(&self) -> InputClaimConstraint {
+        match self {
+            BatchedSumcheckInstance::Secret(s) => s.input_claim_constraint(),
+            BatchedSumcheckInstance::Public(s) => s.input_claim_constraint(),
+        }
+    }
+
+    #[cfg(feature = "zk")]
+    pub fn input_constraint_challenge_values(
+        &self,
+        accumulator: &Rep3OpeningAccumulator<F>,
+    ) -> Vec<F> {
+        match self {
+            BatchedSumcheckInstance::Secret(s) => s.input_constraint_challenge_values(accumulator),
+            BatchedSumcheckInstance::Public(s) => s.input_constraint_challenge_values(accumulator),
+        }
+    }
+
+    #[cfg(feature = "zk")]
+    pub fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        match self {
+            BatchedSumcheckInstance::Secret(s) => s.output_claim_constraint(),
+            BatchedSumcheckInstance::Public(s) => s.output_claim_constraint(),
+        }
+    }
+
+    #[cfg(feature = "zk")]
+    pub fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        match self {
+            BatchedSumcheckInstance::Secret(s) => {
+                s.output_constraint_challenge_values(sumcheck_challenges)
+            }
+            BatchedSumcheckInstance::Public(s) => {
+                s.output_constraint_challenge_values(sumcheck_challenges)
             }
         }
     }

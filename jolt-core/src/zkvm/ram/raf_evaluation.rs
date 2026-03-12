@@ -4,6 +4,10 @@ use std::{cell::RefCell, rc::Rc};
 use allocative::Allocative;
 use rayon::prelude::*;
 
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint, ValueSource};
 use crate::{
     field::JoltField,
     poly::{
@@ -206,6 +210,33 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RafEvaluationSumche
             SumcheckId::RamRafEvaluation,
             ra_opening_point,
         );
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::direct(OpeningId::Virtual(
+            VirtualPolynomial::RamAddress,
+            SumcheckId::SpartanOuter,
+        ))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        Some(OutputClaimConstraint::product(vec![
+            ValueSource::challenge(0),
+            ValueSource::opening(OpeningId::Virtual(
+                VirtualPolynomial::RamRa,
+                SumcheckId::RamRafEvaluation,
+            )),
+        ]))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        vec![
+            UnmapRamAddressPolynomial::<F>::new(self.log_K, self.start_address)
+                .evaluate(sumcheck_challenges),
+        ]
     }
 }
 

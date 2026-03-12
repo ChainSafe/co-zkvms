@@ -1,5 +1,8 @@
+use jolt_core::poly::opening_proof::OpeningId;
 use jolt_core::poly::eq_poly::EqPlusOnePolynomial;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
+#[cfg(feature = "zk")]
+use jolt_core::subprotocols::blindfold::InputClaimConstraint;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::instruction::CircuitFlags;
 use jolt_core::zkvm::spartan::pc::PCSumcheck;
@@ -95,5 +98,25 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for PCSumcheck<F>
             opening_point,
             is_noop_eval,
         );
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::weighted_openings(&[
+            OpeningId::Virtual(VirtualPolynomial::NextUnexpandedPC, SumcheckId::SpartanOuter),
+            OpeningId::Virtual(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter),
+            OpeningId::Virtual(
+                VirtualPolynomial::NextIsNoop,
+                SumcheckId::SpartanOuter,
+            ),
+        ])
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(
+        &self,
+        _accumulator: &Rep3OpeningAccumulator<F>,
+    ) -> Vec<F> {
+        vec![self.gamma(), self.gamma_squared()]
     }
 }

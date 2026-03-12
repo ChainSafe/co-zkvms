@@ -8,8 +8,11 @@ use crate::{
     field::{JoltField, MulTrunc},
     poly::{
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
-        opening_proof::{OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN},
+        opening_proof::{
+            OpeningId, OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
+        },
     },
+    subprotocols::blindfold::{InputClaimConstraint, ValueSource},
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
     utils::math::Math,
@@ -205,5 +208,24 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingWeightSumche
             SumcheckId::RamHammingWeight,
             opening_point.r,
         );
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::linear(vec![(
+            ValueSource::challenge(0),
+            ValueSource::opening(OpeningId::Virtual(
+                VirtualPolynomial::RamHammingWeight,
+                SumcheckId::RamHammingBooleanity,
+            )),
+        )])
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(
+        &self,
+        _opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+    ) -> Vec<F> {
+        vec![self.gamma_powers.iter().copied().sum()]
     }
 }

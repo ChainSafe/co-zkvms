@@ -1,6 +1,10 @@
 use num_traits::Zero;
 use std::{cell::RefCell, rc::Rc};
 
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource};
 use crate::{
     curve::JoltCurve,
     field::JoltField,
@@ -357,6 +361,40 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OutputSumcheck<F> {
         );
     }
 
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        Some(OutputClaimConstraint::sum_of_products(vec![
+            ProductTerm::product(vec![
+                ValueSource::challenge(0),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::RamValFinal,
+                    SumcheckId::RamOutputCheck,
+                )),
+            ]),
+            ProductTerm::scaled(
+                ValueSource::neg_one(),
+                vec![ValueSource::challenge(0), ValueSource::challenge(1)],
+            ),
+        ]))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let program_io = self.program_io.as_ref().unwrap();
+        let io_mask = RangeMaskPolynomial::<F>::new(
+            remap_address(
+                program_io.memory_layout.input_start,
+                &program_io.memory_layout,
+            )
+            .unwrap() as u128,
+            remap_address(RAM_START_ADDRESS, &program_io.memory_layout).unwrap() as u128,
+        );
+        let val_io = ProgramIOPolynomial::new(program_io);
+        let eq_eval = EqPolynomial::<F>::mle(self.r_address.as_ref().unwrap(), sumcheck_challenges);
+        let io_mask_eval = io_mask.evaluate_mle(sumcheck_challenges);
+        vec![eq_eval * io_mask_eval, val_io.evaluate(sumcheck_challenges)]
+    }
+
     #[cfg(feature = "allocative")]
     fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
         flamegraph.visit_root(self);
@@ -687,6 +725,40 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValFinalSumcheck<F>
             SumcheckId::RamValFinalEvaluation,
             wa_opening_point,
         );
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::linear(vec![
+            (
+                ValueSource::one(),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::RamValFinal,
+                    SumcheckId::RamOutputCheck,
+                )),
+            ),
+            (
+                ValueSource::neg_one(),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::RamValInit,
+                    SumcheckId::RamOutputCheck,
+                )),
+            ),
+        ])
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        Some(OutputClaimConstraint::product(vec![
+            ValueSource::opening(OpeningId::Committed(
+                CommittedPolynomial::RamInc,
+                SumcheckId::RamValFinalEvaluation,
+            )),
+            ValueSource::opening(OpeningId::Virtual(
+                VirtualPolynomial::RamRa,
+                SumcheckId::RamValFinalEvaluation,
+            )),
+        ]))
     }
 
     #[cfg(feature = "allocative")]

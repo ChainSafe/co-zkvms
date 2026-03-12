@@ -12,6 +12,7 @@ use crate::{
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
         opening_proof::{OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN},
     },
+    subprotocols::blindfold::{InputClaimConstraint, ProductTerm, ValueSource},
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
@@ -177,5 +178,22 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingWeightSumche
             SumcheckId::InstructionHammingWeight,
             r,
         );
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::sum_of_products(
+            (0..D)
+                .map(|i| ProductTerm::single(ValueSource::challenge(i)))
+                .collect(),
+        )
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(
+        &self,
+        _opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+    ) -> Vec<F> {
+        self.gamma.to_vec()
     }
 }

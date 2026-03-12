@@ -7,7 +7,10 @@ use std::{
 use crate::{
     curve::Bn254Curve,
     field::JoltField,
-    poly::commitment::commitment_scheme::CommitmentScheme,
+    poly::commitment::{
+        commitment_scheme::{CommitmentScheme, ZkEvalCommitment},
+        pedersen::PedersenGenerators,
+    },
     transcripts::Transcript,
     utils::math::Math,
     zkvm::{
@@ -106,6 +109,10 @@ pub struct JoltSharedPreprocessing {
     pub memory_layout: MemoryLayout,
 }
 
+#[cfg(feature = "zk")]
+#[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
+pub struct BlindfoldSetup(pub PedersenGenerators<Bn254Curve>);
+
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltVerifierPreprocessing<F, PCS>
 where
@@ -114,6 +121,8 @@ where
 {
     pub generators: PCS::VerifierSetup,
     pub shared: JoltSharedPreprocessing,
+    #[cfg(feature = "zk")]
+    pub blindfold_setup: Option<BlindfoldSetup>,
 }
 
 impl<F, PCS> Serializable for JoltVerifierPreprocessing<F, PCS>
@@ -144,6 +153,24 @@ where
         file.read_to_end(&mut data)?;
         Ok(Self::deserialize_compressed(&*data).unwrap())
     }
+
+    #[cfg(feature = "zk")]
+    pub fn pedersen_generators(&self, count: usize) -> PedersenGenerators<Bn254Curve> {
+        let gens = &self
+            .blindfold_setup
+            .as_ref()
+            .expect("BlindfoldSetup required for ZK mode")
+            .0;
+        assert!(
+            count <= gens.message_generators.len(),
+            "requested {count} Pedersen generators but only {} are available",
+            gens.message_generators.len()
+        );
+        PedersenGenerators::new(
+            gens.message_generators[..count].to_vec(),
+            gens.blinding_generator,
+        )
+    }
 }
 
 #[derive(Clone, CanonicalSerialize, CanonicalDeserialize)]
@@ -168,6 +195,20 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
+    #[cfg(feature = "zk")]
+    pub fn blindfold_setup(&self) -> BlindfoldSetup
+    where
+        PCS: ZkEvalCommitment<Bn254Curve>,
+    {
+        let (message_generators, blinding_generator) =
+            PCS::zk_generators(&self.generators, usize::MAX)
+                .expect("PCS does not support BlindFold Pedersen generators");
+        BlindfoldSetup(PedersenGenerators::new(
+            message_generators,
+            blinding_generator,
+        ))
+    }
+
     pub fn save_to_target_dir(&self, target_dir: &str) -> std::io::Result<()> {
         let filename = Path::new(target_dir).join("jolt_prover_preprocessing.dat");
         let mut file = File::create(filename.as_path())?;
@@ -189,13 +230,15 @@ where
 impl<F, PCS> From<&JoltProverPreprocessing<F, PCS>> for JoltVerifierPreprocessing<F, PCS>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F> + ZkEvalCommitment<Bn254Curve>,
 {
     fn from(preprocessing: &JoltProverPreprocessing<F, PCS>) -> Self {
         let generators = PCS::setup_verifier(&preprocessing.generators);
         JoltVerifierPreprocessing {
             generators,
             shared: preprocessing.shared.clone(),
+            #[cfg(feature = "zk")]
+            blindfold_setup: Some(preprocessing.blindfold_setup()),
         }
     }
 }

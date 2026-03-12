@@ -1,5 +1,9 @@
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
+#[cfg(feature = "zk")]
+use jolt_core::poly::opening_proof::OpeningId;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
+#[cfg(feature = "zk")]
+use jolt_core::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint, ValueSource};
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
@@ -20,6 +24,8 @@ pub struct Rep3RamValEvaluation<F: JoltField> {
     input_claim: F,
     num_rounds: usize,
     K: usize,
+    #[cfg(feature = "zk")]
+    r_cycle: Vec<F::Challenge>,
 }
 
 impl<F: JoltField> Rep3RamValEvaluation<F> {
@@ -40,6 +46,8 @@ impl<F: JoltField> Rep3RamValEvaluation<F> {
             input_claim: claimed_evaluation - init_eval,
             num_rounds,
             K,
+            #[cfg(feature = "zk")]
+            r_cycle: opening_point.r[r_address_len..].to_vec(),
         }
     }
 
@@ -129,4 +137,55 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3RamValEvalu
             vec![claims[0]], // inc_claim
         );
     }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::linear(vec![
+            (
+                ValueSource::one(),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::RamVal,
+                    SumcheckId::RamReadWriteChecking,
+                )),
+            ),
+            (
+                ValueSource::neg_one(),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::RamValInit,
+                    SumcheckId::RamOutputCheck,
+                )),
+            ),
+        ])
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        Some(OutputClaimConstraint::product(vec![
+            ValueSource::challenge(0),
+            ValueSource::opening(OpeningId::Committed(
+                CommittedPolynomial::RamInc,
+                SumcheckId::RamValEvaluation,
+            )),
+            ValueSource::opening(OpeningId::Virtual(
+                VirtualPolynomial::RamRa,
+                SumcheckId::RamValEvaluation,
+            )),
+        ]))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        vec![lt_eval(sumcheck_challenges, &self.r_cycle)]
+    }
+}
+
+#[cfg(feature = "zk")]
+fn lt_eval<F: JoltField>(lhs: &[F::Challenge], rhs: &[F::Challenge]) -> F {
+    let mut lt_eval = F::zero();
+    let mut eq_term = F::one();
+    for (x, y) in lhs.iter().zip(rhs.iter()) {
+        lt_eval += (F::one() - x) * y * eq_term;
+        eq_term *= F::one() - x - y + *x * y + *x * y;
+    }
+    lt_eval
 }

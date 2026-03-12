@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::{
-    OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
+    OpeningId, OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
 use crate::poly::ra_poly::RaPolynomial;
 use crate::zkvm::ram::remap_address;
@@ -20,6 +20,7 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
     },
+    subprotocols::blindfold::InputClaimConstraint,
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
     utils::math::Math,
@@ -272,5 +273,22 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RaSumcheck<F> {
                 opening_point,
             );
         }
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::weighted_openings(&[
+            OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamValFinalEvaluation),
+            OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamReadWriteChecking),
+            OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation),
+        ])
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(
+        &self,
+        _opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+    ) -> Vec<F> {
+        vec![self.gamma[1], self.gamma[2]]
     }
 }

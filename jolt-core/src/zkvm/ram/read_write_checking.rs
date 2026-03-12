@@ -3,6 +3,11 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::curve::JoltCurve;
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
+#[cfg(feature = "zk")]
+use crate::{
+    poly::opening_proof::OpeningId,
+    subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource},
+};
 
 use crate::{
     field::{JoltField, OptimizedMul},
@@ -1141,6 +1146,74 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RamReadWriteCheckin
             SumcheckId::RamReadWriteChecking,
             r_cycle.r,
         );
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::weighted_openings(&[
+            OpeningId::Virtual(VirtualPolynomial::RamReadValue, SumcheckId::SpartanOuter),
+            OpeningId::Virtual(VirtualPolynomial::RamWriteValue, SumcheckId::SpartanOuter),
+        ])
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(
+        &self,
+        _accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+    ) -> Vec<F> {
+        vec![self.gamma]
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        Some(OutputClaimConstraint::sum_of_products(vec![
+            ProductTerm::product(vec![
+                ValueSource::challenge(0),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::RamRa,
+                    SumcheckId::RamReadWriteChecking,
+                )),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::RamVal,
+                    SumcheckId::RamReadWriteChecking,
+                )),
+            ]),
+            ProductTerm::product(vec![
+                ValueSource::challenge(0),
+                ValueSource::challenge(1),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::RamRa,
+                    SumcheckId::RamReadWriteChecking,
+                )),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::RamVal,
+                    SumcheckId::RamReadWriteChecking,
+                )),
+            ]),
+            ProductTerm::product(vec![
+                ValueSource::challenge(0),
+                ValueSource::challenge(1),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::RamRa,
+                    SumcheckId::RamReadWriteChecking,
+                )),
+                ValueSource::opening(OpeningId::Committed(
+                    CommittedPolynomial::RamInc,
+                    SumcheckId::RamReadWriteChecking,
+                )),
+            ]),
+        ]))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let mut reordered = sumcheck_challenges[..self.sumcheck_switch_index].to_vec();
+        reordered.extend(sumcheck_challenges[self.sumcheck_switch_index..self.T.log_2()].iter().rev());
+        let eq_eval = EqPolynomial::mle_endian(
+            self.r_prime.as_ref().unwrap(),
+            &OpeningPoint::<LITTLE_ENDIAN, F>::new(reordered),
+        );
+        vec![eq_eval, self.gamma]
     }
 
     #[cfg(feature = "allocative")]

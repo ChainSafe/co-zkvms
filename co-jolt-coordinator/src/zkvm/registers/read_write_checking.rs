@@ -1,7 +1,13 @@
 use jolt_common::constants::REGISTER_COUNT;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::eq_poly::EqPolynomial;
+#[cfg(feature = "zk")]
+use jolt_core::poly::opening_proof::OpeningId;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN};
+#[cfg(feature = "zk")]
+use jolt_core::subprotocols::blindfold::{
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+};
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
@@ -25,6 +31,8 @@ pub struct Rep3RegistersReadWriteChecking<F: JoltField> {
     gamma_sqr: F,
     sumcheck_switch_index: usize,
     input_claim: F,
+    #[cfg(feature = "zk")]
+    r_cycle: Vec<F::Challenge>,
 }
 
 impl<F: JoltField> Rep3RegistersReadWriteChecking<F> {
@@ -53,6 +61,8 @@ impl<F: JoltField> Rep3RegistersReadWriteChecking<F> {
             gamma_sqr: gamma.square(),
             sumcheck_switch_index: sm.twist_sumcheck_switch_index,
             input_claim,
+            #[cfg(feature = "zk")]
+            r_cycle: r_point.r,
         }
     }
 
@@ -178,4 +188,99 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3RegistersRe
             vec![claims[4]],
         );
     }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::weighted_openings(&[
+            OpeningId::Virtual(VirtualPolynomial::RdWriteValue, SumcheckId::SpartanOuter),
+            OpeningId::Virtual(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter),
+            OpeningId::Virtual(VirtualPolynomial::Rs2Value, SumcheckId::SpartanOuter),
+        ])
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(
+        &self,
+        _accumulator: &Rep3OpeningAccumulator<F>,
+    ) -> Vec<F> {
+        vec![self.gamma, self.gamma_sqr]
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        Some(OutputClaimConstraint::sum_of_products(vec![
+            ProductTerm::product(vec![
+                ValueSource::challenge(0),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::RdWa,
+                    SumcheckId::RegistersReadWriteChecking,
+                )),
+                ValueSource::opening(OpeningId::Committed(
+                    CommittedPolynomial::RdInc,
+                    SumcheckId::RegistersReadWriteChecking,
+                )),
+            ]),
+            ProductTerm::product(vec![
+                ValueSource::challenge(0),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::RdWa,
+                    SumcheckId::RegistersReadWriteChecking,
+                )),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::RegistersVal,
+                    SumcheckId::RegistersReadWriteChecking,
+                )),
+            ]),
+            ProductTerm::product(vec![
+                ValueSource::challenge(0),
+                ValueSource::challenge(1),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::Rs1Ra,
+                    SumcheckId::RegistersReadWriteChecking,
+                )),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::RegistersVal,
+                    SumcheckId::RegistersReadWriteChecking,
+                )),
+            ]),
+            ProductTerm::product(vec![
+                ValueSource::challenge(0),
+                ValueSource::challenge(2),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::Rs2Ra,
+                    SumcheckId::RegistersReadWriteChecking,
+                )),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::RegistersVal,
+                    SumcheckId::RegistersReadWriteChecking,
+                )),
+            ]),
+        ]))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let eq_eval = registers_eq_eval(
+            &self.r_cycle,
+            sumcheck_challenges,
+            self.sumcheck_switch_index,
+            self.T.log_2(),
+        );
+        vec![eq_eval, self.gamma, self.gamma_sqr]
+    }
+}
+
+#[cfg(feature = "zk")]
+fn registers_eq_eval<F: JoltField>(
+    r_cycle: &[F::Challenge],
+    sumcheck_challenges: &[F::Challenge],
+    switch_index: usize,
+    log_t: usize,
+) -> F {
+    let mut reordered = sumcheck_challenges[..switch_index].to_vec();
+    reordered.extend(sumcheck_challenges[switch_index..log_t].iter().rev());
+    EqPolynomial::mle_endian(
+        &OpeningPoint::<BIG_ENDIAN, F>::new(r_cycle.to_vec()),
+        &OpeningPoint::<LITTLE_ENDIAN, F>::new(reordered),
+    )
 }

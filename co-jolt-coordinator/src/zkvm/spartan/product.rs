@@ -1,6 +1,10 @@
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::eq_poly::EqPolynomial;
+#[cfg(feature = "zk")]
+use jolt_core::poly::opening_proof::OpeningId;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
+#[cfg(feature = "zk")]
+use jolt_core::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint, ValueSource};
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::witness::CommittedPolynomial;
@@ -21,6 +25,8 @@ const DEGREE: usize = 3;
 pub struct Rep3ProductVirtualizationSumcheck<F: JoltField> {
     input_claim: F,
     log_T: usize,
+    #[cfg(feature = "zk")]
+    r_cycle: Vec<F::Challenge>,
 }
 
 impl<F: JoltField> Rep3ProductVirtualizationSumcheck<F> {
@@ -33,6 +39,8 @@ impl<F: JoltField> Rep3ProductVirtualizationSumcheck<F> {
         Self {
             input_claim,
             log_T: r_point.r.len(),
+            #[cfg(feature = "zk")]
+            r_cycle: r_point.r,
         }
     }
 
@@ -103,5 +111,36 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T>
             opening_point.r,
             claims,
         );
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::direct(OpeningId::Virtual(
+            VirtualPolynomial::Product,
+            SumcheckId::SpartanOuter,
+        ))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        Some(OutputClaimConstraint::product(vec![
+            ValueSource::challenge(0),
+            ValueSource::opening(OpeningId::Committed(
+                CommittedPolynomial::LeftInstructionInput,
+                SumcheckId::ProductVirtualization,
+            )),
+            ValueSource::opening(OpeningId::Committed(
+                CommittedPolynomial::RightInstructionInput,
+                SumcheckId::ProductVirtualization,
+            )),
+        ]))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        vec![EqPolynomial::mle(
+            &sumcheck_challenges.iter().rev().copied().collect::<Vec<_>>(),
+            &self.r_cycle,
+        )]
     }
 }

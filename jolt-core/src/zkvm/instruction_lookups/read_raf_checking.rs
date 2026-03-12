@@ -10,8 +10,9 @@ use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::identity_poly::{IdentityPolynomial, OperandPolynomial, OperandSide};
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::{
-    OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
+    OpeningId, OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
+use crate::subprotocols::blindfold::InputClaimConstraint;
 use crate::subprotocols::sumcheck::SumcheckInstance;
 use crate::transcripts::Transcript;
 use crate::zkvm::instruction_lookups::{D, LOG_K_CHUNK};
@@ -181,5 +182,22 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ReadRafSumcheck<F> 
             SumcheckId::InstructionReadRaf,
             r_cycle,
         );
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::weighted_openings(&[
+            OpeningId::Virtual(VirtualPolynomial::LookupOutput, SumcheckId::SpartanOuter),
+            OpeningId::Virtual(VirtualPolynomial::LeftLookupOperand, SumcheckId::SpartanOuter),
+            OpeningId::Virtual(VirtualPolynomial::RightLookupOperand, SumcheckId::SpartanOuter),
+        ])
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(
+        &self,
+        _opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+    ) -> Vec<F> {
+        vec![self.gamma, self.gamma_squared]
     }
 }

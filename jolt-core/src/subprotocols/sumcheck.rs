@@ -4,10 +4,12 @@
 use crate::curve::JoltCurve;
 use crate::field::JoltField;
 use crate::poly::opening_proof::{
-    OpeningPoint, ProverOpeningAccumulator, VerifierOpeningAccumulator, BIG_ENDIAN,
+    OpeningId, OpeningPoint, ProverOpeningAccumulator, VerifierOpeningAccumulator, BIG_ENDIAN,
 };
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::poly::unipoly::{CompressedUniPoly, UniPoly};
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint};
 use crate::transcripts::{AppendToTranscript, Transcript};
 use crate::utils::errors::ProofVerifyError;
 
@@ -39,6 +41,29 @@ pub trait SumcheckInstance<F: JoltField, T: Transcript> {
         transcript: &mut T,
         opening_point: OpeningPoint<BIG_ENDIAN, F>,
     );
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::default()
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(
+        &self,
+        _opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+    ) -> Vec<F> {
+        Vec::new()
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        None
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, _sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        Vec::new()
+    }
 
     // Prover-side methods with default panic implementations.
     // These exist to allow files that implement both prover and verifier
@@ -110,7 +135,7 @@ impl BatchedSumcheck {
         sumcheck_instances: Vec<&dyn SumcheckInstance<F, ProofTranscript>>,
         opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
         transcript: &mut ProofTranscript,
-    ) -> Result<(Vec<F>, Vec<F::Challenge>), ProofVerifyError> {
+    ) -> Result<(Vec<F>, Vec<F::Challenge>, Vec<OpeningId>), ProofVerifyError> {
         let max_degree = sumcheck_instances
             .iter()
             .map(|sumcheck| sumcheck.degree())
@@ -140,6 +165,12 @@ impl BatchedSumcheck {
 
         let (output_claim, r_sumcheck) =
             proof.verify(claim, max_num_rounds, max_degree, transcript)?;
+
+        if is_zk {
+            if let Some(opening_accumulator) = &opening_accumulator {
+                opening_accumulator.borrow_mut().set_zk_mode(true);
+            }
+        }
 
         let expected_output_claim = sumcheck_instances
             .iter()
@@ -173,14 +204,20 @@ impl BatchedSumcheck {
                         transcript.append_serializable(commitment);
                     }
                     let _ = accumulator.take_pending_claims();
-                    let _ = accumulator.take_pending_claim_ids();
+                    accumulator.set_zk_mode(false);
                 }
             } else {
                 opening_accumulator.borrow_mut().flush_to_transcript(transcript);
             }
         }
 
-        Ok((batching_coeffs, r_sumcheck))
+        let output_claim_ids = if let Some(opening_accumulator) = &opening_accumulator {
+            opening_accumulator.borrow_mut().take_pending_claim_ids()
+        } else {
+            Vec::new()
+        };
+
+        Ok((batching_coeffs, r_sumcheck, output_claim_ids))
     }
 }
 
@@ -624,7 +661,7 @@ mod tests {
         verifier.compare_to(expected);
 
         let accumulator = Rc::new(RefCell::new(VerifierOpeningAccumulator::<Fr>::new_zk()));
-        let (batching_coeffs, r_sumcheck) = BatchedSumcheck::verify(
+        let (batching_coeffs, r_sumcheck, output_claim_ids) = BatchedSumcheck::verify(
             &proof,
             vec![&instance as &dyn SumcheckInstance<Fr, KeccakTranscript>],
             Some(accumulator.clone()),
@@ -634,6 +671,7 @@ mod tests {
 
         assert_eq!(batching_coeffs.len(), 1);
         assert_eq!(r_sumcheck.len(), 1);
+        assert_eq!(output_claim_ids.len(), 1);
         assert!(accumulator.borrow_mut().take_pending_claims().is_empty());
         assert!(accumulator.borrow_mut().take_pending_claim_ids().is_empty());
     }

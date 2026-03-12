@@ -1,6 +1,12 @@
 use crate::curve::JoltCurve;
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN, LITTLE_ENDIAN};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{
+    InputClaimConstraint, OutputClaimConstraint, ProductTerm, ValueSource,
+};
 use crate::zkvm::dag::state_manager::StateManager;
 use crate::zkvm::witness::VirtualPolynomial;
 use crate::{
@@ -225,6 +231,8 @@ pub struct RegistersReadWriteChecking<F: JoltField> {
     sumcheck_switch_index: usize,
     prover_state: Option<ReadWriteCheckingProverState<F>>,
     input_claim: F,
+    #[cfg(feature = "zk")]
+    r_cycle: Vec<F::Challenge>,
 }
 
 impl<F: JoltField> RegistersReadWriteChecking<F> {
@@ -261,6 +269,12 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
             sumcheck_switch_index: state_manager.twist_sumcheck_switch_index,
             prover_state: Some(prover_state),
             input_claim,
+            #[cfg(feature = "zk")]
+            r_cycle: accumulator
+                .borrow()
+                .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter)
+                .0
+                .r,
         }
     }
 
@@ -274,7 +288,7 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
         let (_, _, trace_length) = state_manager.get_verifier_data();
         let accumulator = state_manager.get_verifier_accumulator();
 
-        let (_, rs1_rv_claim) = accumulator
+        let (r_point, rs1_rv_claim) = accumulator
             .borrow()
             .get_virtual_polynomial_opening(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter);
         let (_, rs2_rv_claim) = accumulator
@@ -296,6 +310,8 @@ impl<F: JoltField> RegistersReadWriteChecking<F> {
             sumcheck_switch_index: state_manager.twist_sumcheck_switch_index,
             prover_state: None,
             input_claim,
+            #[cfg(feature = "zk")]
+            r_cycle: r_point.r,
         }
     }
 
@@ -1278,6 +1294,92 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RegistersReadWriteC
             SumcheckId::RegistersReadWriteChecking,
             r_cycle.r,
         );
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::weighted_openings(&[
+            OpeningId::Virtual(VirtualPolynomial::RdWriteValue, SumcheckId::SpartanOuter),
+            OpeningId::Virtual(VirtualPolynomial::Rs1Value, SumcheckId::SpartanOuter),
+            OpeningId::Virtual(VirtualPolynomial::Rs2Value, SumcheckId::SpartanOuter),
+        ])
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(
+        &self,
+        _accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+    ) -> Vec<F> {
+        vec![self.gamma, self.gamma_sqr]
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        Some(OutputClaimConstraint::sum_of_products(vec![
+            ProductTerm::product(vec![
+                ValueSource::challenge(0),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::RdWa,
+                    SumcheckId::RegistersReadWriteChecking,
+                )),
+                ValueSource::opening(OpeningId::Committed(
+                    CommittedPolynomial::RdInc,
+                    SumcheckId::RegistersReadWriteChecking,
+                )),
+            ]),
+            ProductTerm::product(vec![
+                ValueSource::challenge(0),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::RdWa,
+                    SumcheckId::RegistersReadWriteChecking,
+                )),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::RegistersVal,
+                    SumcheckId::RegistersReadWriteChecking,
+                )),
+            ]),
+            ProductTerm::product(vec![
+                ValueSource::challenge(0),
+                ValueSource::challenge(1),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::Rs1Ra,
+                    SumcheckId::RegistersReadWriteChecking,
+                )),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::RegistersVal,
+                    SumcheckId::RegistersReadWriteChecking,
+                )),
+            ]),
+            ProductTerm::product(vec![
+                ValueSource::challenge(0),
+                ValueSource::challenge(2),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::Rs2Ra,
+                    SumcheckId::RegistersReadWriteChecking,
+                )),
+                ValueSource::opening(OpeningId::Virtual(
+                    VirtualPolynomial::RegistersVal,
+                    SumcheckId::RegistersReadWriteChecking,
+                )),
+            ]),
+        ]))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        let eq_eval_cycle = EqPolynomial::mle_endian(
+            &OpeningPoint::<BIG_ENDIAN, F>::new(self.r_cycle.clone()),
+            &OpeningPoint::<LITTLE_ENDIAN, F>::new({
+                let mut reordered = sumcheck_challenges[..self.sumcheck_switch_index].to_vec();
+                reordered.extend(
+                    sumcheck_challenges[self.sumcheck_switch_index..self.T.log_2()]
+                        .iter()
+                        .rev(),
+                );
+                reordered
+            }),
+        );
+        vec![eq_eval_cycle, self.gamma, self.gamma_sqr]
     }
 
     #[cfg(feature = "allocative")]
