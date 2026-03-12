@@ -5,7 +5,7 @@ use mpc_core::protocols::rep3_ring::{self, Rep3RingShare};
 use serde::{Deserialize, Serialize};
 use tracer::emulator::memory::Memory;
 
-use crate::utils::transpose;
+
 
 /// Rep3 secret-shared main memory.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -25,7 +25,7 @@ impl Rep3Memory {
     /// The resulting `data` vector contains exactly the DRAM words that map
     /// to indices `[dram_start_index .. ram_K)` in the K-length address space.
     /// `Rep3RamDagWorker::new` overlays these onto the initial memory state.
-    pub fn generate_secret_shares<R: rand::Rng>(
+    pub fn generate_secret_shares<R: rand::Rng + rand::CryptoRng>(
         memory: Memory,
         memory_layout: &MemoryLayout,
         ram_K: usize,
@@ -41,15 +41,16 @@ impl Rep3Memory {
         let total_dram_words = (memory.data.len() as u64 * 8).div_ceil(ws) as usize;
         let share_len = dram_words_needed.min(total_dram_words);
 
-        let shares_per_word: Vec<Vec<Rep3RingShare<u64>>> = (0..share_len)
-            .map(|word_idx| {
-                let address = word_idx as u64 * ws;
-                let word = memory.read_bytes(address, ws);
-                rep3_ring::binary::generate_shares_rep3(word, rng)
-            })
-            .collect();
-
-        let transposed = transpose(shares_per_word);
+        let mut transposed: [Vec<Rep3RingShare<u64>>; 3] =
+            std::array::from_fn(|_| Vec::with_capacity(share_len));
+        for word_idx in 0..share_len {
+            let address = word_idx as u64 * ws;
+            let word = memory.read_bytes(address, ws);
+            let [s0, s1, s2] = rep3_ring::share_ring_element_binary(rep3_ring::ring::ring_impl::RingElement(word), rng);
+            transposed[0].push(s0);
+            transposed[1].push(s1);
+            transposed[2].push(s2);
+        }
 
         transposed.into_iter().map(|data| Self { data }).collect()
     }

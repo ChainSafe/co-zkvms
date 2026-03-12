@@ -3,7 +3,7 @@ use crate::field::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 
-use crate::protocols::rep3::id::PartyID;
+use crate::protocols::rep3::PartyID;
 // use crate::serde_compat::{ark_de, ark_se};
 
 /// This type represents a replicated shared value. Since a replicated share of a field element contains additive shares of two parties, this type contains two field elements.

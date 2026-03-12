@@ -6,8 +6,7 @@ pub mod arithmetic;
 pub mod binary;
 pub mod conversion;
 pub mod detail;
-pub mod id;
-pub mod network;
+pub use crate::network;
 pub mod pointshare;
 pub mod rngs;
 pub mod types;
@@ -25,7 +24,7 @@ use rand::{distributions::Standard, prelude::Distribution, CryptoRng, Rng, Seeda
 
 pub use arithmetic::Rep3PrimeFieldShare;
 pub use binary::Rep3BigUintShare;
-pub use id::PartyID;
+pub use crate::network::PartyID;
 use serde::{Deserialize, Serialize};
 
 use crate::serde_compat::{ark_de, ark_se};

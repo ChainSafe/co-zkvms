@@ -206,12 +206,14 @@ mod tests {
     use ark_bn254::{Fr, G1Projective};
     use ark_std::UniformRand;
     use ark_std::Zero;
-    use ark_std::test_rng;
+    use crate::protocols::rep3_ring::ring::ring_impl::RingElement;
     use rand::RngCore;
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha12Rng;
 
     #[test]
     fn dapoints_preproc_consistent() {
-        let mut rng = test_rng();
+        let mut rng = ChaCha12Rng::seed_from_u64(0);
         let n = 16usize;
         let qs: Vec<G1Projective> = (0..n).map(|_| G1Projective::rand(&mut rng)).collect();
 
@@ -250,7 +252,7 @@ mod tests {
     /// Test the online phase with hand-crafted preprocessing (bypasses RNG).
     #[test]
     fn dot_product_dapoints_manual_preproc() {
-        let mut rng = test_rng();
+        let mut rng = ChaCha12Rng::seed_from_u64(0);
         let n = 4usize;
 
         let qs: Vec<G1Projective> = (0..n).map(|_| G1Projective::rand(&mut rng)).collect();
@@ -276,11 +278,11 @@ mod tests {
             assert_eq!(a1_points[i] + a2_points[i], expected);
         }
 
-        let bit_shares_per_item: Vec<Vec<Rep3RingShare<Bit>>> = bits_plain
+        let bit_shares_per_item: Vec<[Rep3RingShare<Bit>; 3]> = bits_plain
             .iter()
             .map(|&b| {
-                crate::protocols::rep3_ring::binary::generate_shares_rep3::<Bit, _>(
-                    Bit::new(b),
+                crate::protocols::rep3_ring::share_ring_element_binary(
+                    RingElement(Bit::new(b)),
                     &mut rng,
                 )
             })
@@ -341,17 +343,17 @@ mod tests {
 
     #[test]
     fn dot_product_dapoints_correct() {
-        let mut rng = test_rng();
+        let mut rng = ChaCha12Rng::seed_from_u64(0);
         let n = 128usize;
 
         let qs: Vec<G1Projective> = (0..n).map(|_| G1Projective::rand(&mut rng)).collect();
         let bits_plain: Vec<bool> = (0..n).map(|_| (rng.next_u32() & 1) == 1).collect();
 
-        let bit_shares_per_item: Vec<Vec<Rep3RingShare<Bit>>> = bits_plain
+        let bit_shares_per_item: Vec<[Rep3RingShare<Bit>; 3]> = bits_plain
             .iter()
             .map(|&b| {
-                crate::protocols::rep3_ring::binary::generate_shares_rep3::<Bit, _>(
-                    Bit::new(b),
+                crate::protocols::rep3_ring::share_ring_element_binary(
+                    RingElement(Bit::new(b)),
                     &mut rng,
                 )
             })
@@ -389,17 +391,17 @@ mod tests {
 
     #[test]
     fn dot_product_dapoints_all_zeros() {
-        let mut rng = test_rng();
+        let mut rng = ChaCha12Rng::seed_from_u64(0);
         let n = 32usize;
 
         let qs: Vec<G1Projective> = (0..n).map(|_| G1Projective::rand(&mut rng)).collect();
         let bits_plain: Vec<bool> = vec![false; n];
 
-        let bit_shares_per_item: Vec<Vec<Rep3RingShare<Bit>>> = bits_plain
+        let bit_shares_per_item: Vec<[Rep3RingShare<Bit>; 3]> = bits_plain
             .iter()
             .map(|&b| {
-                crate::protocols::rep3_ring::binary::generate_shares_rep3::<Bit, _>(
-                    Bit::new(b),
+                crate::protocols::rep3_ring::share_ring_element_binary(
+                    RingElement(Bit::new(b)),
                     &mut rng,
                 )
             })
@@ -435,17 +437,17 @@ mod tests {
 
     #[test]
     fn dot_product_dapoints_all_ones() {
-        let mut rng = test_rng();
+        let mut rng = ChaCha12Rng::seed_from_u64(0);
         let n = 32usize;
 
         let qs: Vec<G1Projective> = (0..n).map(|_| G1Projective::rand(&mut rng)).collect();
         let bits_plain: Vec<bool> = vec![true; n];
 
-        let bit_shares_per_item: Vec<Vec<Rep3RingShare<Bit>>> = bits_plain
+        let bit_shares_per_item: Vec<[Rep3RingShare<Bit>; 3]> = bits_plain
             .iter()
             .map(|&b| {
-                crate::protocols::rep3_ring::binary::generate_shares_rep3::<Bit, _>(
-                    Bit::new(b),
+                crate::protocols::rep3_ring::share_ring_element_binary(
+                    RingElement(Bit::new(b)),
                     &mut rng,
                 )
             })

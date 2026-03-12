@@ -7,7 +7,6 @@ use jolt_core::field::JoltField;
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial};
-use mpc_core::protocols::rep3::arithmetic::generate_shares_rep3;
 use mpc_core::protocols::rep3::{self, PartyID, Rep3PrimeFieldShare};
 
 use rayon::prelude::*;
@@ -60,12 +59,12 @@ impl<F: JoltField> Rep3MultilinearPolynomial<F> {
         Self::shared(Rep3DensePolynomial::new_shard(coeffs, full_len, log_num_workers, worker_idx))
     }
 
-    pub fn generate_shares_from_coeffs(coeffs: &[F], rng: &mut impl rand::Rng) -> [Self; 3] {
+    pub fn generate_shares_from_coeffs(coeffs: &[F], rng: &mut (impl rand::Rng + rand::CryptoRng)) -> [Self; 3] {
         let mut party_coeffs: [Vec<Rep3PrimeFieldShare<F>>; 3] =
             std::array::from_fn(|_| Vec::with_capacity(coeffs.len()));
 
         for &c in coeffs {
-            let shares = generate_shares_rep3(c, rng);
+            let shares = rep3::share_field_element(c, rng);
             party_coeffs[0].push(shares[0]);
             party_coeffs[1].push(shares[1]);
             party_coeffs[2].push(shares[2]);

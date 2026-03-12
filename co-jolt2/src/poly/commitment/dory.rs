@@ -1170,7 +1170,6 @@ pub mod test_support {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_std::test_rng;
     use ark_std::UniformRand;
     use itertools::Itertools;
     use jolt_core::field::JoltField;
@@ -1178,7 +1177,7 @@ mod tests {
     use jolt_core::poly::multilinear_polynomial::PolynomialEvaluation;
     use jolt_core::poly::one_hot_polynomial::OneHotPolynomial as VanillaOneHotPolynomial;
     use jolt_core::transcripts::Blake2bTranscript;
-    use mpc_core::protocols::rep3::arithmetic::generate_shares_rep3;
+    use mpc_core::protocols::rep3;
     use mpc_core::protocols::rep3::test_utils::run_rep3_local_test_with_coordinator;
     use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
     use mpc_core::protocols::rep3_ring;
@@ -1187,14 +1186,16 @@ mod tests {
     use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
     use mpc_core::protocols::rep3_ring::Rep3RingShare;
     use rand::Rng;
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha12Rng;
     use std::sync::Arc;
 
-    fn share_poly_rep3(coeffs: &[Fr], rng: &mut impl rand::Rng) -> [Rep3DensePolynomial<Fr>; 3] {
+    fn share_poly_rep3(coeffs: &[Fr], rng: &mut (impl rand::Rng + rand::CryptoRng)) -> [Rep3DensePolynomial<Fr>; 3] {
         let mut party_coeffs: [Vec<mpc_core::protocols::rep3::Rep3PrimeFieldShare<Fr>>; 3] =
             std::array::from_fn(|_| Vec::with_capacity(coeffs.len()));
 
         for &c in coeffs {
-            let shares = generate_shares_rep3(c, rng);
+            let shares = rep3::share_field_element(c, rng);
             party_coeffs[0].push(shares[0]);
             party_coeffs[1].push(shares[1]);
             party_coeffs[2].push(shares[2]);
@@ -1239,7 +1240,7 @@ mod tests {
 
     #[test]
     fn dory_opening_dense_correct() {
-        let mut rng = test_rng();
+        let mut rng = ChaCha12Rng::seed_from_u64(0);
 
         crate::poly::commitment::dory::test_support::init_dory_globals(256, 512);
         let sigma = DoryGlobals::get_num_columns().log_2();
@@ -1332,7 +1333,7 @@ mod tests {
 
     #[test]
     fn dory_opening_rlc_hint_correct() {
-        let mut rng = test_rng();
+        let mut rng = ChaCha12Rng::seed_from_u64(0);
 
         crate::poly::commitment::dory::test_support::init_dory_globals(256, 512);
         let sigma = DoryGlobals::get_num_columns().log_2();
@@ -1434,7 +1435,7 @@ mod tests {
 
     #[test]
     fn dory_commit_hint_correct() {
-        let mut rng = test_rng();
+        let mut rng = ChaCha12Rng::seed_from_u64(0);
 
         // Use the same DoryGlobals sizing as the zkVM witness tests (T=512) to
         // avoid global re-initialization conflicts within the test binary.
@@ -1497,7 +1498,7 @@ mod tests {
 
     #[test]
     fn dory_one_hot_commit_hint_correct() {
-        let mut rng = test_rng();
+        let mut rng = ChaCha12Rng::seed_from_u64(0);
 
         crate::poly::commitment::dory::test_support::init_dory_globals(256, 512);
         let sigma = DoryGlobals::get_num_columns().log_2();
@@ -1524,7 +1525,7 @@ mod tests {
         let mut e_field_party: [Vec<Rep3PrimeFieldShare<Fr>>; 3] = std::array::from_fn(|_| Vec::with_capacity(k));
         for i in 0..k {
             let bit = if i as u8 == r_mask { Fr::one() } else { Fr::zero() };
-            let shares = generate_shares_rep3(bit, &mut rng);
+            let shares = rep3::share_field_element(bit, &mut rng);
             for pid in 0..3 {
                 e_field_party[pid].push(shares[pid]);
             }
@@ -1561,7 +1562,7 @@ mod tests {
 
     #[test]
     fn dory_public_gating_correct() {
-        let mut rng = test_rng();
+        let mut rng = ChaCha12Rng::seed_from_u64(0);
 
         crate::poly::commitment::dory::test_support::init_dory_globals(256, 512);
         let sigma = DoryGlobals::get_num_columns().log_2();
@@ -1598,7 +1599,7 @@ mod tests {
 
     #[test]
     fn dory_batch_eq_single() {
-        let mut rng = test_rng();
+        let mut rng = ChaCha12Rng::seed_from_u64(0);
 
         crate::poly::commitment::dory::test_support::init_dory_globals(256, 512);
         let sigma = DoryGlobals::get_num_columns().log_2();
@@ -1656,7 +1657,7 @@ mod tests {
     #[cfg(feature = "ring-msm")]
     #[test]
     fn dory_u64_scalars_commit_correct() {
-        let mut rng = test_rng();
+        let mut rng = ChaCha12Rng::seed_from_u64(0);
 
         crate::poly::commitment::dory::test_support::init_dory_globals(256, 512);
         let num_columns = DoryGlobals::get_num_columns();
@@ -1680,12 +1681,12 @@ mod tests {
         let all_arith_shares: Vec<_> = values
             .iter()
             .map(|&v| {
-                rep3_ring::arithmetic::generate_shares_rep3::<ArithmeticWideInt, _>(v as ArithmeticWideInt, &mut rng)
+                rep3_ring::share_ring_element(RingElement(v as ArithmeticWideInt), &mut rng)
             })
             .collect();
         let all_bin_shares: Vec<_> = values
             .iter()
-            .map(|&v| rep3_ring::binary::generate_shares_rep3::<XlenInt, _>(v as XlenInt, &mut rng))
+            .map(|&v| rep3_ring::share_ring_element_binary(RingElement(v as XlenInt), &mut rng))
             .collect();
 
         let polys_by_party: [Rep3MultilinearPolynomial<Fr>; 3] = std::array::from_fn(|pid| {
@@ -1761,7 +1762,7 @@ mod tests {
         use crate::zkvm::instruction::types::rep3_operand::Rep3Operand;
         use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
 
-        let mut rng = test_rng();
+        let mut rng = ChaCha12Rng::seed_from_u64(0);
 
         crate::poly::commitment::dory::test_support::init_dory_globals(256, 512);
         let num_columns = DoryGlobals::get_num_columns();
@@ -1784,28 +1785,25 @@ mod tests {
 
         // Share shared values in both arithmetic and XOR ring forms.
         use jolt_common::constants::{ArithmeticWideInt, XlenInt};
-        let all_arith_shares: Vec<Option<Vec<Rep3RingShare<ArithmeticWideInt>>>> = values
+        let all_arith_shares: Vec<Option<[Rep3RingShare<ArithmeticWideInt>; 3]>> = values
             .iter()
             .zip(is_public.iter())
             .map(|(&v, &pub_)| {
                 if pub_ {
                     None
                 } else {
-                    Some(rep3_ring::arithmetic::generate_shares_rep3::<ArithmeticWideInt, _>(
-                        v as ArithmeticWideInt,
-                        &mut rng,
-                    ))
+                    Some(rep3_ring::share_ring_element(RingElement(v as ArithmeticWideInt), &mut rng))
                 }
             })
             .collect();
-        let all_bin_shares: Vec<Option<Vec<Rep3RingShare<XlenInt>>>> = values
+        let all_bin_shares: Vec<Option<[Rep3RingShare<XlenInt>; 3]>> = values
             .iter()
             .zip(is_public.iter())
             .map(|(&v, &pub_)| {
                 if pub_ {
                     None
                 } else {
-                    Some(rep3_ring::binary::generate_shares_rep3::<XlenInt, _>(v as XlenInt, &mut rng))
+                    Some(rep3_ring::share_ring_element_binary(RingElement(v as XlenInt), &mut rng))
                 }
             })
             .collect();
@@ -1889,7 +1887,7 @@ mod tests {
     #[cfg(feature = "ring-msm")]
     #[test]
     fn ring_shared_msm_correctness() {
-        let mut rng = test_rng();
+        let mut rng = ChaCha12Rng::seed_from_u64(0);
         let n = 64;
 
         // Random G1 bases
@@ -1908,9 +1906,9 @@ mod tests {
         // Uses both arithmetic and binary u32 shares of the same values.
         // Computes wrap count m via B2A + subtract + open, then corrects publicly.
         let all_arith_shares: Vec<_> =
-            values.iter().map(|&v| rep3_ring::arithmetic::generate_shares_rep3::<u32, _>(v, &mut rng)).collect();
+            values.iter().map(|&v| rep3_ring::share_ring_element(RingElement(v), &mut rng)).collect();
         let all_bin_shares: Vec<_> =
-            values.iter().map(|&v| rep3_ring::binary::generate_shares_rep3::<u32, _>(v, &mut rng)).collect();
+            values.iter().map(|&v| rep3_ring::share_ring_element_binary(RingElement(v), &mut rng)).collect();
 
         // Naive sum with arithmetic shares is also wrong
         let naive_arith_msms: [G1Projective; 3] = std::array::from_fn(|pid| {

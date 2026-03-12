@@ -10,7 +10,8 @@ static GLOBAL: tracy_client::ProfiledAllocator<tikv_jemallocator::Jemalloc> =
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 use ark_bn254::Fr;
-use ark_std::test_rng;
+use rand::SeedableRng;
+use rand_chacha::ChaCha12Rng;
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
 use mpc_net::config::{NetworkConfig, NetworkConfigFile};
@@ -293,7 +294,7 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     }
 
     info!("generating trace shares");
-    let mut rng = test_rng();
+    let mut rng = ChaCha12Rng::seed_from_u64(0);
     let shares = program.generate_trace_shares(&inputs, &[], &[], &mut rng);
 
     let preprocessing: JoltProverPreprocessing<F, PCS> = <JoltArch as Rep3JoltWorker<F, PCS, _>>::preprocess(

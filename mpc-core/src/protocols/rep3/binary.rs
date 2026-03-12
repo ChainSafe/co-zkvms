@@ -463,21 +463,6 @@ pub fn share_rep3_binary<F: PrimeField, R: Rng>(
     [s1, s2, s3]
 }
 
-pub fn generate_shares_rep3<F: PrimeField, R: Rng>(
-    val: F,
-    rng: &mut R,
-) -> Vec<Rep3BigUintShare<F>> {
-    let val = BigUint::from_bytes_le(&val.into_bigint().to_bytes_le());
-    let t0 = BigUint::from(rng.r#gen::<u64>());
-    let t1 = BigUint::from(rng.r#gen::<u64>());
-    let t2 = (val ^ t0.clone()) ^ t1.clone();
-
-    let p_share_0 = Rep3BigUintShare::new(t0.clone(), t2.clone());
-    let p_share_1 = Rep3BigUintShare::new(t1.clone(), t0);
-    let p_share_2 = Rep3BigUintShare::new(t2, t1);
-    vec![p_share_0, p_share_1, p_share_2]
-}
-
 /// Reconstructs a vector of field elements from its binary replicated shares.
 /// # Panics
 /// Panics if the provided `Vec` sizes do not match.

@@ -2,23 +2,23 @@
 //!
 //! This module contains implementation of the rep3 mpc network
 
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use bytes::{Bytes, BytesMut};
-use bytesize::ByteSize;
-use eyre::Context;
 use crate::field::PrimeField;
 use crate::protocols::rep3_ring::Rep3RingShare;
 use crate::protocols::rep3_ring::ring::bit::Bit;
 use crate::protocols::rep3_ring::ring::int_ring::IntRing2k;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use bytes::Bytes;
+use bytesize::ByteSize;
+use eyre::Context;
 use std::io;
 use std::iter;
 use std::mem::MaybeUninit;
 use std::slice;
 use std::sync::{Arc, OnceLock};
 
+use crate::preprocessing::backing_store::assert_field_layout;
 use crate::protocols::rep3_ring::dabits::DaBitBatch;
 use crate::protocols::rep3_ring::edabits::EdaBitsBatch;
-use crate::preprocessing::backing_store::assert_field_layout;
 
 use itertools::Itertools;
 use mpc_net::topology::{MpcStarNetCoordinator, MpcStarNetWorker};
@@ -26,14 +26,14 @@ use mpc_net::topology::{MpcStarNetCoordinator, MpcStarNetWorker};
 use mpc_net::rep3::quic::{Rep3QuicMpcNetWorker, Rep3QuicNetCoordinator};
 use rand::{CryptoRng, Rng, SeedableRng, distributions::Standard, prelude::Distribution};
 
-use crate::protocols::rep3::PartyID;
 use crate::protocols::rep3::rngs::RngForker;
 use crate::{IoResult, RngType};
+pub use mpc_net::id::PartyID;
 
 use rayon::iter::Either;
 use rayon::prelude::*;
 
-use super::{
+use crate::protocols::rep3::{
     conversion::MPCType,
     rngs::{Rep3CorrelatedRng, Rep3Rand, Rep3RandBitComp},
 };
@@ -69,17 +69,13 @@ impl<N: Rep3Network> IoContext<N> {
         Ok(Rep3Rand::new(seed1, seed2))
     }
 
-    fn setup_bitcomp(
-        network: &mut N,
-        rands: &mut Rep3Rand,
-    ) -> IoResult<(Rep3RandBitComp, Rep3RandBitComp)> {
+    fn setup_bitcomp(network: &mut N, rands: &mut Rep3Rand) -> IoResult<(Rep3RandBitComp, Rep3RandBitComp)> {
         let (k1a, k1c) = rands.random_seeds();
         let (k2a, k2c) = rands.random_seeds();
         match network.get_id() {
             PartyID::ID0 => {
                 network.send_next(k1c)?;
-                let (k1b, k2b): ([u8; crate::SEED_SIZE], [u8; crate::SEED_SIZE]) =
-                    network.recv_prev()?;
+                let (k1b, k2b): ([u8; crate::SEED_SIZE], [u8; crate::SEED_SIZE]) = network.recv_prev()?;
                 let bitcomp1 = Rep3RandBitComp::new_3keys(k1a, k1b, k1c);
                 let bitcomp2 = Rep3RandBitComp::new_3keys(k2a, k2b, k2c);
                 Ok((bitcomp1, bitcomp2))
@@ -93,8 +89,7 @@ impl<N: Rep3Network> IoContext<N> {
             }
             PartyID::ID2 => {
                 network.send_next((k1c, k2c))?;
-                let (k1b, k2b): ([u8; crate::SEED_SIZE], [u8; crate::SEED_SIZE]) =
-                    network.recv_prev()?;
+                let (k1b, k2b): ([u8; crate::SEED_SIZE], [u8; crate::SEED_SIZE]) = network.recv_prev()?;
                 let bitcomp1 = Rep3RandBitComp::new_3keys(k1a, k1b, k1c);
                 let bitcomp2 = Rep3RandBitComp::new_3keys(k2a, k2b, k2c);
                 Ok((bitcomp1, bitcomp2))
@@ -169,16 +164,10 @@ pub trait Rep3Network: Send + Clone {
     /// Sends `data` to the next party and receives from the previous party. Use this whenever
     /// possible in contrast to calling [`Self::send_next()`] and [`Self::recv_prev()`] sequential. This method
     /// executes send/receive concurrently.
-    fn reshare<F: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-        data: F,
-    ) -> std::io::Result<F> {
+    fn reshare<F: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: F) -> std::io::Result<F> {
         let mut res = self.reshare_many(&[data])?;
         if res.len() != 1 {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Expected 1 element, got more",
-            ))
+            Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Expected 1 element, got more"))
         } else {
             //we checked that there is really one element
             Ok(res.pop().unwrap())
@@ -186,22 +175,13 @@ pub trait Rep3Network: Send + Clone {
     }
 
     /// Perform multiple reshares with one networking round
-    fn reshare_many<F: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-        data: &[F],
-    ) -> std::io::Result<Vec<F>>;
+    fn reshare_many<F: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: &[F]) -> std::io::Result<Vec<F>>;
 
     /// Broadcast data to the other two parties and receive data from them
-    fn broadcast<F: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-        data: F,
-    ) -> std::io::Result<(F, F)> {
+    fn broadcast<F: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: F) -> std::io::Result<(F, F)> {
         let (mut prev, mut next) = self.broadcast_many(&[data])?;
         if prev.len() != 1 || next.len() != 1 {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Expected 1 element, got more",
-            ))
+            Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Expected 1 element, got more"))
         } else {
             //we checked that there is really one element
             let prev = prev.pop().unwrap();
@@ -222,11 +202,7 @@ pub trait Rep3Network: Send + Clone {
     }
 
     /// Sends a vector of data to the target party.
-    fn send_many<F: CanonicalSerialize>(
-        &mut self,
-        target: PartyID,
-        data: &[F],
-    ) -> std::io::Result<()>;
+    fn send_many<F: CanonicalSerialize>(&mut self, target: PartyID, data: &[F]) -> std::io::Result<()>;
 
     /// Sends data to the party with id = next_id (i.e., my_id + 1 mod 3). This function has a default implementation for calling [Rep3Network::send] with the next_id.
     fn send_next<F: CanonicalSerialize>(&mut self, data: F) -> std::io::Result<()> {
@@ -242,10 +218,7 @@ pub trait Rep3Network: Send + Clone {
     fn recv<F: CanonicalDeserialize>(&mut self, from: PartyID) -> std::io::Result<F> {
         let mut res = self.recv_many(from)?;
         if res.len() != 1 {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Expected 1 element, got more",
-            ))
+            Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Expected 1 element, got more"))
         } else {
             Ok(res.pop().unwrap())
         }
@@ -279,10 +252,7 @@ impl Rep3Network for Rep3MpcNet {
         self.id.party_id()
     }
 
-    fn reshare_many<F: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-        data: &[F],
-    ) -> std::io::Result<Vec<F>> {
+    fn reshare_many<F: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: &[F]) -> std::io::Result<Vec<F>> {
         self.send_many(self.get_id().next_id(), data)?;
         self.recv_many(self.get_id().prev_id())
     }
@@ -298,11 +268,7 @@ impl Rep3Network for Rep3MpcNet {
         Ok((recv_prev, recv_next))
     }
 
-    fn send_many<F: CanonicalSerialize>(
-        &mut self,
-        target: PartyID,
-        data: &[F],
-    ) -> std::io::Result<()> {
+    fn send_many<F: CanonicalSerialize>(&mut self, target: PartyID, data: &[F]) -> std::io::Result<()> {
         let size = data.serialized_size(ark_serialize::Compress::No);
         let mut ser_data = Vec::with_capacity(size);
         data.serialize_uncompressed(&mut ser_data)
@@ -350,40 +316,20 @@ pub trait Rep3NetworkCoordinator: MpcStarNetCoordinator + 'static {
 }
 
 pub trait Rep3RawFieldTransport {
-    fn send_field_slice_raw<F: PrimeField>(
-        &mut self,
-        target: PartyID,
-        data: &[F],
-    ) -> io::Result<()>;
+    fn send_field_slice_raw<F: PrimeField>(&mut self, target: PartyID, data: &[F]) -> io::Result<()>;
 
-    fn send_field_vec_raw<F: PrimeField>(
-        &mut self,
-        target: PartyID,
-        data: Vec<F>,
-    ) -> io::Result<()> {
+    fn send_field_vec_raw<F: PrimeField>(&mut self, target: PartyID, data: Vec<F>) -> io::Result<()> {
         self.send_field_slice_raw(target, &data)
     }
 
-    fn recv_field_bytes_raw<F: PrimeField>(
-        &mut self,
-        from: PartyID,
-        elems: usize,
-    ) -> io::Result<Vec<u8>>;
+    fn recv_field_bytes_raw<F: PrimeField>(&mut self, from: PartyID, elems: usize) -> io::Result<Vec<u8>>;
 
-    fn recv_field_vec_raw<F: PrimeField>(
-        &mut self,
-        from: PartyID,
-        elems: usize,
-    ) -> io::Result<Vec<F>> {
+    fn recv_field_vec_raw<F: PrimeField>(&mut self, from: PartyID, elems: usize) -> io::Result<Vec<F>> {
         let bytes = self.recv_field_bytes_raw::<F>(from, elems)?;
         field_vec_from_bytes::<F>(&bytes)
     }
 
-    fn recv_field_bytes_bulk_into<F: PrimeField>(
-        &mut self,
-        from: PartyID,
-        dst: &mut [u8],
-    ) -> io::Result<()> {
+    fn recv_field_bytes_bulk_into<F: PrimeField>(&mut self, from: PartyID, dst: &mut [u8]) -> io::Result<()> {
         let elem_size = std::mem::size_of::<F>();
         if dst.len() % elem_size != 0 {
             return Err(io::Error::new(
@@ -401,11 +347,7 @@ pub trait Rep3RawFieldTransport {
         Ok(())
     }
 
-    fn recv_field_vec_raw_owned<F: PrimeField>(
-        &mut self,
-        from: PartyID,
-        elems: usize,
-    ) -> io::Result<Vec<F>> {
+    fn recv_field_vec_raw_owned<F: PrimeField>(&mut self, from: PartyID, elems: usize) -> io::Result<Vec<F>> {
         self.recv_field_vec_raw(from, elems)
     }
 }
@@ -454,27 +396,15 @@ fn field_vec_into_bytes<F: PrimeField>(data: Vec<F>) -> Vec<u8> {
 impl Rep3NetworkWorker for Rep3QuicMpcNetWorker {}
 
 impl Rep3RawFieldTransport for Rep3QuicMpcNetWorker {
-    fn send_field_slice_raw<F: PrimeField>(
-        &mut self,
-        target: PartyID,
-        data: &[F],
-    ) -> io::Result<()> {
+    fn send_field_slice_raw<F: PrimeField>(&mut self, target: PartyID, data: &[F]) -> io::Result<()> {
         self.send_bytes_bulk(target, Bytes::copy_from_slice(field_slice_to_bytes(data)))
     }
 
-    fn send_field_vec_raw<F: PrimeField>(
-        &mut self,
-        target: PartyID,
-        data: Vec<F>,
-    ) -> io::Result<()> {
+    fn send_field_vec_raw<F: PrimeField>(&mut self, target: PartyID, data: Vec<F>) -> io::Result<()> {
         self.send_bytes_bulk(target, Bytes::from(field_vec_into_bytes(data)))
     }
 
-    fn recv_field_bytes_raw<F: PrimeField>(
-        &mut self,
-        from: PartyID,
-        elems: usize,
-    ) -> io::Result<Vec<u8>> {
+    fn recv_field_bytes_raw<F: PrimeField>(&mut self, from: PartyID, elems: usize) -> io::Result<Vec<u8>> {
         let bytes = self.recv_bytes_bulk(from)?;
         let expected = elems.saturating_mul(std::mem::size_of::<F>());
         if bytes.len() != expected {
@@ -493,27 +423,16 @@ impl Rep3RawFieldTransport for Rep3QuicMpcNetWorker {
         Ok(bytes)
     }
 
-    fn recv_field_bytes_bulk_into<F: PrimeField>(
-        &mut self,
-        from: PartyID,
-        dst: &mut [u8],
-    ) -> io::Result<()> {
+    fn recv_field_bytes_bulk_into<F: PrimeField>(&mut self, from: PartyID, dst: &mut [u8]) -> io::Result<()> {
         self.recv_bytes_bulk_into(from, dst)
     }
 
-    fn recv_field_vec_raw_owned<F: PrimeField>(
-        &mut self,
-        from: PartyID,
-        elems: usize,
-    ) -> io::Result<Vec<F>> {
+    fn recv_field_vec_raw_owned<F: PrimeField>(&mut self, from: PartyID, elems: usize) -> io::Result<Vec<F>> {
         const { assert_field_layout::<F>() };
         let mut out: Vec<MaybeUninit<F>> = Vec::with_capacity(elems);
         unsafe { out.set_len(elems) };
         let out_bytes = unsafe {
-            slice::from_raw_parts_mut(
-                out.as_mut_ptr() as *mut u8,
-                elems.saturating_mul(std::mem::size_of::<F>()),
-            )
+            slice::from_raw_parts_mut(out.as_mut_ptr() as *mut u8, elems.saturating_mul(std::mem::size_of::<F>()))
         };
         self.recv_bytes_bulk_into(from, out_bytes)?;
         Ok(unsafe { std::mem::transmute(out) })
@@ -542,16 +461,9 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
         let num_workers = 1 << network.log_num_workers();
         let main = IoContext::init(network)?;
 
-        let forks = iter::repeat_with(|| main.fork())
-            .take(num_forks as usize)
-            .collect::<Result<Vec<_>, _>>()?;
+        let forks = iter::repeat_with(|| main.fork()).take(num_forks as usize).collect::<Result<Vec<_>, _>>()?;
 
-        Ok(Self {
-            worker_id,
-            main,
-            forks,
-            num_workers,
-        })
+        Ok(Self { worker_id, main, forks, num_workers })
     }
 
     pub fn main(&mut self) -> &mut IoContext<Network> {
@@ -573,12 +485,7 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
             .take(num_forks)
             .collect::<Result<Vec<_>, _>>()
             .context("while forking pool children")?;
-        Ok(Self {
-            worker_id: self.worker_id,
-            main,
-            forks,
-            num_workers: self.num_workers,
-        })
+        Ok(Self { worker_id: self.worker_id, main, forks, num_workers: self.num_workers })
     }
 
     /// Drop all forks and re-create with `num_forks` children.
@@ -666,10 +573,7 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
         }
 
         if len == 1 {
-            return Ok(vec![map(
-                inputs_iter.collect::<Vec<_>>().pop().unwrap(),
-                self.main(),
-            )?]);
+            return Ok(vec![map(inputs_iter.collect::<Vec<_>>().pop().unwrap(), self.main())?]);
         }
 
         let chunk_size = len.div_ceil(max_forks);
@@ -680,12 +584,7 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
             .into_par_iter()
             .chunks(chunk_size)
             .zip_eq(self.forks(forks).par_iter_mut())
-            .map(|(chunk, mut ctx)| {
-                chunk
-                    .into_iter()
-                    .map(|val| map(val, &mut ctx))
-                    .collect_vec()
-            })
+            .map(|(chunk, mut ctx)| chunk.into_iter().map(|val| map(val, &mut ctx)).collect_vec())
             .flatten()
             .collect::<eyre::Result<Vec<_>>>()
     }
@@ -725,20 +624,14 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
         let results: Vec<OnceLock<eyre::Result<R>>> = (0..m).map(|_| OnceLock::new()).collect();
 
         // N parallel tasks; fork f processes indices f, f+N, f+2N, ...
-        (0..forks)
-            .into_par_iter()
-            .zip(self.forks(forks).par_iter_mut())
-            .for_each(|(f, mut ctx)| {
-                for i in (f..m).step_by(forks) {
-                    let r = map(items[i].clone(), &mut ctx);
-                    let _ = results[i].set(r);
-                }
-            });
+        (0..forks).into_par_iter().zip(self.forks(forks).par_iter_mut()).for_each(|(f, mut ctx)| {
+            for i in (f..m).step_by(forks) {
+                let r = map(items[i].clone(), &mut ctx);
+                let _ = results[i].set(r);
+            }
+        });
 
-        results
-            .into_par_iter()
-            .map(|cell| cell.into_inner().expect("missing result"))
-            .collect::<Result<Vec<_>, _>>()
+        results.into_par_iter().map(|cell| cell.into_inner().expect("missing result")).collect::<Result<Vec<_>, _>>()
     }
 
     /// Parallelize the computation of `map` over the `inputs` using the forked `IoContext`s.
@@ -803,13 +696,8 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
     where
         T: IntRing2k + Send + Sync,
         F: PrimeField + Send + Sync,
-        MapFn: Fn(
-                Vec<Rep3RingShare<T>>,
-                EdaBitsBatch<T, F>,
-                &mut IoContext<Network>,
-            ) -> Result<Vec<R>, Err>
-            + Sync
-            + Send,
+        MapFn:
+            Fn(Vec<Rep3RingShare<T>>, EdaBitsBatch<T, F>, &mut IoContext<Network>) -> Result<Vec<R>, Err> + Sync + Send,
         R: Sync + Send + Clone,
         eyre::Report: From<Err>,
         Err: Send + Sync,
@@ -835,10 +723,7 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
             .zip_eq(batch.alphas_flat.into_par_iter().chunks(chunk_size * k))
             .zip_eq(self.forks(num_forks).par_iter_mut())
             .flat_map(|(((inputs, gammas), alphas), ctx)| {
-                let sub_batch = EdaBitsBatch {
-                    gammas,
-                    alphas_flat: alphas,
-                };
+                let sub_batch = EdaBitsBatch { gammas, alphas_flat: alphas };
                 match map(inputs, sub_batch, ctx) {
                     Ok(r) => Either::Left(r.into_par_iter().map(eyre::Ok)),
                     Err(e) => Either::Right(rayon::iter::once(Err(eyre::Error::from(e)))),
@@ -859,13 +744,7 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
     ) -> eyre::Result<Vec<R>>
     where
         F: PrimeField + Send + Sync,
-        MapFn: Fn(
-                Vec<Rep3RingShare<Bit>>,
-                DaBitBatch<F>,
-                &mut IoContext<Network>,
-            ) -> Result<Vec<R>, Err>
-            + Sync
-            + Send,
+        MapFn: Fn(Vec<Rep3RingShare<Bit>>, DaBitBatch<F>, &mut IoContext<Network>) -> Result<Vec<R>, Err> + Sync + Send,
         R: Sync + Send + Clone,
         eyre::Report: From<Err>,
         Err: Send + Sync,
@@ -891,11 +770,7 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
             .zip_eq(batch.v_shares.into_par_iter().chunks(chunk_size))
             .zip_eq(self.forks(num_forks).par_iter_mut())
             .flat_map(|((((inputs, gammas), thetas), v_shares), ctx)| {
-                let sub_batch = DaBitBatch {
-                    gammas,
-                    thetas,
-                    v_shares,
-                };
+                let sub_batch = DaBitBatch { gammas, thetas, v_shares };
                 match map(inputs, sub_batch, ctx) {
                     Ok(r) => Either::Left(r.into_par_iter().map(eyre::Ok)),
                     Err(e) => Either::Right(rayon::iter::once(Err(eyre::Error::from(e)))),
@@ -919,18 +794,17 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
     }
     /// Prints the connection statistics.
     pub fn log_connection_stats(&self) {
-        let acc_io = self
-            .forks
-            .iter()
-            .map(|io_ctx| io_ctx.network.io_stats_per_party())
-            .fold(self.main.network.io_stats_per_party(), |mut acc, stats| {
+        let acc_io = self.forks.iter().map(|io_ctx| io_ctx.network.io_stats_per_party()).fold(
+            self.main.network.io_stats_per_party(),
+            |mut acc, stats| {
                 acc.iter_mut().for_each(|(id, (tx, rx))| {
                     let (tx_, rx_) = stats.get(id).unwrap();
                     *tx += tx_;
                     *rx += rx_;
                 });
                 acc
-            });
+            },
+        );
         for (i, (tx, rx)) in acc_io {
             tracing::info!(
                 "IO: P{}->P{} | SENT: {} bytes | RECV: {} bytes",

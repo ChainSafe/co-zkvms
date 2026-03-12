@@ -235,18 +235,19 @@ impl<F: JoltField> Rep3RLCPolynomial<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_std::test_rng;
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha12Rng;
     use ark_std::UniformRand;
     use ark_std::Zero;
     use jolt_core::ark_bn254::{Fr, G1Affine, G1Projective};
     use jolt_core::poly::dense_mlpoly::DensePolynomial;
 
-    fn share_poly_rep3<F: JoltField>(coeffs: &[F], rng: &mut impl rand::Rng) -> [Vec<Rep3PrimeFieldShare<F>>; 3] {
+    fn share_poly_rep3<F: JoltField>(coeffs: &[F], rng: &mut (impl rand::Rng + rand::CryptoRng)) -> [Vec<Rep3PrimeFieldShare<F>>; 3] {
         let mut party_coeffs: [Vec<Rep3PrimeFieldShare<F>>; 3] =
             std::array::from_fn(|_| Vec::with_capacity(coeffs.len()));
 
         for &c in coeffs {
-            let shares = mpc_core::protocols::rep3::arithmetic::generate_shares_rep3(c, rng);
+            let shares = mpc_core::protocols::rep3::share_field_element(c, rng);
             party_coeffs[0].push(shares[0]);
             party_coeffs[1].push(shares[1]);
             party_coeffs[2].push(shares[2]);
@@ -257,7 +258,7 @@ mod tests {
 
     #[test]
     fn linear_combination_dense_correct() {
-        let mut rng = test_rng();
+        let mut rng = ChaCha12Rng::seed_from_u64(0);
         crate::poly::commitment::dory::test_support::init_dory_globals(256, 512);
         let t = DoryGlobals::get_T();
         assert_eq!(t, 512);
@@ -303,7 +304,7 @@ mod tests {
 
     #[test]
     fn commit_rows_dense_only_correct() {
-        let mut rng = test_rng();
+        let mut rng = ChaCha12Rng::seed_from_u64(0);
         crate::poly::commitment::dory::test_support::init_dory_globals(256, 512);
         let t = DoryGlobals::get_T();
         let row_len = DoryGlobals::get_num_columns();

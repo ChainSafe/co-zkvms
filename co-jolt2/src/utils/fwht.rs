@@ -341,15 +341,15 @@ mod tests {
     use super::*;
     use ark_bn254::Fr;
     use mpc_core::protocols::rep3::combine_field_element;
+    use rand::SeedableRng;
 
-    fn share_field<R: rand::Rng>(val: Fr, rng: &mut R) -> [Rep3PrimeFieldShare<Fr>; 3] {
-        let shares = mpc_core::protocols::rep3::arithmetic::generate_shares_rep3::<Fr, _>(val, rng);
-        shares.try_into().unwrap()
+    fn share_field<R: rand::Rng + rand::CryptoRng>(val: Fr, rng: &mut R) -> [Rep3PrimeFieldShare<Fr>; 3] {
+        mpc_core::protocols::rep3::share_field_element(val, rng)
     }
 
     #[test]
     fn fwht_rep3_roundtrip() {
-        let mut rng = ark_std::test_rng();
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(0);
         let n = 16usize;
 
         // Create shared values
@@ -439,7 +439,7 @@ mod tests {
 
     #[test]
     fn shift_eq_table_correct() {
-        let mut rng = ark_std::test_rng();
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(0);
         let n = 256usize;
 
         // Random mask r

@@ -7,7 +7,7 @@ use ark_ec::CurveGroup;
 use ark_ff::One;
 use ark_linear_sumcheck::rng::FeedableRNG;
 use crate::field::PrimeField;
-use crate::protocols::rep3::id::PartyID;
+use crate::protocols::rep3::PartyID;
 use num_bigint::BigUint;
 use parking_lot::Mutex;
 use rand::{

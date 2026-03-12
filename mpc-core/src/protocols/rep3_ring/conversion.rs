@@ -2,7 +2,17 @@
 //!
 //! This module contains conversions between share types
 
-use super::{detail, arithmetic};
+use super::{arithmetic, detail};
+use crate::field::PrimeField;
+use crate::preprocessing::dabits::DaBitBatch;
+use crate::preprocessing::edabits::EdaBitsRingBatch;
+use crate::protocols::{
+    rep3::{Rep3PrimeFieldShare, PartyID},
+    rep3_ring::{
+        Rep3RingShare,
+        ring::{bit::Bit, int_ring::IntRing2k, ring_impl::RingElement},
+    },
+};
 use crate::{
     IoResult,
     protocols::{
@@ -14,17 +24,7 @@ use crate::{
         rep3_ring,
     },
 };
-use crate::preprocessing::edabits::EdaBitsRingBatch;
-use crate::preprocessing::dabits::DaBitBatch;
 use itertools::{Itertools, izip};
-use crate::field::PrimeField;
-use crate::protocols::{
-    rep3::{Rep3PrimeFieldShare, id::PartyID},
-    rep3_ring::{
-        Rep3RingShare,
-        ring::{bit::Bit, int_ring::IntRing2k, ring_impl::RingElement},
-    },
-};
 use rand::{distributions::Standard, prelude::Distribution};
 use std::ops::Neg;
 
@@ -109,9 +109,7 @@ where
 
     // reshare x01
     let x01_b = io_context.network.reshare_many(&x01_a)?;
-    let x01 = izip!(x01_a, x01_b)
-        .map(|(a, b)| Rep3RingShare { a, b })
-        .collect::<Vec<_>>();
+    let x01 = izip!(x01_a, x01_b).map(|(a, b)| Rep3RingShare { a, b }).collect::<Vec<_>>();
 
     detail::low_depth_binary_add_many(&x01, &x2, io_context)
 }
@@ -132,32 +130,20 @@ where
 
     match io_context.id {
         PartyID::ID0 => {
-            let k3 = io_context
-                .rngs
-                .bitcomp2
-                .random_elements_3keys::<RingElement<T>>();
+            let k3 = io_context.rngs.bitcomp2.random_elements_3keys::<RingElement<T>>();
 
             res.b = (k3.0 + k3.1 + k3.2).neg();
             y.a = r;
         }
         PartyID::ID1 => {
-            let k2 = io_context
-                .rngs
-                .bitcomp1
-                .random_elements_3keys::<RingElement<T>>();
+            let k2 = io_context.rngs.bitcomp1.random_elements_3keys::<RingElement<T>>();
 
             res.a = (k2.0 + k2.1 + k2.2).neg();
             y.a = r;
         }
         PartyID::ID2 => {
-            let k2 = io_context
-                .rngs
-                .bitcomp1
-                .random_elements_3keys::<RingElement<T>>();
-            let k3 = io_context
-                .rngs
-                .bitcomp2
-                .random_elements_3keys::<RingElement<T>>();
+            let k2 = io_context.rngs.bitcomp1.random_elements_3keys::<RingElement<T>>();
+            let k3 = io_context.rngs.bitcomp2.random_elements_3keys::<RingElement<T>>();
 
             let k2_comp = k2.0 + k2.1 + k2.2;
             let k3_comp = k3.0 + k3.1 + k3.2;
@@ -213,20 +199,14 @@ where
     let y_a = match io_context.id {
         PartyID::ID0 => {
             res.iter_mut().for_each(|res| {
-                let k3 = io_context
-                    .rngs
-                    .bitcomp2
-                    .random_elements_3keys::<RingElement<T>>();
+                let k3 = io_context.rngs.bitcomp2.random_elements_3keys::<RingElement<T>>();
                 res.b = (k3.0 + k3.1 + k3.2).neg();
             });
             r_vec
         }
         PartyID::ID1 => {
             res.iter_mut().for_each(|res| {
-                let k2 = io_context
-                    .rngs
-                    .bitcomp1
-                    .random_elements_3keys::<RingElement<T>>();
+                let k2 = io_context.rngs.bitcomp1.random_elements_3keys::<RingElement<T>>();
 
                 res.a = (k2.0 + k2.1 + k2.2).neg();
             });
@@ -234,14 +214,8 @@ where
         }
         PartyID::ID2 => izip!(res.iter_mut(), r_vec)
             .map(|(res, r)| {
-                let k2 = io_context
-                    .rngs
-                    .bitcomp1
-                    .random_elements_3keys::<RingElement<T>>();
-                let k3 = io_context
-                    .rngs
-                    .bitcomp2
-                    .random_elements_3keys::<RingElement<T>>();
+                let k2 = io_context.rngs.bitcomp1.random_elements_3keys::<RingElement<T>>();
+                let k3 = io_context.rngs.bitcomp2.random_elements_3keys::<RingElement<T>>();
 
                 let k2_comp = k2.0 + k2.1 + k2.2;
                 let k3_comp = k3.0 + k3.1 + k3.2;
@@ -255,9 +229,7 @@ where
 
     // reshare y
     let y_b = io_context.network.reshare_many(&y_a)?;
-    let y: Vec<_> = izip!(y_a, y_b)
-        .map(|(a, b)| Rep3RingShare { a, b })
-        .collect();
+    let y: Vec<_> = izip!(y_a, y_b).map(|(a, b)| Rep3RingShare { a, b }).collect();
     let z = detail::low_depth_binary_add_many(x, &y, io_context)?;
 
     match io_context.id {
@@ -269,18 +241,14 @@ where
             });
         }
         PartyID::ID1 => {
-            let rcv = io_context
-                .network
-                .recv_many::<RingElement<T>>(io_context.id.prev_id())?;
+            let rcv = io_context.network.recv_many::<RingElement<T>>(io_context.id.prev_id())?;
             izip!(res.iter_mut(), rcv, z).for_each(|(res, rcv, z)| {
                 res.b = z.a ^ z.b ^ rcv;
             });
         }
         PartyID::ID2 => {
             let z_b = z.iter().map(|z| z.b.to_owned()).collect_vec();
-            io_context
-                .network
-                .send_many(io_context.id.next_id(), &z_b)?;
+            io_context.network.send_many(io_context.id.next_id(), &z_b)?;
         }
     }
     Ok(res)
@@ -447,31 +415,22 @@ pub fn bit_inject_from_bits_to_field_many<F: PrimeField, N: Rep3Network>(
 
     match io_context.id {
         PartyID::ID0 => {
-            b0.iter_mut()
-                .zip_eq(&mut b2)
-                .zip_eq(x)
-                .for_each(|((b0, b2), x)| {
-                    b0.a = F::from(x.a.0.convert() as u64);
-                    b2.b = F::from(x.b.0.convert() as u64);
-                });
+            b0.iter_mut().zip_eq(&mut b2).zip_eq(x).for_each(|((b0, b2), x)| {
+                b0.a = F::from(x.a.0.convert() as u64);
+                b2.b = F::from(x.b.0.convert() as u64);
+            });
         }
         PartyID::ID1 => {
-            b1.iter_mut()
-                .zip_eq(&mut b0)
-                .zip_eq(x)
-                .for_each(|((b1, b0), x)| {
-                    b1.a = F::from(x.a.0.convert() as u64);
-                    b0.b = F::from(x.b.0.convert() as u64);
-                });
+            b1.iter_mut().zip_eq(&mut b0).zip_eq(x).for_each(|((b1, b0), x)| {
+                b1.a = F::from(x.a.0.convert() as u64);
+                b0.b = F::from(x.b.0.convert() as u64);
+            });
         }
         PartyID::ID2 => {
-            b2.iter_mut()
-                .zip_eq(&mut b1)
-                .zip_eq(x)
-                .for_each(|((b2, b1), x)| {
-                    b2.a = F::from(x.a.0.convert() as u64);
-                    b1.b = F::from(x.b.0.convert() as u64);
-                });
+            b2.iter_mut().zip_eq(&mut b1).zip_eq(x).for_each(|((b2, b1), x)| {
+                b2.a = F::from(x.a.0.convert() as u64);
+                b1.b = F::from(x.b.0.convert() as u64);
+            });
         }
     };
 
@@ -606,11 +565,8 @@ pub fn bit_inject_field_preproc_many<F: PrimeField, N: Rep3Network>(
         }
         PartyID::ID1 => {
             let m0s: Vec<u8> = io.network.recv_many(PartyID::ID0)?;
-            let m1s: Vec<u8> = x
-                .iter()
-                .zip(&batch.thetas)
-                .map(|(xi, &theta)| (xi.a.0.convert() ^ theta) as u8)
-                .collect();
+            let m1s: Vec<u8> =
+                x.iter().zip(&batch.thetas).map(|(xi, &theta)| (xi.a.0.convert() ^ theta) as u8).collect();
             io.network.send_many(PartyID::ID0, &m1s)?;
             (m0s, m1s)
         }
@@ -622,51 +578,42 @@ pub fn bit_inject_field_preproc_many<F: PrimeField, N: Rep3Network>(
 
     // --- Local computation ---
     let results: Vec<Rep3PrimeFieldShare<F>> = match party_id {
-        PartyID::ID0 => {
-            x.iter()
-                .zip(m0s.iter())
-                .zip(m1s.iter())
-                .zip(batch.gammas.iter())
-                .zip(batch.v_shares.iter())
-                .map(|((((xi, &_m0), &m1), &gamma), v)| {
-                    let sigma = (m1 != 0) ^ xi.a.0.convert() ^ xi.b.0.convert() ^ gamma;
-                    let neg1_sigma = if sigma { -F::one() } else { F::one() };
-                    Rep3PrimeFieldShare::new(v.a * neg1_sigma, v.b * neg1_sigma)
-                })
-                .collect()
-        }
-        PartyID::ID1 => {
-            m0s.iter()
-                .zip(x.iter())
-                .zip(batch.thetas.iter())
-                .zip(batch.v_shares.iter())
-                .map(|(((&m0, xi), &theta), v)| {
-                    let beta = (m0 != 0) ^ xi.a.0.convert();
-                    let sigma = beta ^ theta;
-                    let neg1_sigma = if sigma { -F::one() } else { F::one() };
-                    Rep3PrimeFieldShare::new(
-                        v.a * neg1_sigma + F::from(beta as u64),
-                        v.b * neg1_sigma,
-                    )
-                })
-                .collect()
-        }
-        PartyID::ID2 => {
-            m0s.iter()
-                .zip(x.iter())
-                .zip(batch.thetas.iter())
-                .zip(batch.v_shares.iter())
-                .map(|(((&m0, xi), &theta), v)| {
-                    let beta = (m0 != 0) ^ xi.b.0.convert();
-                    let sigma = beta ^ theta;
-                    let neg1_sigma = if sigma { -F::one() } else { F::one() };
-                    Rep3PrimeFieldShare::new(
-                        v.a * neg1_sigma,
-                        v.b * neg1_sigma + F::from(beta as u64),
-                    )
-                })
-                .collect()
-        }
+        PartyID::ID0 => x
+            .iter()
+            .zip(m0s.iter())
+            .zip(m1s.iter())
+            .zip(batch.gammas.iter())
+            .zip(batch.v_shares.iter())
+            .map(|((((xi, &_m0), &m1), &gamma), v)| {
+                let sigma = (m1 != 0) ^ xi.a.0.convert() ^ xi.b.0.convert() ^ gamma;
+                let neg1_sigma = if sigma { -F::one() } else { F::one() };
+                Rep3PrimeFieldShare::new(v.a * neg1_sigma, v.b * neg1_sigma)
+            })
+            .collect(),
+        PartyID::ID1 => m0s
+            .iter()
+            .zip(x.iter())
+            .zip(batch.thetas.iter())
+            .zip(batch.v_shares.iter())
+            .map(|(((&m0, xi), &theta), v)| {
+                let beta = (m0 != 0) ^ xi.a.0.convert();
+                let sigma = beta ^ theta;
+                let neg1_sigma = if sigma { -F::one() } else { F::one() };
+                Rep3PrimeFieldShare::new(v.a * neg1_sigma + F::from(beta as u64), v.b * neg1_sigma)
+            })
+            .collect(),
+        PartyID::ID2 => m0s
+            .iter()
+            .zip(x.iter())
+            .zip(batch.thetas.iter())
+            .zip(batch.v_shares.iter())
+            .map(|(((&m0, xi), &theta), v)| {
+                let beta = (m0 != 0) ^ xi.b.0.convert();
+                let sigma = beta ^ theta;
+                let neg1_sigma = if sigma { -F::one() } else { F::one() };
+                Rep3PrimeFieldShare::new(v.a * neg1_sigma, v.b * neg1_sigma + F::from(beta as u64))
+            })
+            .collect(),
     };
 
     Ok(results)
@@ -690,6 +637,8 @@ where
 {
     match io_context.mpc_type {
         MPCType::Online => Ok(b2a_many(x, io_context)?),
-        MPCType::Preprocessed => b2a_preproc_many(x, batch.expect("b2a_many_selector: preprocessed mode requires batch"), io_context),
+        MPCType::Preprocessed => {
+            b2a_preproc_many(x, batch.expect("b2a_many_selector: preprocessed mode requires batch"), io_context)
+        }
     }
 }

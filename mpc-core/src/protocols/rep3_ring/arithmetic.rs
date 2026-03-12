@@ -16,7 +16,7 @@ use crate::{
 };
 use itertools::{Itertools, izip};
 use crate::protocols::{
-    rep3::id::PartyID,
+    rep3::PartyID,
     rep3_ring::ring::{bit::Bit, int_ring::IntRing2k, ring_impl::RingElement},
 };
 use num_traits::{One, Zero};
@@ -27,20 +27,6 @@ use super::{binary, conversion, detail};
 
 /// Type alias for a [`Rep3RingShare`] which is used for both arithmetic and binary shares.
 pub type RingShare<F> = Rep3RingShare<F>;
-
-pub fn generate_shares_rep3<T: IntRing2k, R: Rng>(val: T, rng: &mut R) -> Vec<Rep3RingShare<T>>
-where
-    Standard: Distribution<T>,
-{
-    let t0 = rng.r#gen::<T>();
-    let t1 = rng.r#gen::<T>();
-    let t2 = val.wrapping_sub(&t0).wrapping_sub(&t1);
-
-    let p_share_0 = Rep3RingShare::new(t0, t2);
-    let p_share_1 = Rep3RingShare::new(t1, t0);
-    let p_share_2 = Rep3RingShare::new(t2, t1);
-    vec![p_share_0, p_share_1, p_share_2]
-}
 
 /// Performs addition between two shared values.
 pub fn add<T: IntRing2k>(a: RingShare<T>, b: RingShare<T>) -> RingShare<T> {

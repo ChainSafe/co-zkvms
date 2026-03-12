@@ -1,5 +1,5 @@
 use crate::protocols::{
-    rep3::id::PartyID,
+    rep3::PartyID,
     rep3_ring::ring::{bit::Bit, int_ring::IntRing2k, ring_impl::RingElement},
 };
 use num_traits::{AsPrimitive, Zero};

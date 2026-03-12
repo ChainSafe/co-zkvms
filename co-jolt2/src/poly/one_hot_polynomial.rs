@@ -866,7 +866,8 @@ pub fn compute_g_from_masked_indices_many<F: JoltField, const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_std::test_rng;
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha12Rng;
     use ark_std::UniformRand;
     use jolt_core::ark_bn254::Fr;
     use jolt_core::ark_bn254::{G1Affine, G1Projective};
@@ -880,12 +881,11 @@ mod tests {
     use std::path::Path;
     use std::sync::RwLock;
 
-    fn share_field_element_rep3<F: JoltField, R: rand::Rng>(val: F, rng: &mut R) -> [Rep3PrimeFieldShare<F>; 3] {
-        let shares = mpc_core::protocols::rep3::arithmetic::generate_shares_rep3(val, rng);
-        shares.try_into().expect("rep3 share count")
+    fn share_field_element_rep3<F: JoltField, R: rand::Rng + rand::CryptoRng>(val: F, rng: &mut R) -> [Rep3PrimeFieldShare<F>; 3] {
+        mpc_core::protocols::rep3::share_field_element(val, rng)
     }
 
-    fn build_matching_polys<F: JoltField, R: rand::RngCore + rand::Rng>(
+    fn build_matching_polys<F: JoltField, R: rand::RngCore + rand::Rng + rand::CryptoRng>(
         rng: &mut R,
         k: usize,
         t: usize,
@@ -933,12 +933,8 @@ mod tests {
                     }
                 }
                 Some(kj) => {
-                    // Indices are assumed to be binary/XOR shared for the RandOHV construction.
-                    //
-                    // Note: `rep3_ring::arithmetic::generate_shares_rep3` uses plain subtraction on
-                    // unsigned integers and can panic under debug overflow checks; the binary/XOR
-                    // generator is safe in debug builds.
-                    let shares = mpc_core::protocols::rep3_ring::binary::generate_shares_rep3(kj, rng);
+                    // Indices are binary/XOR shared for the RandOHV construction.
+                    let shares = mpc_core::protocols::rep3_ring::share_ring_element_binary(mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement(kj), rng);
                     for pid in 0..3 {
                         nonzero_indices_shares[pid].push(Some(shares[pid]));
                     }
@@ -962,7 +958,7 @@ mod tests {
     #[test]
     fn one_hot_masked_select() {
         type F = Fr;
-        let mut rng = test_rng();
+        let mut rng = ChaCha12Rng::seed_from_u64(0);
 
         let K = 256usize;
         let r: u8 = (rng.next_u32() as u8) & 0xff;
@@ -1004,7 +1000,7 @@ mod tests {
     #[test]
     fn one_hot_eval_correct() {
         type F = Fr;
-        let mut rng = test_rng();
+        let mut rng = ChaCha12Rng::seed_from_u64(0);
 
         let K = 256usize;
         let log_k = 8usize;
@@ -1066,7 +1062,7 @@ mod tests {
     #[test]
     fn one_hot_eval_open_sumcheck() {
         type F = Fr;
-        let mut rng = test_rng();
+        let mut rng = ChaCha12Rng::seed_from_u64(0);
 
         let log_k = 8usize;
         let log_t = 9usize;
@@ -1199,7 +1195,7 @@ mod tests {
         );
 
         type F = Fr;
-        let mut rng = test_rng();
+        let mut rng = ChaCha12Rng::seed_from_u64(0);
 
         let log_k = 8usize;
         let log_t = 9usize;

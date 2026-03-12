@@ -372,16 +372,16 @@ pub fn shifted_table_from_rand_ohv<F: JoltField>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_std::test_rng;
     use ark_std::UniformRand;
     use jolt_core::ark_bn254::Fr;
     use mpc_core::protocols::rep3::combine_field_element;
     use num_traits::{One, Zero};
     use rand::RngCore;
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha12Rng;
 
-    fn share_field_element_rep3<F: JoltField, R: rand::Rng>(val: F, rng: &mut R) -> [Rep3PrimeFieldShare<F>; 3] {
-        let shares = mpc_core::protocols::rep3::arithmetic::generate_shares_rep3(val, rng);
-        shares.try_into().expect("rep3 share count")
+    fn share_field_element_rep3<F: JoltField, R: rand::Rng + rand::CryptoRng>(val: F, rng: &mut R) -> [Rep3PrimeFieldShare<F>; 3] {
+        mpc_core::protocols::rep3::share_field_element(val, rng)
     }
 
     fn bind_high_to_low_plain<F: JoltField>(vals: &mut Vec<F>, r: F) {
@@ -398,7 +398,7 @@ mod tests {
     #[test]
     fn rep3_ra_shift_correct() {
         type F = Fr;
-        let mut rng = test_rng();
+        let mut rng = ChaCha12Rng::seed_from_u64(0);
 
         let k = 256usize;
         let t = 1usize << 5;
@@ -441,7 +441,7 @@ mod tests {
     #[test]
     fn rep3_ra_bind_correct() {
         type F = Fr;
-        let mut rng = test_rng();
+        let mut rng = ChaCha12Rng::seed_from_u64(0);
 
         let k = 256usize;
         let t = 1usize << 5;
@@ -494,7 +494,7 @@ mod tests {
     #[test]
     fn rep3_ra_evals_correct() {
         type F = Fr;
-        let mut rng = test_rng();
+        let mut rng = ChaCha12Rng::seed_from_u64(0);
 
         let k = 256usize;
         let t = 1usize << 5;
