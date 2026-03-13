@@ -59,8 +59,7 @@ pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomp
         for phase in 0..total_phases {
             let suffix_len = (total_phases - 1 - phase) * ROUNDS_PER_PHASE;
             let (mut prefix_bits, suffix_bits) =
-                LookupBits::new(lookup_index, XLEN * 2 - phase * ROUNDS_PER_PHASE)
-                    .split(suffix_len);
+                LookupBits::new(lookup_index, XLEN * 2 - phase * ROUNDS_PER_PHASE).split(suffix_len);
 
             let suffix_evals: Vec<_> = T::default()
                 .suffixes()
@@ -74,23 +73,15 @@ pub fn prefix_suffix_test<const XLEN: usize, F: JoltField, T: PrefixSuffixDecomp
                 eval_point.push(F::from_u32(c));
                 prefix_bits.pop_msb();
 
-                eval_point
-                    .extend(index_to_field_bitvector(prefix_bits.into(), prefix_bits.len()).iter());
-                eval_point
-                    .extend(index_to_field_bitvector(suffix_bits.into(), suffix_bits.len()).iter());
+                eval_point.extend(index_to_field_bitvector(prefix_bits.into(), prefix_bits.len()).iter());
+                eval_point.extend(index_to_field_bitvector(suffix_bits.into(), suffix_bits.len()).iter());
 
                 let mle_eval = T::default().evaluate_mle(&eval_point);
 
-                let r_x = if j % 2 == 1 {
-                    Some(*r.last().unwrap())
-                } else {
-                    None
-                };
+                let r_x = if j % 2 == 1 { Some(*r.last().unwrap()) } else { None };
 
                 let prefix_evals: Vec<_> = Prefixes::iter()
-                    .map(|prefix| {
-                        prefix.prefix_mle::<XLEN, F, F>(&prefix_checkpoints, r_x, c, prefix_bits, j)
-                    })
+                    .map(|prefix| prefix.prefix_mle::<XLEN, F, F>(&prefix_checkpoints, r_x, c, prefix_bits, j))
                     .collect();
 
                 let combined = T::default().combine(&prefix_evals, &suffix_evals);

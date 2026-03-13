@@ -52,8 +52,7 @@ impl<const XLEN: usize> JoltLookupTable for VirtualRotrWTable<XLEN> {
             first_sum += r_x * r_y;
 
             // Update second_sum
-            second_sum +=
-                r_x * (F::one() - r_y) * prod_one_plus_y * F::from_u64(1 << (XLEN - 1 - i));
+            second_sum += r_x * (F::one() - r_y) * prod_one_plus_y * F::from_u64(1 << (XLEN - 1 - i));
 
             // Update prod_one_plus_y for next iteration
             prod_one_plus_y *= F::one() + r_y;
@@ -65,12 +64,7 @@ impl<const XLEN: usize> JoltLookupTable for VirtualRotrWTable<XLEN> {
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualRotrWTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
-        vec![
-            Suffixes::RightShiftWHelper,
-            Suffixes::RightShiftW,
-            Suffixes::LeftShiftW,
-            Suffixes::One,
-        ]
+        vec![Suffixes::RightShiftWHelper, Suffixes::RightShiftW, Suffixes::LeftShiftW, Suffixes::One]
     }
 
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {

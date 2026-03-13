@@ -20,10 +20,7 @@ impl<F: JoltField> EqPolynomial<F> {
         X: Mul<Y, Output = F>,
     {
         assert_eq!(x.len(), y.len());
-        x.par_iter()
-            .zip(y.par_iter())
-            .map(|(x_i, y_i)| *x_i * *y_i + (F::one() - *x_i) * (F::one() - *y_i))
-            .product()
+        x.par_iter().zip(y.par_iter()).map(|(x_i, y_i)| *x_i * *y_i + (F::one() - *x_i) * (F::one() - *y_i)).product()
     }
     /// Computes the MLE evaluation EQ(x, y)
     pub fn mle_endian<const E1: Endianness, const E2: Endianness>(
@@ -44,7 +41,7 @@ impl<F: JoltField> EqPolynomial<F> {
         }
     }
 
-    #[tracing::instrument(skip_all, name = "EqPolynomial::evals")]
+    #[tracing::instrument(skip_all, level = "trace", name = "EqPolynomial::evals")]
     /// Computes the table of coefficients: `{eq(r, x) for all x in {0, 1}^n}`
     /// If `scaling_factor` is provided, computes `scaling_factor * eq(r, x)` instead.
     pub fn evals<C>(r: &[C]) -> Vec<F>
@@ -69,7 +66,7 @@ impl<F: JoltField> EqPolynomial<F> {
         }
     }
 
-    #[tracing::instrument(skip_all, name = "EqPolynomial::evals_cached")]
+    #[tracing::instrument(skip_all, level = "trace", name = "EqPolynomial::evals_cached")]
     /// Computes the table of coefficients like `evals`, but also caches the intermediate results
     ///
     /// In other words, computes `{eq(r[i..], x) for all x in {0, 1}^{n - i}}` and for all `i in
@@ -124,9 +121,8 @@ impl<F: JoltField> EqPolynomial<F> {
         C: Copy + Send + Sync + Into<F>,
         F: std::ops::Mul<C, Output = F> + std::ops::SubAssign<F>,
     {
-        let mut evals: Vec<Vec<F>> = (0..r.len() + 1)
-            .map(|i| vec![scaling_factor.unwrap_or(F::one()); 1 << i])
-            .collect();
+        let mut evals: Vec<Vec<F>> =
+            (0..r.len() + 1).map(|i| vec![scaling_factor.unwrap_or(F::one()); 1 << i]).collect();
         let mut size = 1;
         for j in 0..r.len() {
             size *= 2;
@@ -141,9 +137,8 @@ impl<F: JoltField> EqPolynomial<F> {
     /// evals_serial_cached but for "high to low" ordering, used specifically in the Gruen x Dao Thaler optimization.
     fn evals_serial_cached_rev(r: &[F::Challenge], scaling_factor: Option<F>) -> Vec<Vec<F>> {
         let rev_r = r.iter().rev().collect::<Vec<_>>();
-        let mut evals: Vec<Vec<F>> = (0..r.len() + 1)
-            .map(|i| vec![scaling_factor.unwrap_or(F::one()); 1 << i])
-            .collect();
+        let mut evals: Vec<Vec<F>> =
+            (0..r.len() + 1).map(|i| vec![scaling_factor.unwrap_or(F::one()); 1 << i]).collect();
         let mut size = 1;
         for j in 0..r.len() {
             for i in 0..size {
@@ -178,13 +173,10 @@ impl<F: JoltField> EqPolynomial<F> {
             let (evals_left, evals_right) = evals.split_at_mut(size);
             let (evals_right, _) = evals_right.split_at_mut(size);
 
-            evals_left
-                .par_iter_mut()
-                .zip(evals_right.par_iter_mut())
-                .for_each(|(x, y)| {
-                    *y = *x * *r;
-                    *x -= *y;
-                });
+            evals_left.par_iter_mut().zip(evals_right.par_iter_mut()).for_each(|(x, y)| {
+                *y = *x * *r;
+                *x -= *y;
+            });
 
             size *= 2;
         }
@@ -220,14 +212,10 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
         (0..l)
             .into_par_iter()
             .map(|k| {
-                let lower_bits_product = (0..k)
-                    .map(|i| x[l - 1 - i] * (F::one() - y[l - 1 - i]))
-                    .product::<F>();
+                let lower_bits_product = (0..k).map(|i| x[l - 1 - i] * (F::one() - y[l - 1 - i])).product::<F>();
                 let kth_bit_product = (F::one() - x[l - 1 - k]) * y[l - 1 - k];
                 let higher_bits_product = ((k + 1)..l)
-                    .map(|i| {
-                        x[l - 1 - i] * y[l - 1 - i] + (one - x[l - 1 - i]) * (one - y[l - 1 - i])
-                    })
+                    .map(|i| x[l - 1 - i] * y[l - 1 - i] + (one - x[l - 1 - i]) * (one - y[l - 1 - i]))
                     .product::<F>();
                 lower_bits_product * kth_bit_product * higher_bits_product
             })
@@ -264,14 +252,9 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
             }
             r_lower_product *= F::one() - r[i];
 
-            eq_plus_one_evals
-                .par_iter_mut()
-                .enumerate()
-                .skip(half_step)
-                .step_by(step)
-                .for_each(|(index, v)| {
-                    *v = eq_evals[index - half_step] * r_lower_product;
-                });
+            eq_plus_one_evals.par_iter_mut().enumerate().skip(half_step).step_by(step).for_each(|(index, v)| {
+                *v = eq_evals[index - half_step] * r_lower_product;
+            });
 
             eq_evals_helper(&mut eq_evals, r, i + 1);
         }
@@ -293,9 +276,7 @@ mod tests {
     fn test_evals() {
         let mut rng = test_rng();
         for len in 5..22 {
-            let r = (0..len)
-                .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
-                .collect::<Vec<_>>();
+            let r = (0..len).map(|_| <Fr as JoltField>::Challenge::random(&mut rng)).collect::<Vec<_>>();
             let start = Instant::now();
             let evals_serial: Vec<Fr> = EqPolynomial::evals_serial(&r, None);
             let end_first = Instant::now();
@@ -303,21 +284,9 @@ mod tests {
             let end_second = Instant::now();
             let evals_serial_cached = EqPolynomial::evals_serial_cached(&r, None);
             let end_third = Instant::now();
-            println!(
-                "len: {}, Time taken to compute evals_serial: {:?}",
-                len,
-                end_first - start
-            );
-            println!(
-                "len: {}, Time taken to compute evals_parallel: {:?}",
-                len,
-                end_second - end_first
-            );
-            println!(
-                "len: {}, Time taken to compute evals_serial_cached: {:?}",
-                len,
-                end_third - end_second
-            );
+            println!("len: {}, Time taken to compute evals_serial: {:?}", len, end_first - start);
+            println!("len: {}, Time taken to compute evals_parallel: {:?}", len, end_second - end_first);
+            println!("len: {}, Time taken to compute evals_serial_cached: {:?}", len, end_third - end_second);
             assert_eq!(evals_serial, evals_parallel);
             assert_eq!(evals_serial, *evals_serial_cached.last().unwrap());
         }
@@ -329,9 +298,7 @@ mod tests {
     fn test_evals_cached() {
         let mut rng = test_rng();
         for len in 2..22 {
-            let r = (0..len)
-                .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
-                .collect::<Vec<_>>();
+            let r = (0..len).map(|_| <Fr as JoltField>::Challenge::random(&mut rng)).collect::<Vec<_>>();
             let evals_serial_cached = EqPolynomial::<Fr>::evals_serial_cached(&r, None);
             for i in 0..len {
                 let evals = EqPolynomial::<Fr>::evals(&r[..i]);

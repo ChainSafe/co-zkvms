@@ -8,18 +8,7 @@ use crate::protocols::rep3::PartyID;
 use crate::serde_compat::{ark_de, ark_se};
 
 /// This type represents a replicated shared value. Since a replicated share of a field element contains additive shares of two parties, this type contains two field elements.
-#[derive(
-    Debug,
-    Copy,
-    Clone,
-    PartialEq,
-    Eq,
-    Hash,
-    CanonicalSerialize,
-    CanonicalDeserialize,
-    Serialize,
-    Deserialize,
-)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, CanonicalSerialize, CanonicalDeserialize, Serialize, Deserialize)]
 pub struct Rep3PrimeFieldShare<F: PrimeField> {
     /// Share of this party
     #[serde(serialize_with = "ark_se", deserialize_with = "ark_de")]
@@ -43,10 +32,7 @@ impl<F: PrimeField> Rep3PrimeFieldShare<F> {
 
     /// Constructs a zero share.
     pub fn zero_share() -> Self {
-        Self {
-            a: F::zero(),
-            b: F::zero(),
-        }
+        Self { a: F::zero(), b: F::zero() }
     }
 
     /// Unwraps the type into two additive shares.
@@ -101,20 +87,14 @@ impl<F: PrimeField> std::ops::Add for Rep3PrimeFieldShare<F> {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
-        Rep3PrimeFieldShare::<F> {
-            a: self.a + rhs.a,
-            b: self.b + rhs.b,
-        }
+        Rep3PrimeFieldShare::<F> { a: self.a + rhs.a, b: self.b + rhs.b }
     }
 }
 impl<F: PrimeField> std::ops::Add<&Rep3PrimeFieldShare<F>> for &'_ Rep3PrimeFieldShare<F> {
     type Output = Rep3PrimeFieldShare<F>;
 
     fn add(self, rhs: &Rep3PrimeFieldShare<F>) -> Self::Output {
-        Rep3PrimeFieldShare::<F> {
-            a: self.a + rhs.a,
-            b: self.b + rhs.b,
-        }
+        Rep3PrimeFieldShare::<F> { a: self.a + rhs.a, b: self.b + rhs.b }
     }
 }
 
@@ -136,10 +116,7 @@ impl<F: PrimeField> std::ops::Sub for Rep3PrimeFieldShare<F> {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        Rep3PrimeFieldShare::<F> {
-            a: self.a - rhs.a,
-            b: self.b - rhs.b,
-        }
+        Rep3PrimeFieldShare::<F> { a: self.a - rhs.a, b: self.b - rhs.b }
     }
 }
 
@@ -147,10 +124,7 @@ impl<F: PrimeField> std::ops::Sub<&Rep3PrimeFieldShare<F>> for &'_ Rep3PrimeFiel
     type Output = Rep3PrimeFieldShare<F>;
 
     fn sub(self, rhs: &Rep3PrimeFieldShare<F>) -> Self::Output {
-        Rep3PrimeFieldShare::<F> {
-            a: self.a - rhs.a,
-            b: self.b - rhs.b,
-        }
+        Rep3PrimeFieldShare::<F> { a: self.a - rhs.a, b: self.b - rhs.b }
     }
 }
 
@@ -174,10 +148,7 @@ impl<F: PrimeField> std::ops::Mul<F> for Rep3PrimeFieldShare<F> {
     type Output = Rep3PrimeFieldShare<F>;
 
     fn mul(self, rhs: F) -> Self::Output {
-        Self::Output {
-            a: self.a * rhs,
-            b: self.b * rhs,
-        }
+        Self::Output { a: self.a * rhs, b: self.b * rhs }
     }
 }
 
@@ -185,10 +156,7 @@ impl<F: PrimeField> std::ops::Mul<F> for &Rep3PrimeFieldShare<F> {
     type Output = Rep3PrimeFieldShare<F>;
 
     fn mul(self, rhs: F) -> Self::Output {
-        Self::Output {
-            a: self.a * rhs,
-            b: self.b * rhs,
-        }
+        Self::Output { a: self.a * rhs, b: self.b * rhs }
     }
 }
 
@@ -212,25 +180,17 @@ impl<F: PrimeField> std::ops::Neg for Rep3PrimeFieldShare<F> {
     type Output = Rep3PrimeFieldShare<F>;
 
     fn neg(self) -> Self::Output {
-        Rep3PrimeFieldShare::<F> {
-            a: -self.a,
-            b: -self.b,
-        }
+        Rep3PrimeFieldShare::<F> { a: -self.a, b: -self.b }
     }
 }
 
 impl<F: PrimeField> ark_ff::Zero for Rep3PrimeFieldShare<F> {
     fn zero() -> Self {
-        Self {
-            a: F::zero(),
-            b: F::zero(),
-        }
+        Self { a: F::zero(), b: F::zero() }
     }
 
     fn is_zero(&self) -> bool {
-        panic!(
-            "is_zero is not a meaningful operation for Rep3PrimeFieldShare, use interative zero check instead"
-        );
+        panic!("is_zero is not a meaningful operation for Rep3PrimeFieldShare, use interative zero check instead");
     }
 }
 

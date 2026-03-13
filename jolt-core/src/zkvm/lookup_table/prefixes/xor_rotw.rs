@@ -10,17 +10,9 @@ use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 /// Only processes the lower 32 bits (j >= XLEN).
 pub enum XorRotWPrefix<const XLEN: usize, const ROTATION: u32> {}
 
-impl<const XLEN: usize, const ROTATION: u32, F: JoltField> SparseDensePrefix<F>
-    for XorRotWPrefix<XLEN, ROTATION>
-{
+impl<const XLEN: usize, const ROTATION: u32, F: JoltField> SparseDensePrefix<F> for XorRotWPrefix<XLEN, ROTATION> {
     // Note: This function only works correctly for XLEN=64
-    fn prefix_mle<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<C>,
-        c: u32,
-        mut b: LookupBits,
-        j: usize,
-    ) -> F
+    fn prefix_mle<C>(checkpoints: &[PrefixCheckpoint<F>], r_x: Option<C>, c: u32, mut b: LookupBits, j: usize) -> F
     where
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
@@ -77,12 +69,7 @@ impl<const XLEN: usize, const ROTATION: u32, F: JoltField> SparseDensePrefix<F>
         result
     }
 
-    fn update_prefix_checkpoint<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: C,
-        r_y: C,
-        j: usize,
-    ) -> PrefixCheckpoint<F>
+    fn update_prefix_checkpoint<C>(checkpoints: &[PrefixCheckpoint<F>], r_x: C, r_y: C, j: usize) -> PrefixCheckpoint<F>
     where
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,

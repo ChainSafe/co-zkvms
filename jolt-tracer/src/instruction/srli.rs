@@ -25,8 +25,7 @@ impl SRLI {
             Xlen::Bit64 => 0x3f,
         };
         cpu.x[self.operands.rd as usize] = cpu.sign_extend(
-            cpu.unsigned_data(cpu.x[self.operands.rs1 as usize])
-                .wrapping_shr(self.operands.imm as u32 & mask) as i64,
+            cpu.unsigned_data(cpu.x[self.operands.rs1 as usize]).wrapping_shr(self.operands.imm as u32 & mask) as i64,
         );
     }
 }
@@ -51,11 +50,7 @@ impl RISCVTrace for SRLI {
     ///
     /// The bitmask has 1s in positions that will contain data after the shift,
     /// allowing efficient verification in the zkVM constraint system.
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let (shift, len) = match xlen {
             Xlen::Bit32 => (self.operands.imm & 0x1f, 32),
             Xlen::Bit64 => (self.operands.imm & 0x3f, 64),

@@ -1,5 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
+#[cfg(feature = "zk")]
+use crate::subprotocols::blindfold::{InputClaimConstraint, ProductTerm, ValueSource};
 use num_traits::Zero;
 
 use crate::{
@@ -30,33 +32,16 @@ pub struct HammingWeightSumcheck<F: JoltField> {
 
 impl<F: JoltField> HammingWeightSumcheck<F> {
     /// Construct a prover instance from pre-extracted parts.
-    pub fn new_prover_from_parts(
-        gamma_powers: Vec<F>,
-        log_K_chunk: usize,
-        F_arrays: Vec<Vec<F>>,
-    ) -> Self {
+    pub fn new_prover_from_parts(gamma_powers: Vec<F>, log_K_chunk: usize, F_arrays: Vec<Vec<F>>) -> Self {
         let d = gamma_powers.len();
-        let ra = F_arrays
-            .into_iter()
-            .map(MultilinearPolynomial::from)
-            .collect::<Vec<_>>();
-        Self {
-            gamma: gamma_powers,
-            log_K_chunk,
-            d,
-            prover_state: Some(HammingWeightProverState { ra }),
-        }
+        let ra = F_arrays.into_iter().map(MultilinearPolynomial::from).collect::<Vec<_>>();
+        Self { gamma: gamma_powers, log_K_chunk, d, prover_state: Some(HammingWeightProverState { ra }) }
     }
 
     /// Construct a verifier-like instance from pre-extracted parts.
     pub fn new_verifier_from_parts(gamma_powers: Vec<F>, log_K_chunk: usize) -> Self {
         let d = gamma_powers.len();
-        Self {
-            gamma: gamma_powers,
-            log_K_chunk,
-            d,
-            prover_state: None,
-        }
+        Self { gamma: gamma_powers, log_K_chunk, d, prover_state: None }
     }
 
     pub fn d(&self) -> usize {
@@ -102,9 +87,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
                 let ra_sum = (0..ra.len() / 2)
                     .into_par_iter()
                     .map(|i| ra.get_bound_coeff(2 * i))
-                    .fold_with(F::Unreduced::<5>::zero(), |running, new| {
-                        running + new.as_unreduced_ref()
-                    })
+                    .fold_with(F::Unreduced::<5>::zero(), |running, new| running + new.as_unreduced_ref())
                     .reduce(F::Unreduced::zero, |running, new| running + new);
                 ra_sum.mul_trunc::<4, 9>(gamma.as_unreduced_ref())
             })
@@ -123,10 +106,7 @@ impl<F: JoltField> HammingWeightSumcheck<F> {
             .for_each(|ra| ra.bind_parallel(r_j, BindingOrder::LowToHigh))
     }
 
-    pub fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    pub fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.iter().rev().copied().collect())
     }
 }
@@ -166,10 +146,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingWeightSumche
             .sum()
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         self.normalize_opening_point(opening_point)
     }
 
@@ -181,24 +158,31 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for HammingWeightSumche
     ) {
         let r_cycle = accumulator
             .borrow()
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::LookupOutput,
-                SumcheckId::SpartanOuter,
-            )
+            .get_virtual_polynomial_opening(VirtualPolynomial::LookupOutput, SumcheckId::SpartanOuter)
             .0
             .r
             .clone();
-        let r = opening_point
-            .r
-            .iter()
-            .cloned()
-            .chain(r_cycle.iter().cloned())
-            .collect::<Vec<_>>();
+        let r = opening_point.r.iter().cloned().chain(r_cycle.iter().cloned()).collect::<Vec<_>>();
         accumulator.borrow_mut().append_sparse(
             transcript,
             (0..self.d).map(CommittedPolynomial::BytecodeRa).collect(),
             SumcheckId::BytecodeHammingWeight,
             r,
         );
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::sum_of_products(
+            self.gamma.iter().enumerate().map(|(idx, _)| ProductTerm::single(ValueSource::challenge(idx))).collect(),
+        )
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(
+        &self,
+        _opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+    ) -> Vec<F> {
+        self.gamma.clone()
     }
 }

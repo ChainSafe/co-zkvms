@@ -21,11 +21,7 @@ pub struct Program {
 
 impl Program {
     pub fn new(elf_contents: &[u8], memory_config: &MemoryConfig) -> Self {
-        Self {
-            elf_contents: elf_contents.to_vec(),
-            memory_config: *memory_config,
-            elf: None,
-        }
+        Self { elf_contents: elf_contents.to_vec(), memory_config: *memory_config, elf: None }
     }
 
     /// Decode the ELF file into instructions and memory initialization
@@ -40,14 +36,7 @@ impl Program {
         untrusted_advice: &[u8],
         trusted_advice: &[u8],
     ) -> (Vec<Cycle>, Memory, JoltDevice) {
-        trace(
-            &self.elf_contents,
-            self.elf.as_ref(),
-            inputs,
-            untrusted_advice,
-            trusted_advice,
-            &self.memory_config,
-        )
+        trace(&self.elf_contents, self.elf.as_ref(), inputs, untrusted_advice, trusted_advice, &self.memory_config)
     }
 
     pub fn trace_to_file(
@@ -75,10 +64,7 @@ pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64) {
     let allocator = VirtualRegisterAllocator::default();
 
     // Expand virtual sequences
-    instructions = instructions
-        .into_iter()
-        .flat_map(|instr| instr.inline_sequence(&allocator, xlen))
-        .collect();
+    instructions = instructions.into_iter().flat_map(|instr| instr.inline_sequence(&allocator, xlen)).collect();
 
     (instructions, raw_bytes, program_size)
 }
@@ -91,14 +77,8 @@ pub fn trace(
     trusted_advice: &[u8],
     memory_config: &MemoryConfig,
 ) -> (Vec<Cycle>, Memory, JoltDevice) {
-    let (trace, memory, io_device) = tracer::trace(
-        elf_contents,
-        elf_path,
-        inputs,
-        untrusted_advice,
-        trusted_advice,
-        memory_config,
-    );
+    let (trace, memory, io_device) =
+        tracer::trace(elf_contents, elf_path, inputs, untrusted_advice, trusted_advice, memory_config);
     (trace, memory, io_device)
 }
 

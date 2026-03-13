@@ -19,10 +19,7 @@ impl LookupBits {
         if len < 128 {
             bits %= 1 << len;
         }
-        Self {
-            bytes: bits.to_le_bytes(),
-            len: len as u8,
-        }
+        Self { bytes: bits.to_le_bytes(), len: len as u8 }
     }
 
     pub fn uninterleave(&self) -> (Self, Self) {
@@ -58,27 +55,17 @@ impl LookupBits {
     }
 
     pub fn trailing_zeros(&self) -> u32 {
-        std::cmp::min(
-            u128::from_le_bytes(self.bytes).trailing_zeros(),
-            self.len as u32,
-        )
+        std::cmp::min(u128::from_le_bytes(self.bytes).trailing_zeros(), self.len as u32)
     }
 
     pub fn leading_ones(&self) -> u32 {
-        u128::from_le_bytes(self.bytes)
-            .wrapping_shl(128 - self.len as u32)
-            .leading_ones()
+        u128::from_le_bytes(self.bytes).wrapping_shl(128 - self.len as u32).leading_ones()
     }
 }
 
 impl Display for LookupBits {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{:0width$b}",
-            u128::from_le_bytes(self.bytes),
-            width = self.len as usize
-        )
+        write!(f, "{:0width$b}", u128::from_le_bytes(self.bytes), width = self.len as usize)
     }
 }
 

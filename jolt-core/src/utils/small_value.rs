@@ -22,11 +22,7 @@ pub mod accum {
         let field_bigint = field.as_unreduced_ref();
         if !product.is_zero() {
             let mag = F::Unreduced::<4>::from(product);
-            let acc = if product.is_positive() {
-                pos_acc
-            } else {
-                neg_acc
-            };
+            let acc = if product.is_positive() { pos_acc } else { neg_acc };
             field_bigint.fmadd_trunc::<4, 8>(&mag, acc);
         }
     }
@@ -39,10 +35,7 @@ pub mod accum {
 
     impl<F: JoltField> Default for SignedUnreducedAccum<F> {
         fn default() -> Self {
-            Self {
-                pos: UnreducedProduct::<F>::zero(),
-                neg: UnreducedProduct::<F>::zero(),
-            }
+            Self { pos: UnreducedProduct::<F>::zero(), neg: UnreducedProduct::<F>::zero() }
         }
     }
 
@@ -79,11 +72,7 @@ pub mod accum {
                 let lo = bz.magnitude_lo();
                 let hi = bz.magnitude_hi() as u64;
                 let mag = F::Unreduced::from([lo[0], lo[1], hi]);
-                let acc = if bz.is_positive() {
-                    &mut self.pos
-                } else {
-                    &mut self.neg
-                };
+                let acc = if bz.is_positive() { &mut self.pos } else { &mut self.neg };
                 field_bigint.fmadd_trunc::<3, 8>(&mag, acc);
             }
         }
@@ -198,9 +187,7 @@ pub mod svo_helpers {
         pow(3, n) - pow(2, n)
     }
 
-    pub const fn k_to_y_ext_msb<const N: usize>(
-        k_ternary: usize,
-    ) -> ([SVOEvalPoint; N], bool /*is_binary*/) {
+    pub const fn k_to_y_ext_msb<const N: usize>(k_ternary: usize) -> ([SVOEvalPoint; N], bool /*is_binary*/) {
         let mut coords = [SVOEvalPoint::Zero; N];
         let mut temp_k = k_ternary;
         let mut is_binary_flag = true;
@@ -315,9 +302,7 @@ pub mod svo_helpers {
         false
     }
 
-    pub const fn v_coords_to_non_binary_base3_idx(
-        v_coords_lsb_y_ext_order: &[SVOEvalPoint],
-    ) -> usize {
+    pub const fn v_coords_to_non_binary_base3_idx(v_coords_lsb_y_ext_order: &[SVOEvalPoint]) -> usize {
         let num_v_vars = v_coords_lsb_y_ext_order.len();
         if num_v_vars == 0 {
             return 0;
@@ -397,9 +382,7 @@ pub mod svo_helpers {
 
     /// Converts MSB-first SVOEvalPoint coordinates to their global ternary index k.
     /// k = sum_{i=0}^{N-1} val(coords_msb[i]) * 3^(N-1-i)
-    pub const fn svo_coords_msb_to_k_ternary_idx<const N: usize>(
-        coords_msb: &[SVOEvalPoint; N],
-    ) -> usize {
+    pub const fn svo_coords_msb_to_k_ternary_idx<const N: usize>(coords_msb: &[SVOEvalPoint; N]) -> usize {
         if N == 0 {
             return 0;
         }
@@ -443,10 +426,7 @@ pub mod svo_helpers {
         }
 
         // Sanity: consts must match the chosen NUM_SVO_ROUNDS
-        debug_assert_eq!(
-            M_NON_BINARY_POINTS_CONST,
-            num_non_binary_points(NUM_SVO_ROUNDS)
-        );
+        debug_assert_eq!(M_NON_BINARY_POINTS_CONST, num_non_binary_points(NUM_SVO_ROUNDS));
         debug_assert_eq!(NUM_TERNARY_POINTS_CONST, pow(3, NUM_SVO_ROUNDS));
 
         let num_binary_points = 1usize << NUM_SVO_ROUNDS;
@@ -460,10 +440,8 @@ pub mod svo_helpers {
             precompute_ternary_point_infos::<NUM_SVO_ROUNDS, NUM_TERNARY_POINTS_CONST>();
 
         // Memo tables (const-size arrays)
-        let mut memoized_az_evals: [Option<I8OrI96>; NUM_TERNARY_POINTS_CONST] =
-            [None; NUM_TERNARY_POINTS_CONST];
-        let mut memoized_bz_evals: [Option<S160>; NUM_TERNARY_POINTS_CONST] =
-            [None; NUM_TERNARY_POINTS_CONST];
+        let mut memoized_az_evals: [Option<I8OrI96>; NUM_TERNARY_POINTS_CONST] = [None; NUM_TERNARY_POINTS_CONST];
+        let mut memoized_bz_evals: [Option<S160>; NUM_TERNARY_POINTS_CONST] = [None; NUM_TERNARY_POINTS_CONST];
 
         // Recursive helper: Az extension at ternary index k with memoization
         #[inline]
@@ -542,12 +520,7 @@ pub mod svo_helpers {
             // if bz_ext.is_zero() { continue; }
 
             let prod = az_ext * bz_ext;
-            fmadd_unreduced::<F>(
-                &mut tA_pos_acc[i_temp_tA],
-                &mut tA_neg_acc[i_temp_tA],
-                e_in_val,
-                prod,
-            );
+            fmadd_unreduced::<F>(&mut tA_pos_acc[i_temp_tA], &mut tA_neg_acc[i_temp_tA], e_in_val, prod);
         }
     }
 
@@ -810,20 +783,12 @@ pub mod svo_helpers {
                 tA_pos_acc,
                 tA_neg_acc,
             ),
-            2 => compute_and_update_tA_inplace_2::<F>(
-                binary_az_evals,
-                binary_bz_evals,
-                e_in_val,
-                tA_pos_acc,
-                tA_neg_acc,
-            ),
-            3 => compute_and_update_tA_inplace_3::<F>(
-                binary_az_evals,
-                binary_bz_evals,
-                e_in_val,
-                tA_pos_acc,
-                tA_neg_acc,
-            ),
+            2 => {
+                compute_and_update_tA_inplace_2::<F>(binary_az_evals, binary_bz_evals, e_in_val, tA_pos_acc, tA_neg_acc)
+            }
+            3 => {
+                compute_and_update_tA_inplace_3::<F>(binary_az_evals, binary_bz_evals, e_in_val, tA_pos_acc, tA_neg_acc)
+            }
             4 => compute_and_update_tA_inplace_const::<4, 65, 81, F>(
                 binary_az_evals,
                 binary_bz_evals,
@@ -878,32 +843,11 @@ pub mod svo_helpers {
         match NUM_SVO_ROUNDS {
             0 => {
                 // No SVO rounds to process, tA_accums should be empty
-                debug_assert!(
-                    tA_accums.is_empty(),
-                    "tA_accums should be empty for 0 SVO rounds"
-                );
+                debug_assert!(tA_accums.is_empty(), "tA_accums should be empty for 0 SVO rounds");
             }
-            1 => distribute_tA_to_svo_accumulators_1(
-                tA_accums,
-                x_out_val,
-                E_out_vec,
-                accums_zero,
-                accums_infty,
-            ),
-            2 => distribute_tA_to_svo_accumulators_2(
-                tA_accums,
-                x_out_val,
-                E_out_vec,
-                accums_zero,
-                accums_infty,
-            ),
-            3 => distribute_tA_to_svo_accumulators_3(
-                tA_accums,
-                x_out_val,
-                E_out_vec,
-                accums_zero,
-                accums_infty,
-            ),
+            1 => distribute_tA_to_svo_accumulators_1(tA_accums, x_out_val, E_out_vec, accums_zero, accums_infty),
+            2 => distribute_tA_to_svo_accumulators_2(tA_accums, x_out_val, E_out_vec, accums_zero, accums_infty),
+            3 => distribute_tA_to_svo_accumulators_3(tA_accums, x_out_val, E_out_vec, accums_zero, accums_infty),
             4 => {
                 // 81 - 16 = 65 non-binary points
                 distribute_tA_to_svo_accumulators::<4, 65, F>(
@@ -1212,14 +1156,8 @@ pub mod svo_helpers {
     ) {
         if NUM_SVO_ROUNDS == 0 {
             debug_assert!(tA_accums.is_empty(), "tA_accums should be empty for N=0");
-            debug_assert!(
-                accums_zero.is_empty(),
-                "accums_zero should be empty for N=0"
-            );
-            debug_assert!(
-                accums_infty.is_empty(),
-                "accums_infty should be empty for N=0"
-            );
+            debug_assert!(accums_zero.is_empty(), "accums_zero should be empty for N=0");
+            debug_assert!(accums_infty.is_empty(), "accums_infty should be empty for N=0");
         }
 
         // Assert that the provided M_NON_BINARY_POINTS is correct.
@@ -1251,11 +1189,7 @@ pub mod svo_helpers {
             let y_ext_coords_msb: &[SVOEvalPoint; NUM_SVO_ROUNDS] = &y_ext_code_map[tA_idx];
 
             for s_p in 0..NUM_SVO_ROUNDS {
-                let num_suffix_vars_for_E = if NUM_SVO_ROUNDS > s_p + 1 {
-                    NUM_SVO_ROUNDS - 1 - s_p
-                } else {
-                    0
-                };
+                let num_suffix_vars_for_E = if NUM_SVO_ROUNDS > s_p + 1 { NUM_SVO_ROUNDS - 1 - s_p } else { 0 };
 
                 let mut e_suffix_bin_idx = 0;
                 let mut e_suffix_is_binary = true;
@@ -1297,8 +1231,7 @@ pub mod svo_helpers {
                 let mut v_A_coords_lsb_buffer = [SVOEvalPoint::Zero; NUM_SVO_ROUNDS];
                 if s_p > 0 {
                     for i_v_lsb in 0..s_p {
-                        v_A_coords_lsb_buffer[i_v_lsb] =
-                            y_ext_coords_msb[NUM_SVO_ROUNDS - 1 - i_v_lsb];
+                        v_A_coords_lsb_buffer[i_v_lsb] = y_ext_coords_msb[NUM_SVO_ROUNDS - 1 - i_v_lsb];
                     }
                 }
                 let v_A_slice_lsb_order = &v_A_coords_lsb_buffer[0..s_p];
@@ -1322,12 +1255,9 @@ pub mod svo_helpers {
                             let num_slots_in_block_A_sp_zero = pow(3, s_p) - pow(2, s_p);
 
                             if num_slots_in_block_A_sp_zero > 0 {
-                                let idx_within_block =
-                                    v_coords_to_non_binary_base3_idx(v_A_slice_lsb_order);
+                                let idx_within_block = v_coords_to_non_binary_base3_idx(v_A_slice_lsb_order);
                                 let final_idx = base_offset + idx_within_block;
-                                if final_idx < accums_zero.len()
-                                    && idx_within_block < num_slots_in_block_A_sp_zero
-                                {
+                                if final_idx < accums_zero.len() && idx_within_block < num_slots_in_block_A_sp_zero {
                                     accums_zero[final_idx] += current_tA_val * e_factor;
                                 }
                             }
@@ -1342,11 +1272,7 @@ pub mod svo_helpers {
     /// Process the first few sum-check rounds using small value optimization (SVO)
     /// We take in the pre-computed accumulator values, and use them to compute the quadratic
     /// evaluations (and thus cubic polynomials) for the first few sum-check rounds.
-    pub fn process_svo_sumcheck_rounds<
-        const NUM_SVO_ROUNDS: usize,
-        F: JoltField,
-        ProofTranscript: Transcript,
-    >(
+    pub fn process_svo_sumcheck_rounds<const NUM_SVO_ROUNDS: usize, F: JoltField, ProofTranscript: Transcript>(
         accums_zero: &[F],
         accums_infty: &[F],
         r_challenges: &mut Vec<F::Challenge>,
@@ -1358,16 +1284,8 @@ pub mod svo_helpers {
         // Assert lengths of accumulator slices based on NUM_SVO_ROUNDS
         let expected_accums_zero_len = num_accums_eval_zero(NUM_SVO_ROUNDS);
         let expected_accums_infty_len = num_accums_eval_infty(NUM_SVO_ROUNDS);
-        assert_eq!(
-            accums_zero.len(),
-            expected_accums_zero_len,
-            "accums_zero length mismatch"
-        );
-        assert_eq!(
-            accums_infty.len(),
-            expected_accums_infty_len,
-            "accums_infty length mismatch"
-        );
+        assert_eq!(accums_zero.len(), expected_accums_zero_len, "accums_zero length mismatch");
+        assert_eq!(accums_infty.len(), expected_accums_infty_len, "accums_infty length mismatch");
 
         let mut lagrange_coeffs: Vec<F> = vec![F::one()];
         let mut current_acc_zero_offset = 0;
@@ -1385,8 +1303,8 @@ pub mod svo_helpers {
             if num_accs_infty_curr_round > 0
                 && current_acc_infty_offset + num_accs_infty_curr_round <= accums_infty.len()
             {
-                let accums_infty_slice = &accums_infty[current_acc_infty_offset
-                    ..current_acc_infty_offset + num_accs_infty_curr_round];
+                let accums_infty_slice =
+                    &accums_infty[current_acc_infty_offset..current_acc_infty_offset + num_accs_infty_curr_round];
                 for k in 0..num_lagrange_coeffs_for_round {
                     if k < accums_infty_slice.len() && k < lagrange_coeffs.len() {
                         quadratic_eval_infty += accums_infty_slice[k] * lagrange_coeffs[k];
@@ -1402,11 +1320,9 @@ pub mod svo_helpers {
                 pow(3, num_vars_in_v_config) - pow(2, num_vars_in_v_config)
             };
 
-            if num_accs_zero_curr_round > 0
-                && current_acc_zero_offset + num_accs_zero_curr_round <= accums_zero.len()
-            {
-                let accums_zero_slice = &accums_zero
-                    [current_acc_zero_offset..current_acc_zero_offset + num_accs_zero_curr_round];
+            if num_accs_zero_curr_round > 0 && current_acc_zero_offset + num_accs_zero_curr_round <= accums_zero.len() {
+                let accums_zero_slice =
+                    &accums_zero[current_acc_zero_offset..current_acc_zero_offset + num_accs_zero_curr_round];
                 let mut non_binary_v_config_counter = 0;
                 for k_global in 0..num_lagrange_coeffs_for_round {
                     let v_config = get_v_config_digits(k_global, num_vars_in_v_config);
@@ -1414,8 +1330,7 @@ pub mod svo_helpers {
                         && non_binary_v_config_counter < accums_zero_slice.len()
                         && k_global < lagrange_coeffs.len()
                     {
-                        quadratic_eval_0 += accums_zero_slice[non_binary_v_config_counter]
-                            * lagrange_coeffs[k_global];
+                        quadratic_eval_0 += accums_zero_slice[non_binary_v_config_counter] * lagrange_coeffs[k_global];
                         non_binary_v_config_counter += 1;
                     }
                 }
@@ -1436,11 +1351,7 @@ pub mod svo_helpers {
             if i < NUM_SVO_ROUNDS.saturating_sub(1) {
                 lagrange_coeffs = lagrange_coeffs_r_i
                     .iter()
-                    .flat_map(|lagrange_coeff| {
-                        lagrange_coeffs
-                            .iter()
-                            .map(move |coeff| *lagrange_coeff * *coeff)
-                    })
+                    .flat_map(|lagrange_coeff| lagrange_coeffs.iter().map(move |coeff| *lagrange_coeff * *coeff))
                     .collect();
             }
         }
@@ -1465,12 +1376,7 @@ pub mod svo_helpers {
 
     impl<const N: usize> TernaryPointInfo<N> {
         pub const fn default_val() -> Self {
-            Self {
-                is_binary: false,
-                binary_eval_idx: 0,
-                k_val_at_one: 0,
-                k_val_at_zero: 0,
-            }
+            Self { is_binary: false, binary_eval_idx: 0, k_val_at_one: 0, k_val_at_zero: 0 }
         }
     }
 
@@ -1493,10 +1399,8 @@ pub mod svo_helpers {
         digits
     }
 
-    pub const fn precompute_ternary_point_infos<
-        const N: usize,
-        const NUM_TERNARY_POINTS_VAL: usize,
-    >() -> [TernaryPointInfo<N>; NUM_TERNARY_POINTS_VAL] {
+    pub const fn precompute_ternary_point_infos<const N: usize, const NUM_TERNARY_POINTS_VAL: usize>(
+    ) -> [TernaryPointInfo<N>; NUM_TERNARY_POINTS_VAL] {
         if N == 0 {
             // NUM_TERNARY_POINTS_VAL should be 1 in this case (pow(3,0)=1)
             // An empty array cannot be returned if NUM_TERNARY_POINTS_VAL is > 0.
@@ -1601,9 +1505,8 @@ pub mod svo_helpers {
 mod tests {
     use super::accum::UnreducedProduct;
     use super::svo_helpers::{
-        compute_and_update_tA_inplace, compute_and_update_tA_inplace_1,
-        compute_and_update_tA_inplace_2, compute_and_update_tA_inplace_3,
-        compute_and_update_tA_inplace_const,
+        compute_and_update_tA_inplace, compute_and_update_tA_inplace_1, compute_and_update_tA_inplace_2,
+        compute_and_update_tA_inplace_3, compute_and_update_tA_inplace_const,
     };
 
     use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
@@ -1622,11 +1525,7 @@ mod tests {
                 // Bounded 90-bit magnitude to ensure it always fits in I8OrI96,
                 // and give headroom so differences during extension remain within 96 bits.
                 const BITS: u32 = 90;
-                let mask: u128 = if BITS == 128 {
-                    u128::MAX
-                } else {
-                    (1u128 << BITS) - 1
-                };
+                let mask: u128 = if BITS == 128 { u128::MAX } else { (1u128 << BITS) - 1 };
                 let mag = (rng.gen::<u128>() & mask) as i128;
                 let val = if rng.gen::<bool>() { mag } else { -mag };
                 I8OrI96::from_i128(val)
@@ -1655,29 +1554,22 @@ mod tests {
     }
 
     /// Consistency check: hardcoded vs generic small value compute and update tA in place
-    fn run_svo_hardcoded_vs_generic_consistency_check<const NUM_SVO_ROUNDS: usize>(
-        rng: &mut ChaCha20Rng,
-    ) {
+    fn run_svo_hardcoded_vs_generic_consistency_check<const NUM_SVO_ROUNDS: usize>(rng: &mut ChaCha20Rng) {
         let num_vars = NUM_SVO_ROUNDS;
         if num_vars == 0 {
             return;
         }
         let num_non_trivial = 3_usize.pow(num_vars as u32) - 2_usize.pow(num_vars as u32);
 
-        let r: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
-            .map(|_| <Fr as JoltField>::Challenge::from(rng.gen::<u128>()))
-            .collect();
+        let r: Vec<<Fr as JoltField>::Challenge> =
+            (0..num_vars).map(|_| <Fr as JoltField>::Challenge::from(rng.gen::<u128>())).collect();
         let e_in_val: Vec<Fr> = EqPolynomial::evals(&r);
 
         let num_binary_points = 1 << num_vars;
 
         // Create random binary evaluations
-        let binary_az_vals: Vec<I8OrI96> = (0..num_binary_points)
-            .map(|_| random_az_value(rng))
-            .collect();
-        let binary_bz_vals: Vec<S160> = (0..num_binary_points)
-            .map(|_| random_bz_value(rng))
-            .collect();
+        let binary_az_vals: Vec<I8OrI96> = (0..num_binary_points).map(|_| random_az_value(rng)).collect();
+        let binary_bz_vals: Vec<S160> = (0..num_binary_points).map(|_| random_bz_value(rng)).collect();
 
         // Generic small value path (produces Montgomery-form Fr elements after reduction)
         let mut ta_pos_acc_generic = vec![UnreducedProduct::<Fr>::zero(); num_non_trivial];
@@ -1738,9 +1630,7 @@ mod tests {
                 );
             }
             _ => {
-                panic!(
-                    "Unsupported NUM_SVO_ROUNDS for hardcoded consistency check: {NUM_SVO_ROUNDS}"
-                );
+                panic!("Unsupported NUM_SVO_ROUNDS for hardcoded consistency check: {NUM_SVO_ROUNDS}");
             }
         }
 

@@ -19,12 +19,9 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<AND> {
                 (l.as_binary_or_trivial(io_ctx.id), r.as_binary_or_trivial(io_ctx.id))
             })
             .unzip();
-        rep3_ring::binary::and_many(&x, &y, io_ctx)?
-            .into_iter()
-            .zip(out)
-            .for_each(|(z, out)| {
-                *out = FutureRep3Ring::cast_to_field_b2a(z);
-            });
+        rep3_ring::binary::and_many(&x, &y, io_ctx)?.into_iter().zip(out).for_each(|(z, out)| {
+            *out = FutureRep3Ring::cast_to_field_b2a(z);
+        });
         Ok(())
     }
 }

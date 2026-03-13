@@ -82,13 +82,7 @@ impl DoryLayout {
     /// * `cycle` - The cycle index (0 to T-1)
     /// * `K` - Total number of addresses
     /// * `T` - Total number of cycles
-    pub fn address_cycle_to_index(
-        &self,
-        address: usize,
-        cycle: usize,
-        K: usize,
-        T: usize,
-    ) -> usize {
+    pub fn address_cycle_to_index(&self, address: usize, cycle: usize, K: usize, T: usize) -> usize {
         match self {
             DoryLayout::CycleMajor => address * T + cycle,
             DoryLayout::AddressMajor => cycle * K + address,
@@ -191,8 +185,7 @@ pub struct DoryGlobals;
 
 impl DoryGlobals {
     pub fn initialize(K: usize, T: usize) -> Self {
-        Self::initialize_context(K, T, DoryContext::Main, None)
-            .expect("Dory globals should initialize");
+        Self::initialize_context(K, T, DoryContext::Main, None).expect("Dory globals should initialize");
         Self
     }
 
@@ -244,9 +237,7 @@ impl DoryGlobals {
     pub fn with_context(context: DoryContext) -> DoryContextGuard {
         let previous = Self::current_context();
         CURRENT_CONTEXT.store(context as u8, Ordering::SeqCst);
-        DoryContextGuard {
-            previous_context: previous,
-        }
+        DoryContextGuard { previous_context: previous }
     }
 
     /// Get the current Dory matrix layout
@@ -274,11 +265,7 @@ impl DoryGlobals {
     pub fn k_from_matrix_shape() -> usize {
         let (num_rows, num_cols) = Self::matrix_shape();
         let t = Self::get_T();
-        debug_assert_eq!(
-            (num_rows * num_cols) % t,
-            0,
-            "Invalid DoryGlobals: num_rows*num_cols must be divisible by T"
-        );
+        debug_assert_eq!((num_rows * num_cols) % t, 0, "Invalid DoryGlobals: num_rows*num_cols must be divisible by T");
         (num_rows * num_cols) / t
     }
 
@@ -290,11 +277,7 @@ impl DoryGlobals {
         let k = Self::k_from_matrix_shape();
         debug_assert!(k > 0);
         debug_assert_eq!(num_cols % k, 0, "Expected num_cols to be divisible by K");
-        debug_assert_eq!(
-            Self::get_T() % num_rows,
-            0,
-            "Expected T to be divisible by num_rows"
-        );
+        debug_assert_eq!(Self::get_T() % num_rows, 0, "Expected T to be divisible by num_rows");
         num_cols / k
     }
 
@@ -315,18 +298,13 @@ impl DoryGlobals {
     pub fn get_max_num_rows() -> usize {
         let context = Self::current_context();
         match context {
-            DoryContext::Main => MAX_NUM_ROWS
-                .read()
-                .unwrap()
-                .expect("max_num_rows not initialized"),
-            DoryContext::TrustedAdvice => TRUSTED_ADVICE_MAX_NUM_ROWS
-                .read()
-                .unwrap()
-                .expect("trusted_advice max_num_rows not initialized"),
-            DoryContext::UntrustedAdvice => UNTRUSTED_ADVICE_MAX_NUM_ROWS
-                .read()
-                .unwrap()
-                .expect("untrusted_advice max_num_rows not initialized"),
+            DoryContext::Main => MAX_NUM_ROWS.read().unwrap().expect("max_num_rows not initialized"),
+            DoryContext::TrustedAdvice => {
+                TRUSTED_ADVICE_MAX_NUM_ROWS.read().unwrap().expect("trusted_advice max_num_rows not initialized")
+            }
+            DoryContext::UntrustedAdvice => {
+                UNTRUSTED_ADVICE_MAX_NUM_ROWS.read().unwrap().expect("untrusted_advice max_num_rows not initialized")
+            }
         }
     }
 
@@ -347,18 +325,13 @@ impl DoryGlobals {
     pub fn get_num_columns() -> usize {
         let context = Self::current_context();
         match context {
-            DoryContext::Main => NUM_COLUMNS
-                .read()
-                .unwrap()
-                .expect("num_columns not initialized"),
-            DoryContext::TrustedAdvice => TRUSTED_ADVICE_NUM_COLUMNS
-                .read()
-                .unwrap()
-                .expect("trusted_advice num_columns not initialized"),
-            DoryContext::UntrustedAdvice => UNTRUSTED_ADVICE_NUM_COLUMNS
-                .read()
-                .unwrap()
-                .expect("untrusted_advice num_columns not initialized"),
+            DoryContext::Main => NUM_COLUMNS.read().unwrap().expect("num_columns not initialized"),
+            DoryContext::TrustedAdvice => {
+                TRUSTED_ADVICE_NUM_COLUMNS.read().unwrap().expect("trusted_advice num_columns not initialized")
+            }
+            DoryContext::UntrustedAdvice => {
+                UNTRUSTED_ADVICE_NUM_COLUMNS.read().unwrap().expect("untrusted_advice num_columns not initialized")
+            }
         }
     }
 
@@ -380,14 +353,10 @@ impl DoryGlobals {
         let context = Self::current_context();
         match context {
             DoryContext::Main => GLOBAL_T.read().unwrap().expect("t not initialized"),
-            DoryContext::TrustedAdvice => TRUSTED_ADVICE_T
-                .read()
-                .unwrap()
-                .expect("trusted_advice t not initialized"),
-            DoryContext::UntrustedAdvice => UNTRUSTED_ADVICE_T
-                .read()
-                .unwrap()
-                .expect("untrusted_advice t not initialized"),
+            DoryContext::TrustedAdvice => TRUSTED_ADVICE_T.read().unwrap().expect("trusted_advice t not initialized"),
+            DoryContext::UntrustedAdvice => {
+                UNTRUSTED_ADVICE_T.read().unwrap().expect("untrusted_advice t not initialized")
+            }
         }
     }
 
@@ -422,12 +391,7 @@ impl DoryGlobals {
     /// The matrix dimensions are calculated to minimize padding:
     /// - If log2(K*T) is even: creates a square matrix
     /// - If log2(K*T) is odd: creates an almost-square matrix (columns = 2*rows)
-    pub fn initialize_context(
-        K: usize,
-        T: usize,
-        context: DoryContext,
-        layout: Option<DoryLayout>,
-    ) -> Option<()> {
+    pub fn initialize_context(K: usize, T: usize, context: DoryContext, layout: Option<DoryLayout>) -> Option<()> {
         let (num_columns, num_rows, t) = Self::calculate_dimensions(K, T);
         Self::set_num_columns_for_context(num_columns, context);
         Self::set_T_for_context(t, context);

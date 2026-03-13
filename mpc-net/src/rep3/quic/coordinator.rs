@@ -1,3 +1,4 @@
+use crate::id::PartyID;
 use crate::{
     channel::{BytesChannel, Channel},
     codecs::BincodeCodec,
@@ -9,7 +10,6 @@ use bytes::{Bytes, BytesMut};
 use bytesize::ByteSize;
 use color_eyre::eyre::{self, Report};
 use color_eyre::eyre::{bail, Context};
-use crate::id::PartyID;
 use quinn::{Connection, Endpoint, IdleTimeout, RecvStream, SendStream, TransportConfig, VarInt};
 use serde::{de::DeserializeOwned, Serialize};
 use std::io;
@@ -20,8 +20,7 @@ use tokio_util::codec::{Decoder, Encoder, LengthDelimitedCodec};
 use rayon::prelude::*;
 
 use crate::{
-    channel::ChannelHandle, config::NetworkConfig, topology::MpcStarNetCoordinator,
-    MpcNetworkHandlerWrapperMut, Result,
+    channel::ChannelHandle, config::NetworkConfig, topology::MpcStarNetCoordinator, MpcNetworkHandlerWrapperMut, Result,
 };
 
 use super::worker::quic_transport_config;
@@ -41,9 +40,7 @@ impl Rep3QuicNetCoordinator {
         if config.parties.len() % 3 != 0 {
             bail!("REP3 protocol requires exactly 3 workers per party")
         }
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()?;
+        let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
         let (net_handler, channels) = runtime.block_on(async {
             let net_handler = MpcNetworkCoordinatorHandler::establish(config.clone())
                 .await
@@ -72,31 +69,20 @@ impl Rep3QuicNetCoordinator {
     }
 
     fn channels(&mut self) -> impl Iterator<Item = (&usize, &mut ChannelHandle<Bytes, BytesMut>)> {
-        self.channels
-            .iter_mut()
-            .filter(|(&id, _)| id < self.current_num_workers * 3)
+        self.channels.iter_mut().filter(|(&id, _)| id < self.current_num_workers * 3)
     }
 
-    fn channels_par(
-        &mut self,
-    ) -> impl ParallelIterator<Item = (&usize, &mut ChannelHandle<Bytes, BytesMut>)> {
-        self.channels
-            .par_iter_mut()
-            .filter(|(&id, _)| id < self.current_num_workers * 3)
+    fn channels_par(&mut self) -> impl ParallelIterator<Item = (&usize, &mut ChannelHandle<Bytes, BytesMut>)> {
+        self.channels.par_iter_mut().filter(|(&id, _)| id < self.current_num_workers * 3)
     }
 }
 
 impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
-    fn receive_responses<T: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-    ) -> Result<Vec<T>> {
+    fn receive_responses<T: CanonicalSerialize + CanonicalDeserialize>(&mut self) -> Result<Vec<T>> {
         let mut responses_bytes = Vec::new();
         // todo try recieve in parallel
         for (_, channel) in self.channels() {
-            let response = channel
-                .blocking_recv()
-                .blocking_recv()
-                .context("while receiving response")??;
+            let response = channel.blocking_recv().blocking_recv().context("while receiving response")??;
             responses_bytes.push(response);
         }
 
@@ -105,18 +91,11 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
             .enumerate()
             .map(|(i, data)| {
                 T::deserialize_uncompressed_unchecked(&data[..])
-                    .map_err(|e| {
-                        std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-                    })
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
                     .map_err(|e| {
                         std::io::Error::new(
                             std::io::ErrorKind::InvalidData,
-                            format!(
-                                "while deserializing response {}: {} - {}",
-                                i,
-                                data[..].len(),
-                                e
-                            ),
+                            format!("while deserializing response {}: {} - {}", i, data[..].len(), e),
                         )
                     })
                     .context("while deserializing response")
@@ -124,16 +103,11 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
             .collect::<Result<Vec<_>>>()
     }
 
-    fn receive_responses_from_subnets<T: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-    ) -> Result<Vec<Vec<T>>> {
+    fn receive_responses_from_subnets<T: CanonicalSerialize + CanonicalDeserialize>(&mut self) -> Result<Vec<Vec<T>>> {
         let mut responses_bytes: Vec<Vec<_>> = Vec::with_capacity(2);
         for (global_worker_id, channel) in self.channels() {
             let worker_idx = PartyWorkerID::from_global_worker_id(*global_worker_id).worker_idx();
-            let response = channel
-                .blocking_recv()
-                .blocking_recv()
-                .context("while receiving response")??;
+            let response = channel.blocking_recv().blocking_recv().context("while receiving response")??;
             match responses_bytes.get_mut(worker_idx) {
                 None => {
                     responses_bytes.insert(worker_idx, vec![response]);
@@ -148,9 +122,7 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
                 data.iter()
                     .map(|data| {
                         T::deserialize_uncompressed_unchecked(&data[..])
-                            .map_err(|e| {
-                                std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-                            })
+                            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
                             .context("while deserializing response")
                     })
                     .collect::<Result<Vec<_>>>()
@@ -158,9 +130,7 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
             .collect::<Result<Vec<_>>>()
     }
 
-    fn broadcast_request<
-        T: ark_serialize::CanonicalSerialize + ark_serialize::CanonicalDeserialize,
-    >(
+    fn broadcast_request<T: ark_serialize::CanonicalSerialize + ark_serialize::CanonicalDeserialize>(
         &mut self,
         data: T,
     ) -> Result<()> {
@@ -188,9 +158,7 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
                 let mut ser_data = Vec::with_capacity(size);
                 data[*i]
                     .serialize_uncompressed(&mut ser_data)
-                    .map_err(|e| {
-                        std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-                    })
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
                     .context("while serializing data")?;
                 std::mem::drop(channel.blocking_send(Bytes::from(ser_data)));
                 Ok(())
@@ -199,9 +167,7 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
         Ok(())
     }
 
-    fn send_requests_blocking<
-        T: ark_serialize::CanonicalSerialize + ark_serialize::CanonicalDeserialize,
-    >(
+    fn send_requests_blocking<T: ark_serialize::CanonicalSerialize + ark_serialize::CanonicalDeserialize>(
         &mut self,
         data: Vec<T>,
     ) -> Result<()> {
@@ -212,9 +178,7 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
                 let mut ser_data = Vec::with_capacity(size);
                 data[*i]
                     .serialize_uncompressed(&mut ser_data)
-                    .map_err(|e| {
-                        std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-                    })
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
                     .context("while serializing data")?;
                 Ok(channel.blocking_send(Bytes::from(ser_data)))
             })
@@ -246,10 +210,7 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
         Ok(())
     }
 
-    fn send_requests_to_workers<T: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-        data: Vec<T>,
-    ) -> Result<()> {
+    fn send_requests_to_workers<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: Vec<T>) -> Result<()> {
         let active_workers = self.active_num_workers();
         self.channels_par()
             .map(|(gid, channel)| {
@@ -261,9 +222,7 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
                 let mut ser_data = Vec::with_capacity(size);
                 data[id.worker_idx()]
                     .serialize_uncompressed(&mut ser_data)
-                    .map_err(|e| {
-                        std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-                    })
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
                     .context("while serializing data")?;
                 std::mem::drop(channel.blocking_send(Bytes::from(ser_data)));
                 Ok(())
@@ -281,10 +240,7 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
             .channels
             .get_mut(&PartyWorkerID::new(party_id.into(), worker_id).global_worker_id())
             .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no such party"))?;
-        let response = channel
-            .blocking_recv()
-            .blocking_recv()
-            .context("while receiving response")??;
+        let response = channel.blocking_recv().blocking_recv().context("while receiving response")??;
         T::deserialize_uncompressed_unchecked(&response[..])
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
             .context("while deserializing response")
@@ -388,7 +344,7 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
 
         Ok(Self {
             channels,
-            net_handler: net_handler,
+            net_handler,
             log_num_workers_per_party: self.log_num_workers_per_party,
             stats_checkpoints: self.stats_checkpoints.clone(),
             config: self.config.clone(),
@@ -402,9 +358,7 @@ impl MpcStarNetCoordinator for Rep3QuicNetCoordinator {
 
     fn set_num_workers(&mut self, num_workers: usize) {
         assert_ne!(num_workers, 0);
-        assert!(
-            num_workers <= (1 << self.log_num_workers_per_party) && num_workers.is_power_of_two()
-        );
+        assert!(num_workers <= (1 << self.log_num_workers_per_party) && num_workers.is_power_of_two());
         self.current_num_workers = num_workers;
     }
 
@@ -428,8 +382,8 @@ impl MpcNetworkCoordinatorHandler {
 
         let our_cert = config.coordinator.as_ref().unwrap().cert.clone();
 
-        let mut server_config = quinn::ServerConfig::with_single_cert(vec![our_cert], config.key)
-            .context("creating our server config")?;
+        let mut server_config =
+            quinn::ServerConfig::with_single_cert(vec![our_cert], config.key).context("creating our server config")?;
         server_config.transport_config(quic_transport_config());
         let our_socket_addr = config.bind_addr;
 
@@ -460,18 +414,12 @@ impl MpcNetworkCoordinatorHandler {
 
         let mut connections = BTreeMap::new();
 
-        tracing::trace!(
-            "Coordinator expecting {} total worker connections",
-            config.parties.len()
-        );
+        tracing::trace!("Coordinator expecting {} total worker connections", config.parties.len());
 
         // Accept all connections first, then identify each one
         for _ in 0..config.parties.len() {
-            match tokio::time::timeout(
-                config.timeout.unwrap_or(DEFAULT_CONNECT_TIMEOUT),
-                server_endpoint.accept(),
-            )
-            .await
+            match tokio::time::timeout(config.timeout.unwrap_or(DEFAULT_CONNECT_TIMEOUT), server_endpoint.accept())
+                .await
             {
                 Ok(Some(maybe_conn)) => {
                     let conn = maybe_conn.await?;
@@ -503,9 +451,7 @@ impl MpcNetworkCoordinatorHandler {
                     );
                 }
                 Ok(None) => {
-                    return Err(eyre::eyre!(
-                        "server endpoint did not accept a connection from party",
-                    ));
+                    return Err(eyre::eyre!("server endpoint did not accept a connection from party",));
                 }
                 Err(_) => {
                     return Err(eyre::eyre!("timeout waiting for worker connection"));
@@ -513,10 +459,7 @@ impl MpcNetworkCoordinatorHandler {
             }
         }
 
-        Ok(MpcNetworkCoordinatorHandler {
-            connections,
-            server_endpoint,
-        })
+        Ok(MpcNetworkCoordinatorHandler { connections, server_endpoint })
     }
 
     /// Tries to establish a connection to other parties in the network based on the provided [NetworkConfig].
@@ -532,11 +475,8 @@ impl MpcNetworkCoordinatorHandler {
                 continue;
             }
 
-            match tokio::time::timeout(
-                config.timeout.unwrap_or(DEFAULT_CONNECT_TIMEOUT),
-                self.server_endpoint.accept(),
-            )
-            .await
+            match tokio::time::timeout(config.timeout.unwrap_or(DEFAULT_CONNECT_TIMEOUT), self.server_endpoint.accept())
+                .await
             {
                 Ok(Some(maybe_conn)) => {
                     let conn = maybe_conn.await?;
@@ -564,9 +504,7 @@ impl MpcNetworkCoordinatorHandler {
                     new_connections.push((global_worker_id, conn));
                 }
                 Ok(None) => {
-                    return Err(eyre::eyre!(
-                        "server endpoint did not accept a connection from party",
-                    ));
+                    return Err(eyre::eyre!("server endpoint did not accept a connection from party",));
                 }
                 Err(_) => {
                     return Err(eyre::eyre!("timeout waiting for worker connection"));
@@ -590,9 +528,9 @@ impl MpcNetworkCoordinatorHandler {
             if *id > 3 * new_num_workers - 1 {
                 let mut recv = conn.accept_uni().await?;
                 let mut buffer = vec![0u8; b"done".len()];
-                recv.read_exact(&mut buffer).await.map_err(|_| {
-                    std::io::Error::new(std::io::ErrorKind::BrokenPipe, "failed to recv done msg")
-                })?;
+                recv.read_exact(&mut buffer)
+                    .await
+                    .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "failed to recv done msg"))?;
 
                 conn.close(0u32.into(), format!("close from coordinator").as_bytes());
             }
@@ -604,10 +542,8 @@ impl MpcNetworkCoordinatorHandler {
 
     /// Returns the number of sent and received bytes.
     pub fn get_send_receive(&self, i: usize) -> std::io::Result<(u64, u64)> {
-        let conn = self
-            .connections
-            .get(&i)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no such connection"))?;
+        let conn =
+            self.connections.get(&i).ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no such connection"))?;
         let stats = conn.stats();
         Ok((stats.udp_tx.bytes, stats.udp_rx.bytes))
     }
@@ -626,9 +562,7 @@ impl MpcNetworkCoordinatorHandler {
     }
 
     /// Sets up a new [BytesChannel] between each party. The resulting map maps the id of the party to its respective [BytesChannel].
-    pub async fn get_byte_channels(
-        &self,
-    ) -> std::io::Result<BTreeMap<usize, BytesChannel<RecvStream, SendStream>>> {
+    pub async fn get_byte_channels(&self) -> std::io::Result<BTreeMap<usize, BytesChannel<RecvStream, SendStream>>> {
         // set max frame length to 1Tb and length_field_length to 5 bytes
         const NUM_BYTES: usize = 5;
         let codec = LengthDelimitedCodec::builder()
@@ -665,10 +599,7 @@ impl MpcNetworkCoordinatorHandler {
     pub async fn get_custom_channels<
         MSend,
         MRecv,
-        C: Encoder<MSend, Error = io::Error>
-            + Decoder<Item = MRecv, Error = io::Error>
-            + 'static
-            + Clone,
+        C: Encoder<MSend, Error = io::Error> + Decoder<Item = MRecv, Error = io::Error> + 'static + Clone,
     >(
         &self,
         codec: C,
@@ -697,18 +628,15 @@ impl MpcNetworkCoordinatorHandler {
 impl MpcNetworkHandlerShutdown for MpcNetworkCoordinatorHandler {
     /// Shutdown all connections, and call [`quinn::Endpoint::wait_idle`] on all of them
     async fn shutdown(&self) -> std::io::Result<()> {
-        tracing::debug!(
-            "coordinator shutting down, conns = {:?}",
-            self.connections.keys()
-        );
+        tracing::debug!("coordinator shutting down, conns = {:?}", self.connections.keys());
 
         for (id, conn) in self.connections.iter() {
             let res = async {
                 let mut recv = conn.accept_uni().await?;
                 let mut buffer = vec![0u8; b"done".len()];
-                recv.read_exact(&mut buffer).await.map_err(|_| {
-                    std::io::Error::new(std::io::ErrorKind::BrokenPipe, "failed to recv done msg")
-                })?;
+                recv.read_exact(&mut buffer)
+                    .await
+                    .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "failed to recv done msg"))?;
                 Ok::<_, std::io::Error>(())
             }
             .await;
@@ -717,11 +645,7 @@ impl MpcNetworkHandlerShutdown for MpcNetworkCoordinatorHandler {
             }
             conn.close(0u32.into(), b"close from coordinator");
         }
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            self.server_endpoint.wait_idle(),
-        )
-        .await;
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), self.server_endpoint.wait_idle()).await;
         self.server_endpoint.close(VarInt::from_u32(0), &[]);
 
         Ok(())

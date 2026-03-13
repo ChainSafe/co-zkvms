@@ -430,10 +430,7 @@ impl Cpu {
             )
         {
             // Who should clear mip bit?
-            self.write_csr_raw(
-                CSR_MIP_ADDRESS,
-                self.read_csr_raw(CSR_MIP_ADDRESS) & !MIP_MEIP,
-            );
+            self.write_csr_raw(CSR_MIP_ADDRESS, self.read_csr_raw(CSR_MIP_ADDRESS) & !MIP_MEIP);
             self.wfi = false;
             return;
         }
@@ -447,10 +444,7 @@ impl Cpu {
                 true,
             )
         {
-            self.write_csr_raw(
-                CSR_MIP_ADDRESS,
-                self.read_csr_raw(CSR_MIP_ADDRESS) & !MIP_MSIP,
-            );
+            self.write_csr_raw(CSR_MIP_ADDRESS, self.read_csr_raw(CSR_MIP_ADDRESS) & !MIP_MSIP);
             self.wfi = false;
             return;
         }
@@ -464,10 +458,7 @@ impl Cpu {
                 true,
             )
         {
-            self.write_csr_raw(
-                CSR_MIP_ADDRESS,
-                self.read_csr_raw(CSR_MIP_ADDRESS) & !MIP_MTIP,
-            );
+            self.write_csr_raw(CSR_MIP_ADDRESS, self.read_csr_raw(CSR_MIP_ADDRESS) & !MIP_MTIP);
             self.wfi = false;
             return;
         }
@@ -481,10 +472,7 @@ impl Cpu {
                 true,
             )
         {
-            self.write_csr_raw(
-                CSR_MIP_ADDRESS,
-                self.read_csr_raw(CSR_MIP_ADDRESS) & !MIP_SEIP,
-            );
+            self.write_csr_raw(CSR_MIP_ADDRESS, self.read_csr_raw(CSR_MIP_ADDRESS) & !MIP_SEIP);
             self.wfi = false;
             return;
         }
@@ -498,10 +486,7 @@ impl Cpu {
                 true,
             )
         {
-            self.write_csr_raw(
-                CSR_MIP_ADDRESS,
-                self.read_csr_raw(CSR_MIP_ADDRESS) & !MIP_SSIP,
-            );
+            self.write_csr_raw(CSR_MIP_ADDRESS, self.read_csr_raw(CSR_MIP_ADDRESS) & !MIP_SSIP);
             self.wfi = false;
             return;
         }
@@ -515,10 +500,7 @@ impl Cpu {
                 true,
             )
         {
-            self.write_csr_raw(
-                CSR_MIP_ADDRESS,
-                self.read_csr_raw(CSR_MIP_ADDRESS) & !MIP_STIP,
-            );
+            self.write_csr_raw(CSR_MIP_ADDRESS, self.read_csr_raw(CSR_MIP_ADDRESS) & !MIP_STIP);
             self.wfi = false;
         }
     }
@@ -750,16 +732,14 @@ impl Cpu {
                 let status = self.read_csr_raw(CSR_MSTATUS_ADDRESS);
                 let mie = (status >> 3) & 1;
                 // clear MIE[3], override MPIE[7] with MIE[3], override MPP[12:11] with current privilege encoding
-                let new_status =
-                    (status & !0x1888) | (mie << 7) | (current_privilege_encoding << 11);
+                let new_status = (status & !0x1888) | (mie << 7) | (current_privilege_encoding << 11);
                 self.write_csr_raw(CSR_MSTATUS_ADDRESS, new_status);
             }
             PrivilegeMode::Supervisor => {
                 let status = self.read_csr_raw(CSR_SSTATUS_ADDRESS);
                 let sie = (status >> 1) & 1;
                 // clear SIE[1], override SPIE[5] with SIE[1], override SPP[8] with current privilege encoding
-                let new_status =
-                    (status & !0x122) | (sie << 5) | ((current_privilege_encoding & 1) << 8);
+                let new_status = (status & !0x122) | (sie << 5) | ((current_privilege_encoding & 1) << 8);
                 self.write_csr_raw(CSR_SSTATUS_ADDRESS, new_status);
             }
             PrivilegeMode::User => {
@@ -850,8 +830,7 @@ impl Cpu {
             CSR_SSTATUS_ADDRESS => {
                 self.csr[CSR_MSTATUS_ADDRESS as usize] &= !0x80000003000de162;
                 self.csr[CSR_MSTATUS_ADDRESS as usize] |= value & 0x80000003000de162;
-                self.mmu
-                    .update_mstatus(self.read_csr_raw(CSR_MSTATUS_ADDRESS));
+                self.mmu.update_mstatus(self.read_csr_raw(CSR_MSTATUS_ADDRESS));
             }
             CSR_SIE_ADDRESS => {
                 self.csr[CSR_MIE_ADDRESS as usize] &= !0x222;
@@ -866,8 +845,7 @@ impl Cpu {
             }
             CSR_MSTATUS_ADDRESS => {
                 self.csr[address as usize] = value;
-                self.mmu
-                    .update_mstatus(self.read_csr_raw(CSR_MSTATUS_ADDRESS));
+                self.mmu.update_mstatus(self.read_csr_raw(CSR_MSTATUS_ADDRESS));
             }
             CSR_TIME_ADDRESS => {
                 panic!("CLINT is unsupported.")
@@ -971,10 +949,7 @@ impl Cpu {
         let inst = match Instruction::decode(word, self.pc, is_compressed) {
             Ok(inst) => inst,
             Err(e) => {
-                return format!(
-                    "Unknown instruction PC:{:x} WORD:{:x}, {:?}",
-                    self.pc, original_word, e
-                );
+                return format!("Unknown instruction PC:{:x} WORD:{:x}, {:?}", self.pc, original_word, e);
             }
         };
 
@@ -997,21 +972,14 @@ impl Cpu {
                 let label = self.read_string(ptr, len)?; // guest NUL-string
 
                 // Check if there's already an active marker with the same label
-                let duplicate = self
-                    .active_markers
-                    .values()
-                    .any(|marker| marker.label == label);
+                let duplicate = self.active_markers.values().any(|marker| marker.label == label);
                 if duplicate {
                     warn!("Marker with label '{}' is already active", &label);
                 }
 
                 self.active_markers.insert(
                     ptr,
-                    ActiveMarker {
-                        label,
-                        start_instrs: self.executed_instrs,
-                        start_trace_len: self.trace_len,
-                    },
+                    ActiveMarker { label, start_instrs: self.executed_instrs, start_trace_len: self.trace_len },
                 );
             }
 
@@ -1019,10 +987,7 @@ impl Cpu {
                 if let Some(mark) = self.active_markers.remove(&ptr) {
                     let real = self.executed_instrs - mark.start_instrs;
                     let virt = self.trace_len - mark.start_trace_len;
-                    info!(
-                        "\"{}\": {} RV64IMAC cycles, {} virtual cycles",
-                        mark.label, real, virt
-                    );
+                    info!("\"{}\": {} RV64IMAC cycles, {} virtual cycles", mark.label, real, virt);
                 } else {
                     warn!("Attempt to end a marker (ptr: 0x{ptr:x}) that was never started");
                 }
@@ -1083,10 +1048,7 @@ impl Cpu {
 impl Drop for Cpu {
     fn drop(&mut self) {
         if !self.active_markers.is_empty() {
-            warn!(
-                "Warning: Found {} unclosed cycle tracking marker(s):",
-                self.active_markers.len()
-            );
+            warn!("Warning: Found {} unclosed cycle tracking marker(s):", self.active_markers.len());
             for (ptr, marker) in &self.active_markers {
                 warn!(
                     "  - '{}' (at ptr: 0x{:x}), started at {} RV64IMAC cycles",
@@ -1472,10 +1434,7 @@ mod test_cpu {
             Err(_e) => panic!("Failed to store"),
         };
 
-        assert_eq!(
-            "PC:0000000080000000 00100013 ADDI",
-            cpu.disassemble_next_instruction()
-        );
+        assert_eq!("PC:0000000080000000 00100013 ADDI", cpu.disassemble_next_instruction());
 
         // No effect to PC
         assert_eq!(DRAM_BASE, cpu.read_pc());

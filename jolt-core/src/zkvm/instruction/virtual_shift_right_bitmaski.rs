@@ -15,10 +15,8 @@ impl InstructionFlags for VirtualShiftRightBitmaskI {
         flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
         flags[CircuitFlags::AddOperands as usize] = true;
         flags[CircuitFlags::RightOperandIsImm as usize] = true;
-        flags[CircuitFlags::InlineSequenceInstruction as usize] =
-            self.inline_sequence_remaining.is_some();
-        flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
-            self.inline_sequence_remaining.unwrap_or(0) != 0;
+        flags[CircuitFlags::InlineSequenceInstruction as usize] = self.inline_sequence_remaining.is_some();
+        flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] = self.inline_sequence_remaining.unwrap_or(0) != 0;
         flags[CircuitFlags::IsCompressed as usize] = self.is_compressed;
         flags
     }

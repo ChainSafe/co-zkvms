@@ -2,8 +2,6 @@
 //!
 //! This module contains some algorithms to create a random one-hot encoded vector for the Rep3 protocol.
 
-use ark_ff::{One, Zero};
-use itertools::{Itertools, izip};
 use crate::field::PrimeField;
 use crate::protocols::{
     rep3::{Rep3BigUintShare, Rep3PrimeFieldShare},
@@ -12,6 +10,8 @@ use crate::protocols::{
         ring::{bit::Bit, int_ring::IntRing2k, ring_impl::RingElement},
     },
 };
+use ark_ff::{One, Zero};
+use itertools::{Itertools, izip};
 use rand::{distributions::Standard, prelude::Distribution};
 use rayon::prelude::*;
 
@@ -80,10 +80,7 @@ fn rand_ohv_to_field_inner<T: IntRing2k, F: PrimeField, N: Rep3Network>(
     io_context: &mut IoContext<N>,
 ) -> IoResult<(Rep3BigUintShare<F>, Vec<Rep3PrimeFieldShare<F>>)> {
     let (r, e) = rand_ohv::<Bit, _>(k, io_context)?;
-    let r = Rep3BigUintShare::new(
-        r.a.convert().cast_to_biguint(),
-        r.b.convert().cast_to_biguint(),
-    );
+    let r = Rep3BigUintShare::new(r.a.convert().cast_to_biguint(), r.b.convert().cast_to_biguint());
     let e = rep3_ring::conversion::bit_inject_from_bits_to_field_many(&e, io_context)?;
     Ok((r, e))
 }
@@ -133,10 +130,7 @@ pub fn ohv_many<T: IntRing2k, N: Rep3Network>(
     debug_assert!(k <= T::K); // Make sure datatype is large enough for bitsize
 
     let new_k = k - 1;
-    let vks = bits
-        .iter()
-        .map(|bit| bit.get_bit(new_k))
-        .collect::<Vec<_>>();
+    let vks = bits.iter().map(|bit| bit.get_bit(new_k)).collect::<Vec<_>>();
 
     if new_k == 0 {
         return Ok(vks.into_iter().map(|vk| vec![!vk, vk]).collect());
@@ -148,12 +142,7 @@ pub fn ohv_many<T: IntRing2k, N: Rep3Network>(
     let mut f = ohv_many(new_k, bits, io_context)?; // ohv is recursively called k - 1 times
     let len = f[0].len();
     debug_assert!(!f.iter().any(|x| x.len() != len));
-    let e = pack_and_many(
-        f.par_iter().map(|f| &f[..len - 1]),
-        &vks,
-        len - 1,
-        io_context,
-    )?;
+    let e = pack_and_many(f.par_iter().map(|f| &f[..len - 1]), &vks, len - 1, io_context)?;
     e.into_par_iter()
         .zip_eq(vks)
         .map(|(mut e, vk)| {
@@ -273,17 +262,10 @@ fn pack_and_many<'a, N: Rep3Network>(
     if len <= 128 {
         let padded_len = len.next_power_of_two();
         let result = match padded_len {
-            1 => binary::and_many(
-                &inputs
-                    .into_par_iter()
-                    .map(|x| x[0].clone())
-                    .collect::<Vec<_>>(),
-                rhs,
-                io_context,
-            )?
-            .into_iter()
-            .map(|x| vec![x])
-            .collect::<Vec<_>>(),
+            1 => binary::and_many(&inputs.into_par_iter().map(|x| x[0].clone()).collect::<Vec<_>>(), rhs, io_context)?
+                .into_iter()
+                .map(|x| vec![x])
+                .collect::<Vec<_>>(),
             2 | 4 | 8 => {
                 let packed = pack_bits_many::<u8>(inputs);
                 let local_a = and_pre_bit_many(&packed, rhs, io_context);
@@ -327,10 +309,8 @@ fn pack_and_many<'a, N: Rep3Network>(
 
         let mut to_send = Vec::with_capacity(len.div_ceil(BITLEN));
 
-        let input_chunked = inputs
-            .into_par_iter()
-            .map(|input| input.chunks(BITLEN).collect::<Vec<_>>())
-            .collect::<Vec<_>>();
+        let input_chunked =
+            inputs.into_par_iter().map(|input| input.chunks(BITLEN).collect::<Vec<_>>()).collect::<Vec<_>>();
         let mut results = vec![Vec::with_capacity(len); input_chunked.len()];
 
         let input_chunks = transpose(input_chunked);
@@ -345,13 +325,9 @@ fn pack_and_many<'a, N: Rep3Network>(
         let mut remaining = len;
         izip!(to_send, received).for_each(|(a, b)| {
             let rcv = std::cmp::min(BITLEN, remaining);
-            results
-                .par_iter_mut()
-                .zip_eq(a)
-                .zip_eq(b)
-                .for_each(|((result, a), b)| {
-                    result.extend(unpack_bits(Rep3RingShare::new_ring(a, b), rcv));
-                });
+            results.par_iter_mut().zip_eq(a).zip_eq(b).for_each(|((result, a), b)| {
+                result.extend(unpack_bits(Rep3RingShare::new_ring(a, b), rcv));
+            });
             remaining -= rcv;
         });
 
@@ -396,7 +372,5 @@ fn and_pre_bit_many<T: IntRing2k, N: Rep3Network>(
 where
     Standard: Distribution<T>,
 {
-    izip!(a, b)
-        .map(|(a, b)| and_pre_bit(a, b, io_context))
-        .collect()
+    izip!(a, b).map(|(a, b)| and_pre_bit(a, b, io_context)).collect()
 }

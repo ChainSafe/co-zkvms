@@ -33,12 +33,7 @@ pub struct InlineDescriptor {
 
 impl InlineDescriptor {
     pub fn new(name: String, opcode: u32, funct3: u32, funct7: u32) -> Self {
-        Self {
-            name,
-            opcode,
-            funct3,
-            funct7,
-        }
+        Self { name, opcode, funct3, funct7 }
     }
 }
 
@@ -58,35 +53,19 @@ pub struct SequenceInputs {
 
 impl From<&SequenceInputs> for FormatInline {
     fn from(input: &SequenceInputs) -> Self {
-        FormatInline {
-            rs1: input.rs1,
-            rs2: input.rs2,
-            rs3: input.rs3,
-        }
+        FormatInline { rs1: input.rs1, rs2: input.rs2, rs3: input.rs3 }
     }
 }
 
 impl From<&SequenceInputs> for InstrAssembler {
     fn from(input: &SequenceInputs) -> Self {
-        InstrAssembler::new_inline(
-            input.address,
-            input.is_compressed,
-            input.xlen,
-            &VirtualRegisterAllocator::default(),
-        )
+        InstrAssembler::new_inline(input.address, input.is_compressed, input.xlen, &VirtualRegisterAllocator::default())
     }
 }
 
 impl SequenceInputs {
     pub fn new(address: u64, is_compressed: bool, xlen: Xlen, rs1: u8, rs2: u8, rs3: u8) -> Self {
-        Self {
-            address,
-            is_compressed,
-            xlen,
-            rs1,
-            rs2,
-            rs3,
-        }
+        Self { address, is_compressed, xlen, rs1, rs2, rs3 }
     }
 }
 
@@ -133,10 +112,7 @@ pub fn write_inline_trace(
     append: AppendMode,
 ) -> io::Result<()> {
     let mut file = match append {
-        AppendMode::Append => OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(file_path)?,
+        AppendMode::Append => OpenOptions::new().create(true).append(true).open(file_path)?,
         AppendMode::Overwrite => File::create(file_path)?,
     };
 
@@ -175,10 +151,7 @@ pub fn write_inline_trace(
 /// - Address with $ADDR
 /// - Registers matching sequence_inputs.rs1/rs2/rs3 with $RS1/$RS2/$RS3
 /// - Keeps other registers with their actual values
-fn format_instruction_with_placeholders(
-    instruction: &Instruction,
-    sequence_inputs: &SequenceInputs,
-) -> String {
+fn format_instruction_with_placeholders(instruction: &Instruction, sequence_inputs: &SequenceInputs) -> String {
     let mut formatted = format!("{instruction:?}");
     let normalized_instr = instruction.normalize();
 
@@ -187,16 +160,10 @@ fn format_instruction_with_placeholders(
     formatted = formatted.replace(&address_pattern, "address: $ADDR");
 
     // Create a mapping of values to their placeholders
-    let reg_value_to_placeholder = [
-        (sequence_inputs.rs1, "$RS1"),
-        (sequence_inputs.rs2, "$RS2"),
-        (sequence_inputs.rs3, "$RS3"),
-    ];
+    let reg_value_to_placeholder =
+        [(sequence_inputs.rs1, "$RS1"), (sequence_inputs.rs2, "$RS2"), (sequence_inputs.rs3, "$RS3")];
 
-    for (register, value) in [
-        ("rs1", normalized_instr.operands.rs1),
-        ("rs2", normalized_instr.operands.rs2),
-    ] {
+    for (register, value) in [("rs1", normalized_instr.operands.rs1), ("rs2", normalized_instr.operands.rs2)] {
         for (input_value, placeholder) in &reg_value_to_placeholder {
             if value == *input_value {
                 // Replace register value (always in decimal format)

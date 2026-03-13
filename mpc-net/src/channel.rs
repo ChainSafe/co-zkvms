@@ -59,10 +59,7 @@ impl<R, W, C> Channel<R, W, C> {
 
     /// Join ([`WriteChannel`],[`ReadChannel`]) pair back into a [`Channel`].
     pub fn join(write_conn: WriteChannel<W, C>, read_conn: ReadChannel<R, C>) -> Self {
-        Self {
-            write_conn,
-            read_conn,
-        }
+        Self { write_conn, read_conn }
     }
 
     /// Returns mutable reference to the ([`WriteChannel`],[`ReadChannel`]) pair.
@@ -77,19 +74,13 @@ impl<R, W, C> Channel<R, W, C> {
         R: AsyncReadExt + Unpin,
         W: AsyncWriteExt + Unpin,
     {
-        let Channel {
-            mut read_conn,
-            mut write_conn,
-            ..
-        } = self;
+        let Channel { mut read_conn, mut write_conn, .. } = self;
         write_conn.flush().await?;
         write_conn.close().await?;
         if let Some(x) = read_conn.next().await {
             match x {
                 Ok(_) => {
-                    return Err(io::Error::other(
-                        "Unexpected data on read channel when closing connections",
-                    ));
+                    return Err(io::Error::other("Unexpected data on read channel when closing connections"));
                 }
                 Err(e) => {
                     return Err(e);
@@ -100,8 +91,7 @@ impl<R, W, C> Channel<R, W, C> {
         Ok(())
     }
 }
-impl<R, W: AsyncWriteExt + Unpin, MSend, C: Encoder<MSend, Error = io::Error>> Sink<MSend>
-    for Channel<R, W, C>
+impl<R, W: AsyncWriteExt + Unpin, MSend, C: Encoder<MSend, Error = io::Error>> Sink<MSend> for Channel<R, W, C>
 where
     Self: Unpin,
 {
@@ -132,17 +122,13 @@ where
         self.write_conn.poll_close_unpin(cx)
     }
 }
-impl<R: AsyncReadExt + Unpin, W, MRecv, C: Decoder<Item = MRecv, Error = io::Error>> Stream
-    for Channel<R, W, C>
+impl<R: AsyncReadExt + Unpin, W, MRecv, C: Decoder<Item = MRecv, Error = io::Error>> Stream for Channel<R, W, C>
 where
     Self: Unpin,
 {
     type Item = Result<MRecv, <C as Decoder>::Error>;
 
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
         self.read_conn.poll_next_unpin(cx)
     }
 }
@@ -208,9 +194,7 @@ where
                             }
 
                             // free capacity after receiving large frames (witness shares)
-                            if read.read_buffer().is_empty()
-                                && read.read_buffer().capacity() > RESET_LIMIT
-                            {
+                            if read.read_buffer().is_empty() && read.read_buffer().capacity() > RESET_LIMIT {
                                 *read.read_buffer_mut() = BytesMut::with_capacity(BASE_CAP);
                             }
                         }
@@ -264,10 +248,7 @@ where
         self.write_len_fn.map(|f| f(data))
     }
 
-    async fn acquire_write_permit_async(
-        &self,
-        data: &MSend,
-    ) -> io::Result<Option<OwnedSemaphorePermit>> {
+    async fn acquire_write_permit_async(&self, data: &MSend) -> io::Result<Option<OwnedSemaphorePermit>> {
         let (Some(semaphore), Some(len)) = (&self.write_byte_budget, self.write_len(data)) else {
             return Ok(None);
         };
@@ -290,10 +271,7 @@ where
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "write byte budget closed"))
     }
 
-    fn acquire_write_permit_blocking(
-        &self,
-        data: &MSend,
-    ) -> io::Result<Option<OwnedSemaphorePermit>> {
+    fn acquire_write_permit_blocking(&self, data: &MSend) -> io::Result<Option<OwnedSemaphorePermit>> {
         let (Some(semaphore), Some(len)) = (&self.write_byte_budget, self.write_len(data)) else {
             return Ok(None);
         };
@@ -316,10 +294,7 @@ where
                     std::thread::sleep(Duration::from_millis(1));
                 }
                 Err(tokio::sync::TryAcquireError::Closed) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::BrokenPipe,
-                        "write byte budget closed",
-                    ));
+                    return Err(io::Error::new(io::ErrorKind::BrokenPipe, "write byte budget closed"));
                 }
             }
         }
@@ -335,21 +310,13 @@ where
                 return recv;
             }
         };
-        let job = WriteJob {
-            data,
-            ret,
-            write_permit,
-            write_chunk: None,
-        };
+        let job = WriteJob { data, ret, write_permit, write_chunk: None };
         match self.write_job_queue.send(job).await {
             Ok(_) => {}
             Err(job) => job
                 .0
                 .ret
-                .send(Err(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "ChannelHandle: send Channel is gone",
-                )))
+                .send(Err(io::Error::new(io::ErrorKind::BrokenPipe, "ChannelHandle: send Channel is gone")))
                 .unwrap(),
         }
         recv
@@ -364,10 +331,7 @@ where
             Err(job) => job
                 .0
                 .ret
-                .send(Err(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "ChannelHandle: recv Channel is gone",
-                )))
+                .send(Err(io::Error::new(io::ErrorKind::BrokenPipe, "ChannelHandle: recv Channel is gone")))
                 .unwrap(),
         }
         recv
@@ -383,21 +347,13 @@ where
                 return recv;
             }
         };
-        let job = WriteJob {
-            data,
-            ret,
-            write_permit,
-            write_chunk: None,
-        };
+        let job = WriteJob { data, ret, write_permit, write_chunk: None };
         match self.write_job_queue.blocking_send(job) {
             Ok(_) => {}
             Err(job) => job
                 .0
                 .ret
-                .send(Err(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "ChannelHandle: send Channel is gone",
-                )))
+                .send(Err(io::Error::new(io::ErrorKind::BrokenPipe, "ChannelHandle: send Channel is gone")))
                 .unwrap(),
         }
         recv
@@ -412,10 +368,7 @@ where
             Err(job) => job
                 .0
                 .ret
-                .send(Err(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "ChannelHandle: recv Channel is gone",
-                )))
+                .send(Err(io::Error::new(io::ErrorKind::BrokenPipe, "ChannelHandle: recv Channel is gone")))
                 .unwrap(),
         }
         recv
@@ -457,10 +410,7 @@ impl ChannelHandle<Bytes, BytesMut> {
         let (read_send, mut read_recv) = mpsc::channel::<ReadJob<BytesMut>>(8192);
         let write_byte_budget = Arc::new(Semaphore::new(quic_write_buf_bytes()));
 
-        let Channel {
-            read_conn,
-            write_conn,
-        } = chan;
+        let Channel { read_conn, write_conn } = chan;
         let mut read = read_conn.into_inner();
         let mut write = write_conn.into_inner();
 
@@ -468,8 +418,7 @@ impl ChannelHandle<Bytes, BytesMut> {
             let read_buf_bytes = quic_read_buf_bytes();
             const READ_CHAN_CAP: usize = 16;
             let read_byte_budget = Arc::new(Semaphore::new(read_buf_bytes));
-            let (frames_tx, mut frames_rx) =
-                mpsc::channel::<(BytesMut, Option<OwnedSemaphorePermit>)>(READ_CHAN_CAP);
+            let (frames_tx, mut frames_rx) = mpsc::channel::<(BytesMut, Option<OwnedSemaphorePermit>)>(READ_CHAN_CAP);
 
             {
                 let read_byte_budget = read_byte_budget.clone();
@@ -483,11 +432,7 @@ impl ChannelHandle<Bytes, BytesMut> {
                         };
 
                         let read_permit = if len <= read_buf_bytes {
-                            match read_byte_budget
-                                .clone()
-                                .acquire_many_owned(len as u32)
-                                .await
-                            {
+                            match read_byte_budget.clone().acquire_many_owned(len as u32).await {
                                 Ok(permit) => Some(permit),
                                 Err(_) => break,
                             }
@@ -522,10 +467,7 @@ impl ChannelHandle<Bytes, BytesMut> {
                             drop(read_permit);
                         }
                         None => {
-                            let _ = job.ret.send(Err(io::Error::new(
-                                io::ErrorKind::UnexpectedEof,
-                                "channel closed",
-                            )));
+                            let _ = job.ret.send(Err(io::Error::new(io::ErrorKind::UnexpectedEof, "channel closed")));
                             break;
                         }
                     }
@@ -540,12 +482,7 @@ impl ChannelHandle<Bytes, BytesMut> {
                         while buf.len() < len {
                             buf.reserve(len - buf.len());
                             match read.read_buf(&mut buf).await {
-                                Ok(0) => {
-                                    return Err(io::Error::new(
-                                        io::ErrorKind::UnexpectedEof,
-                                        "channel closed",
-                                    ))
-                                }
+                                Ok(0) => return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "channel closed")),
                                 Ok(_) => {}
                                 Err(e) => return Err(io_err(e)),
                             }
@@ -565,20 +502,13 @@ impl ChannelHandle<Bytes, BytesMut> {
                     write_len_prefix(&mut write, data.len()).await?;
                     let write_chunk = write_job.write_chunk.unwrap_or(default_write_chunk).max(1);
                     let bulk_mode = write_job.write_chunk.is_some();
-                    let yield_every = if bulk_mode {
-                        write_chunk.saturating_mul(4)
-                    } else {
-                        write_chunk
-                    }
-                    .max(write_chunk);
+                    let yield_every =
+                        if bulk_mode { write_chunk.saturating_mul(4) } else { write_chunk }.max(write_chunk);
                     let mut off = 0;
                     let mut last_yield = 0usize;
                     while off < data.len() {
                         let end = (off + write_chunk).min(data.len());
-                        write
-                            .write_all(&data.slice(off..end))
-                            .await
-                            .map_err(io_err)?;
+                        write.write_all(&data.slice(off..end)).await.map_err(io_err)?;
                         off = end;
                         if off.saturating_sub(last_yield) >= yield_every && off < data.len() {
                             tokio::task::yield_now().await;
@@ -625,21 +555,13 @@ impl ChannelHandle<Bytes, BytesMut> {
                 return recv;
             }
         };
-        let job = WriteJob {
-            data,
-            ret,
-            write_permit,
-            write_chunk,
-        };
+        let job = WriteJob { data, ret, write_permit, write_chunk };
         match self.write_job_queue.send(job).await {
             Ok(_) => {}
             Err(job) => job
                 .0
                 .ret
-                .send(Err(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "ChannelHandle: send Channel is gone",
-                )))
+                .send(Err(io::Error::new(io::ErrorKind::BrokenPipe, "ChannelHandle: send Channel is gone")))
                 .unwrap(),
         }
         recv
@@ -658,29 +580,20 @@ impl ChannelHandle<Bytes, BytesMut> {
                 return recv;
             }
         };
-        let job = WriteJob {
-            data,
-            ret,
-            write_permit,
-            write_chunk,
-        };
+        let job = WriteJob { data, ret, write_permit, write_chunk };
         match self.write_job_queue.blocking_send(job) {
             Ok(_) => {}
             Err(job) => job
                 .0
                 .ret
-                .send(Err(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "ChannelHandle: send Channel is gone",
-                )))
+                .send(Err(io::Error::new(io::ErrorKind::BrokenPipe, "ChannelHandle: send Channel is gone")))
                 .unwrap(),
         }
         recv
     }
 
     pub async fn send_bulk(&self, data: Bytes) -> oneshot::Receiver<Result<(), io::Error>> {
-        self.send_with_chunk(data, Some(quic_bulk_write_chunk_bytes()))
-            .await
+        self.send_with_chunk(data, Some(quic_bulk_write_chunk_bytes())).await
     }
 
     pub fn blocking_send_bulk(&self, data: Bytes) -> oneshot::Receiver<Result<(), io::Error>> {
@@ -778,10 +691,7 @@ impl ChannelHandle<Bytes, BytesMut> {
 
 impl BulkBytesChannelHandle {
     pub fn manage_quic(chan: Channel<RecvStream, SendStream, LengthDelimitedCodec>) -> Self {
-        let Channel {
-            read_conn,
-            write_conn,
-        } = chan;
+        let Channel { read_conn, write_conn } = chan;
         Self {
             read: Arc::new(Mutex::new(read_conn.into_inner())),
             write: Arc::new(Mutex::new(write_conn.into_inner())),
@@ -808,29 +718,21 @@ impl BulkBytesChannelHandle {
                     .clone()
                     .acquire_many_owned(data.len() as u32)
                     .await
-                    .map_err(|_| {
-                        io::Error::new(io::ErrorKind::BrokenPipe, "bulk write budget closed")
-                    })?,
+                    .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "bulk write budget closed"))?,
             )
         } else {
             None
         };
 
         let mut write = self.write.lock().await;
-        write
-            .write_all(&write_len_prefix_buf(data.len()))
-            .await
-            .map_err(io_err)?;
+        write.write_all(&write_len_prefix_buf(data.len())).await.map_err(io_err)?;
         let write_chunk = quic_bulk_write_chunk_bytes().max(1);
         let mut off = 0usize;
         let mut last_yield = 0usize;
         let yield_every = write_chunk.saturating_mul(4).max(write_chunk);
         while off < data.len() {
             let end = (off + write_chunk).min(data.len());
-            write
-                .write_all(&data.slice(off..end))
-                .await
-                .map_err(io_err)?;
+            write.write_all(&data.slice(off..end)).await.map_err(io_err)?;
             off = end;
             if off.saturating_sub(last_yield) >= yield_every && off < data.len() {
                 tokio::task::yield_now().await;
@@ -861,11 +763,7 @@ impl BulkBytesChannelHandle {
         if len != dst.len() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!(
-                    "bulk frame size mismatch: expected {} bytes, got {}",
-                    dst.len(),
-                    len
-                ),
+                format!("bulk frame size mismatch: expected {} bytes, got {}", dst.len(), len),
             ));
         }
         read.read_exact(dst).await.map_err(io_err)

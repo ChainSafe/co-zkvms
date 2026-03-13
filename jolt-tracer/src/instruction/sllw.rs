@@ -9,8 +9,7 @@ use crate::{
 
 use super::virtual_sign_extend_word::VirtualSignExtendWord;
 use super::{
-    format::format_r::FormatR, mul::MUL, virtual_pow2_w::VirtualPow2W, Cycle, Instruction,
-    RISCVInstruction, RISCVTrace,
+    format::format_r::FormatR, mul::MUL, virtual_pow2_w::VirtualPow2W, Cycle, Instruction, RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -27,8 +26,7 @@ impl SLLW {
         // on 32-bit values and sign-extend their 32-bit results to 64 bits. The shift amount is
         // given by rs2[4:0].
         let shamt = (cpu.x[self.operands.rs2 as usize] & 0x1f) as u32;
-        cpu.x[self.operands.rd as usize] =
-            ((cpu.x[self.operands.rs1 as usize] as u32) << shamt) as i32 as i64;
+        cpu.x[self.operands.rd as usize] = ((cpu.x[self.operands.rs1 as usize] as u32) << shamt) as i32 as i64;
     }
 }
 
@@ -53,11 +51,7 @@ impl RISCVTrace for SLLW {
     /// 3. Sign-extend the lower 32 bits of the result
     ///
     /// The multiplication approach allows zkVM-friendly verification.
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let v_pow2 = allocator.allocate();
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);

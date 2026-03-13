@@ -5,8 +5,8 @@ use std::sync::Arc;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::{eyre, Context};
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
-use mpc_net::topology::MpcStarNetCoordinator;
 use mpc_core::protocols::rep3::PartyID;
+use mpc_net::topology::MpcStarNetCoordinator;
 
 use super::ephemeral_identity::EphemeralIdentity;
 
@@ -33,34 +33,26 @@ impl TcpTlsCoordinator {
         identity: &EphemeralIdentity,
         attestation_doc: Option<&[u8]>,
     ) -> eyre::Result<Self> {
-        rustls::crypto::ring::default_provider()
-            .install_default()
-            .ok();
+        rustls::crypto::ring::default_provider().install_default().ok();
 
         let server_config = Arc::new(
             rustls::ServerConfig::builder()
                 .with_no_client_auth()
-                .with_single_cert(
-                    vec![identity.cert_der.clone()],
-                    identity.key_der.clone_key(),
-                )
+                .with_single_cert(vec![identity.cert_der.clone()], identity.key_der.clone_key())
                 .context("building rustls ServerConfig")?,
         );
 
-        let listener = TcpListener::bind(bind_addr)
-            .with_context(|| format!("binding TCP listener on {bind_addr}"))?;
+        let listener = TcpListener::bind(bind_addr).with_context(|| format!("binding TCP listener on {bind_addr}"))?;
 
         let mut indexed_streams: Vec<(usize, TlsStream)> = Vec::with_capacity(NUM_PARTIES);
 
         for i in 0..NUM_PARTIES {
-            let (tcp_stream, peer_addr) = listener
-                .accept()
-                .with_context(|| format!("accepting TCP connection {i}"))?;
+            let (tcp_stream, peer_addr) = listener.accept().with_context(|| format!("accepting TCP connection {i}"))?;
 
             tracing::info!(%peer_addr, "accepted TCP connection {i}");
 
-            let tls_conn = rustls::ServerConnection::new(Arc::clone(&server_config))
-                .context("creating TLS server connection")?;
+            let tls_conn =
+                rustls::ServerConnection::new(Arc::clone(&server_config)).context("creating TLS server connection")?;
             let mut tls_stream = rustls::StreamOwned::new(tls_conn, tcp_stream);
 
             // Send attestation doc as length-prefixed first message
@@ -94,18 +86,14 @@ impl TcpTlsCoordinator {
         // Verify we got exactly parties 0, 1, 2
         for (i, (id, _)) in indexed_streams.iter().enumerate() {
             if *id != i {
-                return Err(eyre!(
-                    "expected party_id {i} at index {i}, got {id} (duplicate or missing party)"
-                ));
+                return Err(eyre!("expected party_id {i} at index {i}, got {id} (duplicate or missing party)"));
             }
         }
 
         let [s0, s1, s2] = <[(usize, TlsStream); 3]>::try_from(indexed_streams)
             .map_err(|v| eyre!("expected 3 streams, got {}", v.len()))?;
 
-        Ok(Self {
-            streams: [s0.1, s1.1, s2.1],
-        })
+        Ok(Self { streams: [s0.1, s1.1, s2.1] })
     }
 }
 
@@ -114,8 +102,7 @@ impl TcpTlsCoordinator {
 fn serialize_uncompressed<T: CanonicalSerialize>(data: &T) -> eyre::Result<Vec<u8>> {
     let size = data.uncompressed_size();
     let mut buf = Vec::with_capacity(size);
-    data.serialize_uncompressed(&mut buf)
-        .context("serialize_uncompressed")?;
+    data.serialize_uncompressed(&mut buf).context("serialize_uncompressed")?;
     Ok(buf)
 }
 
@@ -141,9 +128,7 @@ fn recv_from_stream<T: CanonicalDeserialize>(stream: &mut TlsStream) -> eyre::Re
 }
 
 impl MpcStarNetCoordinator for TcpTlsCoordinator {
-    fn receive_responses<T: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-    ) -> eyre::Result<Vec<T>> {
+    fn receive_responses<T: CanonicalSerialize + CanonicalDeserialize>(&mut self) -> eyre::Result<Vec<T>> {
         let mut responses = Vec::with_capacity(NUM_PARTIES);
         for stream in self.streams.iter_mut() {
             responses.push(recv_from_stream(stream)?);
@@ -176,10 +161,7 @@ impl MpcStarNetCoordinator for TcpTlsCoordinator {
         Ok(vec![self.receive_response(party_id, 0)?])
     }
 
-    fn broadcast_request<T: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-        data: T,
-    ) -> eyre::Result<()> {
+    fn broadcast_request<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: T) -> eyre::Result<()> {
         let bytes = serialize_uncompressed(&data)?;
         for stream in self.streams.iter_mut() {
             send_to_stream(stream, &bytes)?;
@@ -187,16 +169,9 @@ impl MpcStarNetCoordinator for TcpTlsCoordinator {
         Ok(())
     }
 
-    fn send_requests<T: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-        data: Vec<T>,
-    ) -> eyre::Result<()> {
+    fn send_requests<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: Vec<T>) -> eyre::Result<()> {
         if data.len() != NUM_PARTIES {
-            return Err(eyre!(
-                "send_requests expects {} items, got {}",
-                NUM_PARTIES,
-                data.len()
-            ));
+            return Err(eyre!("send_requests expects {} items, got {}", NUM_PARTIES, data.len()));
         }
         for (item, stream) in data.iter().zip(self.streams.iter_mut()) {
             let bytes = serialize_uncompressed(item)?;

@@ -80,10 +80,6 @@ jolt-common.workspace = true
 name = "worker"
 path = "src/bin/worker.rs"
 
-[[example]]
-name = "rep3_jolt"
-required-features = ["test-utils"]
-
 [[bench]]
 name = "fwht"
 harness = false

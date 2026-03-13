@@ -59,14 +59,10 @@ fn relay(id: usize, tcp: TcpStream, vsock_cid: u32, vsock_port: u32, active: Arc
 
 fn main() -> io::Result<()> {
     let listen_addr = std::env::var("TCP_LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:9000".into());
-    let vsock_cid: u32 = std::env::var("VSOCK_CID")
-        .unwrap_or_else(|_| "3".into())
-        .parse()
-        .expect("VSOCK_CID must be a valid u32");
-    let vsock_port: u32 = std::env::var("VSOCK_PORT")
-        .unwrap_or_else(|_| "9000".into())
-        .parse()
-        .expect("VSOCK_PORT must be a valid u32");
+    let vsock_cid: u32 =
+        std::env::var("VSOCK_CID").unwrap_or_else(|_| "3".into()).parse().expect("VSOCK_CID must be a valid u32");
+    let vsock_port: u32 =
+        std::env::var("VSOCK_PORT").unwrap_or_else(|_| "9000".into()).parse().expect("VSOCK_PORT must be a valid u32");
 
     let listener = TcpListener::bind(&listen_addr)?;
     eprintln!("host_proxy listening on {listen_addr} → vsock {vsock_cid}:{vsock_port}");

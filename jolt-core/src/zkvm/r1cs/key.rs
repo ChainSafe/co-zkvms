@@ -40,10 +40,7 @@ pub struct SparseConstraints<F: JoltField> {
 
 impl<F: JoltField> SparseConstraints<F> {
     pub fn empty_with_capacity(vars: usize, consts: usize) -> Self {
-        Self {
-            vars: Vec::with_capacity(vars),
-            consts: Vec::with_capacity(consts),
-        }
+        Self { vars: Vec::with_capacity(vars), consts: Vec::with_capacity(consts) }
     }
 }
 
@@ -72,10 +69,7 @@ pub struct SparseEqualityItem<F: JoltField> {
 
 impl<F: JoltField> SparseEqualityItem<F> {
     pub fn empty() -> Self {
-        Self {
-            offset_vars: vec![],
-            constant: F::zero(),
-        }
+        Self { offset_vars: vec![], constant: F::zero() }
     }
 }
 
@@ -85,11 +79,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let rows_per_step_padded = Self::num_rows_per_step().next_power_of_two();
         let total_rows = (num_steps * rows_per_step_padded).next_power_of_two();
         let vk_digest = Self::digest(num_steps);
-        Self {
-            num_cons_total: total_rows,
-            num_steps,
-            vk_digest,
-        }
+        Self { num_cons_total: total_rows, num_steps, vk_digest }
     }
 
     #[inline]
@@ -137,10 +127,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
     /// Returns evaluations for each y_var
     #[tracing::instrument(skip_all, name = "UniformSpartanKey::evaluate_small_matrix_rlc")]
     pub fn evaluate_small_matrix_rlc(&self, r_constr: &[F::Challenge], r_rlc: F) -> Vec<F> {
-        assert_eq!(
-            r_constr.len(),
-            (Self::num_rows_per_step() + 1).next_power_of_two().log_2()
-        );
+        assert_eq!(r_constr.len(), (Self::num_rows_per_step() + 1).next_power_of_two().log_2());
 
         let eq_rx = EqPolynomial::evals(r_constr);
         let num_vars = Self::num_vars();
@@ -156,26 +143,16 @@ impl<F: JoltField> UniformSpartanKey<F> {
             let wr = eq_rx[row_idx];
 
             row.a.accumulate_evaluations(&mut evals, wr, num_vars);
-            row.b
-                .accumulate_evaluations(&mut evals, wr * r_rlc, num_vars);
-            row.c
-                .accumulate_evaluations(&mut evals, wr * r_sq, num_vars);
+            row.b.accumulate_evaluations(&mut evals, wr * r_rlc, num_vars);
+            row.c.accumulate_evaluations(&mut evals, wr * r_sq, num_vars);
         }
 
         evals
     }
 
     /// (Verifier) Evaluates the full expanded witness vector at 'r' using evaluations of segments.
-    #[tracing::instrument(
-        skip_all,
-        name = "UniformSpartanKey::evaluate_z_mle_with_segment_evals"
-    )]
-    pub fn evaluate_z_mle_with_segment_evals(
-        &self,
-        segment_evals: &[F],
-        r: &[F::Challenge],
-        with_const: bool,
-    ) -> F {
+    #[tracing::instrument(skip_all, level = "trace", name = "UniformSpartanKey::evaluate_z_mle_with_segment_evals")]
+    pub fn evaluate_z_mle_with_segment_evals(&self, segment_evals: &[F], r: &[F::Challenge], with_const: bool) -> F {
         assert_eq!(Self::num_vars(), segment_evals.len());
         assert_eq!(r.len(), self.num_vars_uniform_padded().log_2());
 
@@ -184,14 +161,12 @@ impl<F: JoltField> UniformSpartanKey<F> {
         let var_bits = num_vars.log_2();
 
         let eq_ry_var = EqPolynomial::<F>::evals(r);
-        let eval_variables: F = (0..Self::num_vars())
-            .map(|var_index| eq_ry_var[var_index] * segment_evals[var_index])
-            .sum();
+        let eval_variables: F =
+            (0..Self::num_vars()).map(|var_index| eq_ry_var[var_index] * segment_evals[var_index]).sum();
 
         // Evaluate at the constant position if it exists within the padded space
         let const_eval = if Self::num_vars() < num_vars && with_const {
-            let const_position_bits: Vec<F> =
-                index_to_field_bitvector(Self::num_vars() as u128, var_bits);
+            let const_position_bits: Vec<F> = index_to_field_bitvector(Self::num_vars() as u128, var_bits);
             EqPolynomial::mle(r, &const_position_bits)
         } else {
             F::zero()
@@ -201,29 +176,17 @@ impl<F: JoltField> UniformSpartanKey<F> {
     }
 
     /// Evaluate uniform matrix A at a specific point (rx_constr, ry_var)
-    pub fn evaluate_uniform_a_at_point(
-        &self,
-        rx_constr: &[F::Challenge],
-        ry_var: &[F::Challenge],
-    ) -> F {
+    pub fn evaluate_uniform_a_at_point(&self, rx_constr: &[F::Challenge], ry_var: &[F::Challenge]) -> F {
         self.evaluate_uniform_matrix_at_point(|row| &row.a, rx_constr, ry_var)
     }
 
     /// Evaluate uniform matrix B at a specific point (rx_constr, ry_var)
-    pub fn evaluate_uniform_b_at_point(
-        &self,
-        rx_constr: &[F::Challenge],
-        ry_var: &[F::Challenge],
-    ) -> F {
+    pub fn evaluate_uniform_b_at_point(&self, rx_constr: &[F::Challenge], ry_var: &[F::Challenge]) -> F {
         self.evaluate_uniform_matrix_at_point(|row| &row.b, rx_constr, ry_var)
     }
 
     /// Evaluate uniform matrix C at a specific point (rx_constr, ry_var)
-    pub fn evaluate_uniform_c_at_point(
-        &self,
-        rx_constr: &[F::Challenge],
-        ry_var: &[F::Challenge],
-    ) -> F {
+    pub fn evaluate_uniform_c_at_point(&self, rx_constr: &[F::Challenge], ry_var: &[F::Challenge]) -> F {
         self.evaluate_uniform_matrix_at_point(|row| &row.c, rx_constr, ry_var)
     }
 

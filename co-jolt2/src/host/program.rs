@@ -12,48 +12,68 @@ use crate::host::memory::Rep3Memory;
 use crate::utils::compute_ram_k;
 use crate::zkvm::instruction::{Rep3Cycle, Rep3Operand};
 
-pub trait Rep3Program {
-    fn generate_trace_shares<R: RngCore + CryptoRng>(
-        &mut self,
-        inputs: &[u8],
-        untrusted_advice: &[u8],
-        trusted_advice: &[u8],
-        rng: &mut R,
-    ) -> [(Vec<Rep3Cycle>, Rep3Memory, Rep3ProgramIOInput); 3];
+pub type Rep3ShareBundle = (Vec<Rep3Cycle>, Rep3Memory, Rep3ProgramIOInput);
+
+#[tracing::instrument(skip_all, name = "Program::trace_for_rep3")]
+pub fn trace_for_rep3(
+    program: &mut Program,
+    inputs: &[u8],
+    untrusted_advice: &[u8],
+    trusted_advice: &[u8],
+) -> (
+    Vec<tracer::instruction::Instruction>,
+    Vec<(u64, u8)>,
+    Vec<tracer::instruction::Cycle>,
+    tracer::emulator::memory::Memory,
+    tracer::JoltDevice,
+    usize,
+) {
+    let (bytecode, memory_init, _) = program.decode();
+    let (mut trace, memory, mut program_io) = program.trace(inputs, untrusted_advice, trusted_advice);
+    program_io.outputs.truncate(program_io.outputs.iter().rposition(|&byte| byte != 0).map_or(0, |idx| idx + 1));
+
+    let padded_len = (trace.len() + 1).next_power_of_two();
+    trace.resize(padded_len, tracer::instruction::Cycle::NoOp);
+
+    let shared_preprocessing = JoltSharedPreprocessing {
+        memory_layout: program_io.memory_layout.clone(),
+        bytecode: BytecodePreprocessing::preprocess(bytecode.clone()),
+        ram: RAMPreprocessing::preprocess(memory_init.clone()),
+    };
+    let ram_k = compute_ram_k(&trace, &shared_preprocessing);
+
+    (bytecode, memory_init, trace, memory, program_io, ram_k)
 }
 
-impl Rep3Program for Program {
-    #[tracing::instrument(skip_all, name = "Program::generate_trace_shares")]
-    fn generate_trace_shares<R: RngCore + CryptoRng>(
-        &mut self,
-        inputs: &[u8],
-        untrusted_advice: &[u8],
-        trusted_advice: &[u8],
-        rng: &mut R,
-    ) -> [(Vec<Rep3Cycle>, Rep3Memory, Rep3ProgramIOInput); 3] {
-        let (bytecode, memory_init, _) = self.decode();
-        let (trace, memory, program_io) = self.trace(inputs, untrusted_advice, trusted_advice);
+pub fn generate_trace_shares_from_execution<R: RngCore + CryptoRng>(
+    trace: Vec<tracer::instruction::Cycle>,
+    memory: tracer::emulator::memory::Memory,
+    program_io: &tracer::JoltDevice,
+    ram_k: usize,
+    rng: &mut R,
+) -> [Rep3ShareBundle; 3] {
+    let program_io_shares = Rep3ProgramIOInput::generate_secret_shares(program_io.clone(), rng);
+    let memory_shares = Rep3Memory::generate_secret_shares(memory, &program_io.memory_layout, ram_k, rng);
+    let trace_shares = share_trace(trace, rng);
 
-        // Build shared preprocessing to compute ram_K, used to trim the memory
-        // shares to only the DRAM words within the K-length address space.
-        let shared = JoltSharedPreprocessing {
-            memory_layout: program_io.memory_layout.clone(),
-            bytecode: BytecodePreprocessing::preprocess(bytecode),
-            ram: RAMPreprocessing::preprocess(memory_init),
-        };
-        let ram_K = compute_ram_k(&trace, &shared);
+    let [io0, io1, io2]: [Rep3ProgramIOInput; 3] = program_io_shares.try_into().expect("expected 3 shares");
+    let [mem0, mem1, mem2]: [Rep3Memory; 3] = memory_shares.try_into().expect("expected 3 shares");
+    let [t0, t1, t2]: [Vec<Rep3Cycle>; 3] = trace_shares;
 
-        let program_io_shares = Rep3ProgramIOInput::generate_secret_shares(program_io, rng);
-        let memory_shares = Rep3Memory::generate_secret_shares(memory, &shared.memory_layout, ram_K, rng);
+    [(t0, mem0, io0), (t1, mem1, io1), (t2, mem2, io2)]
+}
 
-        let trace_shares = share_trace(trace, rng);
-
-        let [io0, io1, io2]: [Rep3ProgramIOInput; 3] = program_io_shares.try_into().expect("expected 3 shares");
-        let [mem0, mem1, mem2]: [Rep3Memory; 3] = memory_shares.try_into().expect("expected 3 shares");
-        let [t0, t1, t2]: [Vec<Rep3Cycle>; 3] = trace_shares;
-
-        [(t0, mem0, io0), (t1, mem1, io1), (t2, mem2, io2)]
-    }
+#[tracing::instrument(skip_all, name = "Program::generate_trace_shares")]
+pub fn generate_trace_shares<R: RngCore + CryptoRng>(
+    program: &mut Program,
+    inputs: &[u8],
+    untrusted_advice: &[u8],
+    trusted_advice: &[u8],
+    rng: &mut R,
+) -> [Rep3ShareBundle; 3] {
+    let (_bytecode, _memory_init, trace, memory, program_io, ram_k) =
+        trace_for_rep3(program, inputs, untrusted_advice, trusted_advice);
+    generate_trace_shares_from_execution(trace, memory, &program_io, ram_k, rng)
 }
 
 /// Share a vanilla trace into 3 Rep3 traces with binary-shared operands.
@@ -112,7 +132,10 @@ fn public_operand_indices(cycle: &tracer::instruction::Cycle) -> &'static [usize
 /// Extracts operand values directly from the vanilla Cycle, generates binary
 /// shares, and builds 3 Rep3Cycles via `from_cycle_shared`.
 /// Operands at indices returned by `public_operand_indices` are kept public.
-fn share_cycle(cycle: &tracer::instruction::Cycle, rng: &mut (impl rand::Rng + rand::CryptoRng)) -> (Rep3Cycle, Rep3Cycle, Rep3Cycle) {
+fn share_cycle(
+    cycle: &tracer::instruction::Cycle,
+    rng: &mut (impl rand::Rng + rand::CryptoRng),
+) -> (Rep3Cycle, Rep3Cycle, Rep3Cycle) {
     let mut copied_cycle = cycle.clone();
     let values = Rep3Cycle::extract_operand_values(&copied_cycle);
     let public_indices = public_operand_indices(cycle);
@@ -130,7 +153,10 @@ fn share_cycle(cycle: &tracer::instruction::Cycle, rng: &mut (impl rand::Rng + r
                 let op = Rep3Operand::Public(v as i128);
                 [op, op, op]
             } else {
-                let s = rep3_ring::share_ring_element_binary(rep3_ring::ring::ring_impl::RingElement(v as jolt_common::constants::XlenInt), rng);
+                let s = rep3_ring::share_ring_element_binary(
+                    rep3_ring::ring::ring_impl::RingElement(v as jolt_common::constants::XlenInt),
+                    rng,
+                );
                 [Rep3Operand::from_binary(s[0]), Rep3Operand::from_binary(s[1]), Rep3Operand::from_binary(s[2])]
             }
         })

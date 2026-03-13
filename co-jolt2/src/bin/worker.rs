@@ -11,6 +11,18 @@
 //!    e. [worker 0] Receive proof from coordinator, relay to user
 
 use std::path::PathBuf;
+#[cfg(feature = "test-utils")]
+use std::sync::OnceLock;
+use std::time::Duration;
+
+#[cfg(feature = "tracy-mem")]
+#[global_allocator]
+static GLOBAL: tracy_client::ProfiledAllocator<tikv_jemallocator::Jemalloc> =
+    tracy_client::ProfiledAllocator::new(tikv_jemallocator::Jemalloc, 0);
+
+#[cfg(not(feature = "tracy-mem"))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 use ark_bn254::Fr;
 use clap::Parser;
@@ -19,7 +31,10 @@ use tracing::{info, info_span};
 
 use co_jolt2::host::jolt_device::Rep3ProgramIOInput;
 use co_jolt2::host::memory::Rep3Memory;
-use co_jolt2::utils::tracing::init_tracing_bench;
+use co_jolt2::utils::memory::start_jemalloc_monitor;
+#[cfg(feature = "test-utils")]
+use co_jolt2::utils::tracing::start_rss_monitor;
+use co_jolt2::utils::tracing::{init_tracing_bench, worker_trace_file};
 use co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget;
 use co_jolt2::zkvm::instruction::Rep3Cycle;
 use co_jolt2::zkvm::JoltArch;
@@ -35,9 +50,6 @@ use mpc_net::rep3::tls::worker_listener::TlsWorkerListener;
 use mpc_net::topology::MpcStarNetWorker;
 use serde::{Deserialize, Serialize};
 
-#[global_allocator]
-static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
-
 type F = Fr;
 type PCS = DoryCommitmentScheme;
 
@@ -48,6 +60,7 @@ struct Args {
     config_file: PathBuf,
 
     /// Directory for trace output files
+    #[cfg(feature = "test-utils")]
     #[clap(short = 't', long, default_value = "./.traces")]
     trace_dir: PathBuf,
 
@@ -76,11 +89,23 @@ struct WorkerPayload {
     program_io_share: Rep3ProgramIOInput,
     bytecode: Vec<tracer::instruction::Instruction>,
     memory_init: Vec<(u64, u8)>,
+    program_id: String,
+    preprocess_trace_len: usize,
     padded_len: usize,
     ram_k: usize,
 }
 
 fn main() -> eyre::Result<()> {
+    #[cfg(feature = "test-utils")]
+    let _tracy = if std::env::var("TRACY").is_ok() {
+        let client = tracy_client::Client::start();
+        start_rss_monitor(Duration::from_millis(10));
+        start_jemalloc_monitor(Duration::from_millis(50));
+        Some(client)
+    } else {
+        None
+    };
+
     let args = Args::parse();
 
     rayon::ThreadPoolBuilder::new().num_threads(args.rayon_threads).build_global().ok();
@@ -91,8 +116,6 @@ fn main() -> eyre::Result<()> {
     let config = NetworkConfig::try_from(config).context("converting network config")?;
 
     let my_id = config.my_id;
-    let file = format!("trace_worker-{}_{}CPU.json", my_id, num_cpus::get());
-    let _tracing_guard = init_tracing_bench(&file, &args.trace_dir);
 
     rustls::crypto::aws_lc_rs::default_provider().install_default().ok();
 
@@ -130,18 +153,39 @@ fn prove_loop(
         let payload_bytes = user_conn.recv()?;
         let payload: WorkerPayload = bincode::deserialize(&payload_bytes).context("deserializing WorkerPayload")?;
 
-        let WorkerPayload { mut trace, memory, program_io_share, bytecode, memory_init, padded_len, ram_k } = payload;
+        let WorkerPayload {
+            mut trace,
+            memory,
+            program_io_share,
+            bytecode,
+            memory_init,
+            program_id,
+            preprocess_trace_len,
+            padded_len,
+            ram_k,
+        } = payload;
+
+        #[cfg(feature = "test-utils")]
+        {
+            static TRACING_INIT: OnceLock<()> = OnceLock::new();
+            let file = worker_trace_file(my_id, &program_id);
+            let _ = TRACING_INIT.get_or_init(|| {
+                let guard = init_tracing_bench(&file, &args.trace_dir);
+                let _ = Box::leak(Box::new(guard));
+            });
+        }
 
         info!(padded_len, ram_k, trace_len = trace.len(), "received payload from user");
 
         // 2. Sync with coordinator (barrier: "we have shares, ready to prove")
         io_ctx.sync_with_coordinator()?;
-        info!("synced with coordinator");
 
         // 3. Send ProofRequest (public data) to coordinator
         let proof_request = ProofRequest {
             bytecode: bytecode.clone(),
             memory_init: memory_init.clone(),
+            program_id,
+            preprocess_trace_len,
             padded_len,
             ram_k,
             memory_layout: program_io_share.memory_layout.clone(),
@@ -151,15 +195,13 @@ fn prove_loop(
         };
         let request_bytes = bincode::serialize(&proof_request).context("serializing ProofRequest")?;
         io_ctx.network().send_response(request_bytes)?;
-        info!("sent ProofRequest to coordinator");
 
         // 4. Build prover preprocessing
-        info!("building preprocessing");
         let preprocessing: JoltProverPreprocessing<F, PCS> = <JoltArch as Rep3JoltWorker<F, PCS, _>>::preprocess(
             bytecode,
             program_io_share.memory_layout.clone(),
             memory_init,
-            padded_len,
+            preprocess_trace_len,
         );
 
         let _dory_guard = DoryGlobals::initialize(DTH_ROOT_OF_K, padded_len);
@@ -303,7 +345,6 @@ fn prove_loop(
         // 6. Pad trace and prove
         trace.resize(padded_len, Rep3Cycle::NoOp);
 
-        info!("starting worker prove");
         <JoltArch as Rep3JoltWorker<F, PCS, _>>::prove(
             &preprocessing,
             trace,
@@ -313,7 +354,6 @@ fn prove_loop(
             ram_k,
             &mut preproc,
         )?;
-        info!("prove complete");
 
         // 7. [worker 0] Receive proof from coordinator, relay to user
         if my_id == 0 {

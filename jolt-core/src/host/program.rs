@@ -4,8 +4,8 @@ use crate::host::analyze::ProgramSummary;
 use crate::host::{Program, DEFAULT_TARGET_DIR, LINKER_SCRIPT_TEMPLATE};
 use common::constants::{
     DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE, DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
-    DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE,
-    EMULATOR_MEMORY_CAPACITY, RAM_START_ADDRESS, STACK_CANARY_SIZE,
+    DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE, DEFAULT_MEMORY_SIZE, DEFAULT_STACK_SIZE, EMULATOR_MEMORY_CAPACITY,
+    RAM_START_ADDRESS, STACK_CANARY_SIZE,
 };
 use common::jolt_device::{JoltDevice, MemoryConfig};
 use std::fs::File;
@@ -84,19 +84,10 @@ impl Program {
         if self.elf.is_none() {
             // Check if a pre-built ELF already exists at the expected path
             #[cfg(feature = "rv64")]
-            let target_triple = if self.std {
-                "riscv64imac-jolt-zkvm-elf"
-            } else {
-                "riscv64imac-unknown-none-elf"
-            };
+            let target_triple = if self.std { "riscv64imac-jolt-zkvm-elf" } else { "riscv64imac-unknown-none-elf" };
             #[cfg(not(feature = "rv64"))]
             let target_triple = "riscv32im-unknown-none-elf";
-            let target = format!(
-                "{}/{}-{}",
-                target_dir,
-                self.guest,
-                self.func.as_ref().unwrap_or(&"".to_string())
-            );
+            let target = format!("{}/{}-{}", target_dir, self.guest, self.func.as_ref().unwrap_or(&"".to_string()));
             let elf_path = format!("{}/{}/release/{}", target, target_triple, self.guest);
             if std::path::Path::new(&elf_path).exists() {
                 info!("Using pre-built guest binary: {elf_path}");
@@ -143,11 +134,7 @@ impl Program {
             ]);
 
             #[cfg(feature = "rv64")]
-            let target_triple = if self.std {
-                "riscv64imac-jolt-zkvm-elf"
-            } else {
-                "riscv64imac-unknown-none-elf"
-            };
+            let target_triple = if self.std { "riscv64imac-jolt-zkvm-elf" } else { "riscv64imac-unknown-none-elf" };
             #[cfg(not(feature = "rv64"))]
             let target_triple = "riscv32im-unknown-none-elf";
 
@@ -159,12 +146,7 @@ impl Program {
                 envs.push(("JOLT_FUNC_NAME", func.to_string()));
             }
 
-            let target = format!(
-                "{}/{}-{}",
-                target_dir,
-                self.guest,
-                self.func.as_ref().unwrap_or(&"".to_string())
-            );
+            let target = format!("{}/{}-{}", target_dir, self.guest, self.func.as_ref().unwrap_or(&"".to_string()));
 
             let cc_env_var = format!("CC_{target_triple}");
             let cc_value = std::env::var(&cc_env_var).unwrap_or_else(|_| {
@@ -213,11 +195,7 @@ impl Program {
             let cmd_line = compose_command_line("cargo", &envs, &args);
             info!("\n{cmd_line}");
 
-            let output = Command::new("cargo")
-                .envs(envs.clone())
-                .args(args)
-                .output()
-                .expect("failed to build guest");
+            let output = Command::new("cargo").envs(envs.clone()).args(args).output().expect("failed to build guest");
 
             if !output.status.success() {
                 io::stderr().write_all(&output.stderr).unwrap();
@@ -241,8 +219,7 @@ impl Program {
 
     pub fn get_elf_contents(&self) -> Option<Vec<u8>> {
         if let Some(elf) = &self.elf {
-            let mut elf_file =
-                File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
+            let mut elf_file = File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
             let mut elf_contents = Vec::new();
             elf_file.read_to_end(&mut elf_contents).unwrap();
             Some(elf_contents)
@@ -254,8 +231,7 @@ impl Program {
     pub fn decode(&mut self) -> (Vec<Instruction>, Vec<(u64, u8)>, u64) {
         self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.as_ref().unwrap();
-        let mut elf_file =
-            File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
+        let mut elf_file = File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
         guest::program::decode(&elf_contents)
@@ -271,8 +247,7 @@ impl Program {
     ) -> (Vec<Cycle>, Memory, JoltDevice) {
         self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.as_ref().unwrap();
-        let mut elf_file =
-            File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
+        let mut elf_file = File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
         let (_, _, program_end, _) = tracer::decode(&elf_contents);
@@ -308,8 +283,7 @@ impl Program {
     ) -> (Memory, JoltDevice) {
         self.build(DEFAULT_TARGET_DIR);
         let elf = self.elf.as_ref().unwrap();
-        let mut elf_file =
-            File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
+        let mut elf_file = File::open(elf).unwrap_or_else(|_| panic!("could not open elf file: {elf:?}"));
         let mut elf_contents = Vec::new();
         elf_file.read_to_end(&mut elf_contents).unwrap();
         let (_, _, program_end, _) = tracer::decode(&elf_contents);
@@ -344,12 +318,7 @@ impl Program {
         let (bytecode, init_memory_state, _) = self.decode();
         let (trace, _, io_device) = self.trace(inputs, untrusted_advice, trusted_advice);
 
-        ProgramSummary {
-            trace,
-            bytecode,
-            memory_init: init_memory_state,
-            io_device,
-        }
+        ProgramSummary { trace, bytecode, memory_init: init_memory_state, io_device }
     }
 
     fn save_linker(&self) {
@@ -365,8 +334,7 @@ impl Program {
             .replace("{STACK_SIZE}", &self.stack_size.to_string());
 
         let mut file = File::create(linker_path).expect("could not create linker file");
-        file.write_all(linker_script.as_bytes())
-            .expect("could not save linker");
+        file.write_all(linker_script.as_bytes()).expect("could not save linker");
     }
 
     fn linker_path(&self) -> String {
@@ -378,14 +346,10 @@ impl Program {
 fn find_guest_manifest(guest_name: &str) -> Option<PathBuf> {
     use std::process::Command;
     // Get workspace root via `cargo locate-project --workspace`
-    let output = Command::new("cargo")
-        .args(["locate-project", "--workspace", "--message-format=plain"])
-        .output()
-        .ok()?;
+    let output =
+        Command::new("cargo").args(["locate-project", "--workspace", "--message-format=plain"]).output().ok()?;
     let workspace_cargo = String::from_utf8(output.stdout).ok()?;
-    let workspace_root = PathBuf::from(workspace_cargo.trim())
-        .parent()?
-        .to_path_buf();
+    let workspace_root = PathBuf::from(workspace_cargo.trim()).parent()?.to_path_buf();
 
     // Walk subdirectories looking for Cargo.toml with matching package name
     fn walk(dir: &std::path::Path, name: &str) -> Option<PathBuf> {
@@ -420,8 +384,7 @@ fn find_guest_manifest(guest_name: &str) -> Option<PathBuf> {
 
 fn compose_command_line(program: &str, envs: &[(&str, String)], args: &[&str]) -> String {
     fn has_ctrl(s: &str) -> bool {
-        s.chars()
-            .any(|c| c.is_control() && !matches!(c, '\t' | '\n' | '\r'))
+        s.chars().any(|c| c.is_control() && !matches!(c, '\t' | '\n' | '\r'))
     }
 
     // ANSI-C ($'...') quoting for when control chars are present.
@@ -448,8 +411,7 @@ fn compose_command_line(program: &str, envs: &[(&str, String)], args: &[&str]) -
 
     // Safe POSIX-style single-quote quoting (no expansions).
     fn sh_quote(s: &str) -> String {
-        const SAFE: &str =
-            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_@%+=:,./-";
+        const SAFE: &str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_@%+=:,./-";
         if !s.is_empty() && s.chars().all(|c| SAFE.contains(c)) {
             s.to_string()
         } else {
@@ -473,23 +435,13 @@ fn compose_command_line(program: &str, envs: &[(&str, String)], args: &[&str]) -
         parts.push("env".to_string());
         for &(k, ref v) in envs {
             let v = v.as_str();
-            let q = if has_ctrl(v) {
-                quote_ansi_c(v)
-            } else {
-                sh_quote(v)
-            };
+            let q = if has_ctrl(v) { quote_ansi_c(v) } else { sh_quote(v) };
             parts.push(format!("{k}={q}"));
         }
     }
 
     parts.push(sh_quote(program));
-    parts.extend(args.iter().map(|&a| {
-        if has_ctrl(a) {
-            quote_ansi_c(a)
-        } else {
-            sh_quote(a)
-        }
-    }));
+    parts.extend(args.iter().map(|&a| if has_ctrl(a) { quote_ansi_c(a) } else { sh_quote(a) }));
 
     parts.join(" ")
 }

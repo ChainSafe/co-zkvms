@@ -42,9 +42,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualAdvice> 
         itertools::izip!(steps, out).for_each(|(step, out)| {
             let advice = step.to_lookup_index(io_ctx.id);
             *out = match advice {
-                FutureRep3Ring::Ready(advice) => {
-                    FutureRep3Ring::cast_to_field_b2a(downcast(advice))
-                }
+                FutureRep3Ring::Ready(advice) => FutureRep3Ring::cast_to_field_b2a(downcast(advice)),
                 FutureRep3Ring::Pending(_, _) => {
                     panic!("VirtualAdvice lookup index must be immediately available")
                 }

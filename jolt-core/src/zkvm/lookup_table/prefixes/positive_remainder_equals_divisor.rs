@@ -8,13 +8,7 @@ use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 pub enum PositiveRemainderEqualsDivisorPrefix {}
 
 impl<F: JoltField> SparseDensePrefix<F> for PositiveRemainderEqualsDivisorPrefix {
-    fn prefix_mle<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<C>,
-        c: u32,
-        mut b: LookupBits,
-        j: usize,
-    ) -> F
+    fn prefix_mle<C>(checkpoints: &[PrefixCheckpoint<F>], r_x: Option<C>, c: u32, mut b: LookupBits, j: usize) -> F
     where
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
@@ -44,8 +38,7 @@ impl<F: JoltField> SparseDensePrefix<F> for PositiveRemainderEqualsDivisorPrefix
             }
         }
 
-        let positive_remainder_equals_divisor =
-            checkpoints[Prefixes::PositiveRemainderEqualsDivisor].unwrap();
+        let positive_remainder_equals_divisor = checkpoints[Prefixes::PositiveRemainderEqualsDivisor].unwrap();
 
         if let Some(r_x) = r_x {
             let (remainder, divisor) = b.uninterleave();
@@ -67,12 +60,7 @@ impl<F: JoltField> SparseDensePrefix<F> for PositiveRemainderEqualsDivisorPrefix
         }
     }
 
-    fn update_prefix_checkpoint<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: C,
-        r_y: C,
-        j: usize,
-    ) -> PrefixCheckpoint<F>
+    fn update_prefix_checkpoint<C>(checkpoints: &[PrefixCheckpoint<F>], r_x: C, r_y: C, j: usize) -> PrefixCheckpoint<F>
     where
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
@@ -85,8 +73,7 @@ impl<F: JoltField> SparseDensePrefix<F> for PositiveRemainderEqualsDivisorPrefix
             return Some((F::one() - r_x) * (F::one() - r_y)).into();
         }
 
-        let mut positive_remainder_equals_divisor =
-            checkpoints[Prefixes::PositiveRemainderEqualsDivisor].unwrap();
+        let mut positive_remainder_equals_divisor = checkpoints[Prefixes::PositiveRemainderEqualsDivisor].unwrap();
         positive_remainder_equals_divisor *= r_x * r_y + (F::one() - r_x) * (F::one() - r_y);
         Some(positive_remainder_equals_divisor).into()
     }

@@ -230,9 +230,7 @@ where
 
         // Cast
         if !buckets.cast_x.is_empty() {
-            let c = io_ctx.par_chunks(buckets.cast_x, None, |xs, io_ctx| {
-                rep3_ring::casts::r2f_many(&xs, io_ctx)
-            })?;
+            let c = io_ctx.par_chunks(buckets.cast_x, None, |xs, io_ctx| rep3_ring::casts::r2f_many(&xs, io_ctx))?;
             for k in 0..c.len() {
                 out[buckets.cast_idx[k]] = map(c[k], buckets.cast_args[k]);
             }
@@ -240,9 +238,8 @@ where
 
         // Cast B2A
         if !buckets.b2a_x.is_empty() {
-            let shares = io_ctx.par_chunks(buckets.b2a_x, None, |xs, io_ctx| {
-                rep3_ring::casts::r2f_b2a_many(&xs, io_ctx)
-            })?;
+            let shares =
+                io_ctx.par_chunks(buckets.b2a_x, None, |xs, io_ctx| rep3_ring::casts::r2f_b2a_many(&xs, io_ctx))?;
             for k in 0..shares.len() {
                 out[buckets.b2a_idx[k]] = map(shares[k], buckets.b2a_args[k]);
             }
@@ -365,10 +362,7 @@ where
                     acc.b2a_x.push(x);
                     acc.b2a_args.push(args);
                 }
-                other => panic!(
-                    "fulfill_batched_with_pool: unexpected variant {:?}",
-                    std::mem::discriminant(&other)
-                ),
+                other => panic!("fulfill_batched_with_pool: unexpected variant {:?}", std::mem::discriminant(&other)),
             }
             acc
         })
@@ -398,16 +392,14 @@ where
     // Cast A→F (arithmetic ring → field) via A2B (Kogge-Stone) then B2A (edaBits)
     if !buckets.cast_x.is_empty() {
         // Step 1: A2B (parallel across forks)
-        let binary: Vec<Rep3RingShare<R>> =
-            io_ctx.par_chunks(buckets.cast_x, None, |xs, ctx| {
-                rep3_ring::conversion::a2b_many(&xs, ctx).map_err(eyre::Error::from)
-            })?;
+        let binary: Vec<Rep3RingShare<R>> = io_ctx.par_chunks(buckets.cast_x, None, |xs, ctx| {
+            rep3_ring::conversion::a2b_many(&xs, ctx).map_err(eyre::Error::from)
+        })?;
         // Step 2: B2A via edaBits (1 broadcast round)
         let batch = preproc.take_edabits::<R>(binary.len())?;
-        let shares =
-            io_ctx.par_chunks_preproc(binary, batch, None, |xs, batch, ctx| {
-                casts::r2f_b2a_preproc_many::<R, F, _>(&xs, &batch, ctx)
-            })?;
+        let shares = io_ctx.par_chunks_preproc(binary, batch, None, |xs, batch, ctx| {
+            casts::r2f_b2a_preproc_many::<R, F, _>(&xs, &batch, ctx)
+        })?;
         for k in 0..shares.len() {
             out[buckets.cast_idx[k]] = map(shares[k], buckets.cast_args[k]);
         }

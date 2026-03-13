@@ -41,11 +41,7 @@ impl<const XLEN: usize> JoltLookupTable for ValidUnsignedRemainderTable<XLEN> {
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for ValidUnsignedRemainderTable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
-        vec![
-            Suffixes::One,
-            Suffixes::LessThan,
-            Suffixes::RightOperandIsZero,
-        ]
+        vec![Suffixes::One, Suffixes::LessThan, Suffixes::RightOperandIsZero]
     }
 
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {

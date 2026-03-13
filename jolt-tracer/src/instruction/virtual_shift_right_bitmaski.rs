@@ -16,11 +16,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualShiftRightBitmaskI {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <VirtualShiftRightBitmaskI as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualShiftRightBitmaskI as RISCVInstruction>::RAMAccess) {
         match cpu.xlen {
             Xlen::Bit32 => {
                 let shift = self.operands.imm % 32;

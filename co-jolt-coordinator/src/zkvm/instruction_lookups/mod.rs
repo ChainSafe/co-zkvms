@@ -1,5 +1,6 @@
 use std::marker::PhantomData;
 
+use jolt_core::curve::Bn254Curve;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::opening_proof::SumcheckId;
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
@@ -32,9 +33,7 @@ pub struct Rep3LookupsDag<F: JoltField> {
 
 impl<F: JoltField> Rep3LookupsDag<F> {
     pub fn new() -> Self {
-        Self {
-            _phantom: PhantomData,
-        }
+        Self { _phantom: PhantomData }
     }
 }
 
@@ -52,7 +51,7 @@ impl<F: JoltField> Rep3LookupsDag<F> {
     pub fn stage4_prove_coordinator<ProofTranscript, PCS, N>(
         sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
         network: &mut N,
-    ) -> eyre::Result<Option<(SumcheckInstanceProof<F, ProofTranscript>, Vec<F::Challenge>)>>
+    ) -> eyre::Result<Option<(SumcheckInstanceProof<F, Bn254Curve, ProofTranscript>, Vec<F::Challenge>)>>
     where
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
@@ -60,10 +59,7 @@ impl<F: JoltField> Rep3LookupsDag<F> {
     {
         use jolt_core::poly::opening_proof::OpeningId;
 
-        let ra_key = OpeningId::Virtual(
-            VirtualPolynomial::InstructionRa,
-            SumcheckId::InstructionReadRaf,
-        );
+        let ra_key = OpeningId::Virtual(VirtualPolynomial::InstructionRa, SumcheckId::InstructionReadRaf);
         let has_ra_opening = sm.accumulator.openings.contains_key(&ra_key);
 
         // Tell workers whether stage 4 is active.
@@ -73,24 +69,17 @@ impl<F: JoltField> Rep3LookupsDag<F> {
             return Ok(None);
         }
 
-        let (ra_point, ra_claim) = sm.accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::InstructionRa,
-            SumcheckId::InstructionReadRaf,
-        );
+        let (ra_point, ra_claim) = sm
+            .accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::InstructionRa, SumcheckId::InstructionReadRaf);
 
         let (r_address, r_cycle) = ra_point.r.split_at(D * LOG_K_CHUNK);
-        let r_address_chunks: Vec<Vec<F::Challenge>> =
-            r_address.chunks(LOG_K_CHUNK).map(|c| c.to_vec()).collect();
+        let r_address_chunks: Vec<Vec<F::Challenge>> = r_address.chunks(LOG_K_CHUNK).map(|c| c.to_vec()).collect();
 
         network.broadcast_request((ra_claim, r_address.to_vec(), r_cycle.to_vec()))?;
 
         let ra_coord = Rep3InstructionRaSumcheck::new(ra_claim, r_cycle.to_vec(), r_address_chunks);
-        let result = ra_virtual::prove_coordinator(
-            &ra_coord,
-            &mut sm.accumulator,
-            &mut sm.transcript,
-            network,
-        )?;
+        let result = ra_virtual::prove_coordinator(&ra_coord, &mut sm.accumulator, &mut sm.transcript, network)?;
 
         Ok(Some(result))
     }
@@ -108,10 +97,7 @@ where
     ) -> Result<Vec<BatchedSumcheckInstance<F, ProofTranscript>>, eyre::Report> {
         let log_T = sm
             .accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::LookupOutput,
-                SumcheckId::SpartanOuter,
-            )
+            .get_virtual_polynomial_opening(VirtualPolynomial::LookupOutput, SumcheckId::SpartanOuter)
             .0
             .r
             .len();
@@ -128,35 +114,23 @@ where
     ) -> Result<Vec<BatchedSumcheckInstance<F, ProofTranscript>>, eyre::Report> {
         // ReadRaf (created before HammingWeight, matching vanilla ordering).
         // Draws gamma from transcript internally.
-        let (_, rv_claim) = sm.accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::LookupOutput,
-            SumcheckId::SpartanOuter,
-        );
-        let (_, left_operand_claim) = sm.accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::LeftLookupOperand,
-            SumcheckId::SpartanOuter,
-        );
-        let (_, right_operand_claim) = sm.accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RightLookupOperand,
-            SumcheckId::SpartanOuter,
-        );
+        let (_, rv_claim) =
+            sm.accumulator.get_virtual_polynomial_opening(VirtualPolynomial::LookupOutput, SumcheckId::SpartanOuter);
+        let (_, left_operand_claim) = sm
+            .accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::LeftLookupOperand, SumcheckId::SpartanOuter);
+        let (_, right_operand_claim) = sm
+            .accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::RightLookupOperand, SumcheckId::SpartanOuter);
         let log_T = sm
             .accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::LookupOutput,
-                SumcheckId::SpartanOuter,
-            )
+            .get_virtual_polynomial_opening(VirtualPolynomial::LookupOutput, SumcheckId::SpartanOuter)
             .0
             .r
             .len();
 
-        let read_raf = Rep3ReadRafSumcheck::new(
-            &mut sm.transcript,
-            rv_claim,
-            left_operand_claim,
-            right_operand_claim,
-            log_T,
-        );
+        let read_raf =
+            Rep3ReadRafSumcheck::new(&mut sm.transcript, rv_claim, left_operand_claim, right_operand_claim, log_T);
 
         let hamming_weight = Rep3HammingWeightSumcheck::new(&mut sm.transcript);
 

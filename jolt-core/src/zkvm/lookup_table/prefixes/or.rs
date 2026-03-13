@@ -9,13 +9,7 @@ use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 pub enum OrPrefix<const XLEN: usize> {}
 
 impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for OrPrefix<XLEN> {
-    fn prefix_mle<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<C>,
-        c: u32,
-        mut b: LookupBits,
-        j: usize,
-    ) -> F
+    fn prefix_mle<C>(checkpoints: &[PrefixCheckpoint<F>], r_x: Option<C>, c: u32, mut b: LookupBits, j: usize) -> F
     where
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
@@ -40,20 +34,15 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for OrPrefix<XLEN> {
         result
     }
 
-    fn update_prefix_checkpoint<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: C,
-        r_y: C,
-        j: usize,
-    ) -> PrefixCheckpoint<F>
+    fn update_prefix_checkpoint<C>(checkpoints: &[PrefixCheckpoint<F>], r_x: C, r_y: C, j: usize) -> PrefixCheckpoint<F>
     where
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
     {
         let shift = XLEN - 1 - j / 2;
         // checkpoint += 2^shift * (r_x + r_y - r_x * r_y)
-        let updated = checkpoints[Prefixes::Or].unwrap_or(F::zero())
-            + F::from_u64(1 << shift) * (r_x + r_y - r_x * r_y);
+        let updated =
+            checkpoints[Prefixes::Or].unwrap_or(F::zero()) + F::from_u64(1 << shift) * (r_x + r_y - r_x * r_y);
         Some(updated).into()
     }
 }

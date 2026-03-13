@@ -27,9 +27,8 @@ where
         match poly.borrow() {
             MultilinearPolynomial::LargeScalars(poly) => {
                 let scalars: &[Self::ScalarField] = poly.evals_ref();
-                ArkVariableBaseMSM::msm(bases, scalars).map_err(|_bad_index| {
-                    ProofVerifyError::KeyLengthError(bases.len(), scalars.len())
-                })
+                ArkVariableBaseMSM::msm(bases, scalars)
+                    .map_err(|_bad_index| ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
             }
 
             MultilinearPolynomial::U8Scalars(poly) => (bases.len() == poly.coeffs.len())
@@ -44,46 +43,26 @@ where
                         msm_u8::<Self>(bases, scalars, false)
                     }
                 })
-                .ok_or(ProofVerifyError::KeyLengthError(
-                    bases.len(),
-                    poly.coeffs.len(),
-                )),
+                .ok_or(ProofVerifyError::KeyLengthError(bases.len(), poly.coeffs.len())),
             MultilinearPolynomial::U16Scalars(poly) => (bases.len() == poly.coeffs.len())
                 .then(|| msm_u16::<Self>(bases, &poly.coeffs, false))
-                .ok_or(ProofVerifyError::KeyLengthError(
-                    bases.len(),
-                    poly.coeffs.len(),
-                )),
+                .ok_or(ProofVerifyError::KeyLengthError(bases.len(), poly.coeffs.len())),
             MultilinearPolynomial::U32Scalars(poly) => (bases.len() == poly.coeffs.len())
                 .then(|| msm_u32::<Self>(bases, &poly.coeffs, false))
-                .ok_or(ProofVerifyError::KeyLengthError(
-                    bases.len(),
-                    poly.coeffs.len(),
-                )),
+                .ok_or(ProofVerifyError::KeyLengthError(bases.len(), poly.coeffs.len())),
 
             MultilinearPolynomial::U64Scalars(poly) => (bases.len() == poly.coeffs.len())
                 .then(|| msm_u64::<Self>(bases, &poly.coeffs, false))
-                .ok_or(ProofVerifyError::KeyLengthError(
-                    bases.len(),
-                    poly.coeffs.len(),
-                )),
+                .ok_or(ProofVerifyError::KeyLengthError(bases.len(), poly.coeffs.len())),
 
             // TODO: Check if this is the fastest way forward.
             MultilinearPolynomial::I64Scalars(poly) => {
                 if bases.len() != poly.coeffs.len() {
-                    return Err(ProofVerifyError::KeyLengthError(
-                        bases.len(),
-                        poly.coeffs.len(),
-                    ));
+                    return Err(ProofVerifyError::KeyLengthError(bases.len(), poly.coeffs.len()));
                 }
 
                 let scalars = &poly.coeffs;
-                let (pos_scalars, pos_bases, neg_scalars, neg_bases): (
-                    Vec<u64>,
-                    Vec<_>,
-                    Vec<u64>,
-                    Vec<_>,
-                ) = bases
+                let (pos_scalars, pos_bases, neg_scalars, neg_bases): (Vec<u64>, Vec<_>, Vec<u64>, Vec<_>) = bases
                     .par_iter()
                     .zip(scalars.par_iter())
                     .fold(
@@ -110,18 +89,14 @@ where
                         },
                     );
 
-                Ok(msm_u64::<Self>(&pos_bases, &pos_scalars, false)
-                    - msm_u64::<Self>(&neg_bases, &neg_scalars, false))
+                Ok(msm_u64::<Self>(&pos_bases, &pos_scalars, false) - msm_u64::<Self>(&neg_bases, &neg_scalars, false))
             }
             _ => unimplemented!("This variant of MultilinearPolynomial is not yet handled"),
         }
     }
 
     #[tracing::instrument(skip_all)]
-    fn msm_field_elements(
-        bases: &[Self::MulBase],
-        scalars: &[Self::ScalarField],
-    ) -> Result<Self, ProofVerifyError> {
+    fn msm_field_elements(bases: &[Self::MulBase], scalars: &[Self::ScalarField]) -> Result<Self, ProofVerifyError> {
         ArkVariableBaseMSM::msm_serial(bases, scalars)
             .map_err(|_bad_index| ProofVerifyError::KeyLengthError(bases.len(), scalars.len()))
     }
@@ -200,22 +175,13 @@ where
     where
         U: Borrow<MultilinearPolynomial<Self::ScalarField>> + Sync,
     {
-        polys
-            .par_iter()
-            .map(|poly| VariableBaseMSM::msm(&bases[..poly.borrow().len()], poly).unwrap())
-            .collect()
+        polys.par_iter().map(|poly| VariableBaseMSM::msm(&bases[..poly.borrow().len()], poly).unwrap()).collect()
     }
 
-    fn batch_msm_univariate(
-        bases: &[Self::MulBase],
-        polys: &[UniPoly<Self::ScalarField>],
-    ) -> Vec<Self> {
+    fn batch_msm_univariate(bases: &[Self::MulBase], polys: &[UniPoly<Self::ScalarField>]) -> Vec<Self> {
         polys
             .par_iter()
-            .map(|poly| {
-                VariableBaseMSM::msm_field_elements(&bases[..poly.coeffs.len()], &poly.coeffs)
-                    .unwrap()
-            })
+            .map(|poly| VariableBaseMSM::msm_field_elements(&bases[..poly.coeffs.len()], &poly.coeffs).unwrap())
             .collect()
     }
 }

@@ -8,8 +8,8 @@ use crate::{
 };
 
 use super::{
-    format::format_r::FormatR, virtual_shift_right_bitmask::VirtualShiftRightBitmask,
-    virtual_srl::VirtualSRL, Cycle, Instruction, RISCVInstruction, RISCVTrace,
+    format::format_r::FormatR, virtual_shift_right_bitmask::VirtualShiftRightBitmask, virtual_srl::VirtualSRL, Cycle,
+    Instruction, RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -42,11 +42,7 @@ impl RISCVTrace for SRL {
         }
     }
 
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let v_bitmask = allocator.allocate();
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);

@@ -9,13 +9,7 @@ use crate::{
 pub enum LeftShiftWPrefix<const XLEN: usize> {}
 
 impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for LeftShiftWPrefix<XLEN> {
-    fn prefix_mle<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<C>,
-        c: u32,
-        mut b: LookupBits,
-        j: usize,
-    ) -> F
+    fn prefix_mle<C>(checkpoints: &[PrefixCheckpoint<F>], r_x: Option<C>, c: u32, mut b: LookupBits, j: usize) -> F
     where
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
@@ -40,9 +34,8 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for LeftShiftWPrefix<
             prod_one_plus_y *= F::from_u8(1 + c as u8);
         } else {
             let y_msb = b.pop_msb();
-            result += F::from_u8(c as u8 * (1 - y_msb))
-                * prod_one_plus_y
-                * F::from_u64(1u64.wrapping_shl(bit_index as u32));
+            result +=
+                F::from_u8(c as u8 * (1 - y_msb)) * prod_one_plus_y * F::from_u64(1u64.wrapping_shl(bit_index as u32));
             prod_one_plus_y *= F::from_u8(1 + y_msb);
         }
 
@@ -55,12 +48,7 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for LeftShiftWPrefix<
         result
     }
 
-    fn update_prefix_checkpoint<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: C,
-        r_y: C,
-        j: usize,
-    ) -> PrefixCheckpoint<F>
+    fn update_prefix_checkpoint<C>(checkpoints: &[PrefixCheckpoint<F>], r_x: C, r_y: C, j: usize) -> PrefixCheckpoint<F>
     where
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
@@ -69,10 +57,7 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for LeftShiftWPrefix<
             let mut updated = checkpoints[Prefixes::LeftShiftW].unwrap_or(F::zero());
             let prod_one_plus_y = checkpoints[Prefixes::LeftShiftWHelper].unwrap_or(F::one());
             let bit_index = XLEN - 1 - j / 2;
-            updated += r_x
-                * (F::one() - r_y)
-                * prod_one_plus_y
-                * F::from_u64(1u64.wrapping_shl(bit_index as u32));
+            updated += r_x * (F::one() - r_y) * prod_one_plus_y * F::from_u64(1u64.wrapping_shl(bit_index as u32));
             Some(updated).into()
         } else {
             Some(F::zero()).into()

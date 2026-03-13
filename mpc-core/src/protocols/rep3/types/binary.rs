@@ -27,20 +27,12 @@ impl<F: PrimeField> Default for Rep3BigUintShare<F> {
 impl<F: PrimeField> Rep3BigUintShare<F> {
     /// Constructs the type from two additive shares.
     pub fn new(a: BigUint, b: BigUint) -> Self {
-        Self {
-            a,
-            b,
-            phantom: PhantomData,
-        }
+        Self { a, b, phantom: PhantomData }
     }
 
     /// Constructs a zero share.
     pub fn zero_share() -> Self {
-        Self {
-            a: BigUint::ZERO,
-            b: BigUint::ZERO,
-            phantom: PhantomData,
-        }
+        Self { a: BigUint::ZERO, b: BigUint::ZERO, phantom: PhantomData }
     }
 
     /// Unwraps the type into two additive shares.
@@ -73,9 +65,7 @@ impl<F: PrimeField> Rep3BigUintShare<F> {
 
     /// Converts a vector of bits in little-endian order to a share.
     pub fn from_le_bits(bits: &[Self]) -> Self {
-        bits.iter()
-            .rev()
-            .fold(Self::zero_share(), |int, bit| int << 1 ^ bit.clone())
+        bits.iter().rev().fold(Self::zero_share(), |int, bit| int << 1 ^ bit.clone())
     }
 }
 
@@ -98,11 +88,7 @@ impl<F: PrimeField> std::ops::BitXor for Rep3BigUintShare<F> {
     type Output = Rep3BigUintShare<F>;
 
     fn bitxor(self, rhs: Self) -> Self::Output {
-        Self::Output {
-            a: self.a ^ rhs.a,
-            b: self.b ^ rhs.b,
-            phantom: PhantomData,
-        }
+        Self::Output { a: self.a ^ rhs.a, b: self.b ^ rhs.b, phantom: PhantomData }
     }
 }
 
@@ -110,11 +96,7 @@ impl<F: PrimeField> std::ops::BitXor<&Rep3BigUintShare<F>> for &'_ Rep3BigUintSh
     type Output = Rep3BigUintShare<F>;
 
     fn bitxor(self, rhs: &Rep3BigUintShare<F>) -> Self::Output {
-        Self::Output {
-            a: &self.a ^ &rhs.a,
-            b: &self.b ^ &rhs.b,
-            phantom: PhantomData,
-        }
+        Self::Output { a: &self.a ^ &rhs.a, b: &self.b ^ &rhs.b, phantom: PhantomData }
     }
 }
 
@@ -122,11 +104,7 @@ impl<F: PrimeField> std::ops::BitXor<BigUint> for Rep3BigUintShare<F> {
     type Output = Rep3BigUintShare<F>;
 
     fn bitxor(self, rhs: BigUint) -> Self::Output {
-        Self::Output {
-            a: &self.a ^ &rhs,
-            b: &self.b ^ &rhs,
-            phantom: PhantomData,
-        }
+        Self::Output { a: &self.a ^ &rhs, b: &self.b ^ &rhs, phantom: PhantomData }
     }
 }
 
@@ -134,11 +112,7 @@ impl<F: PrimeField> std::ops::BitXor<&BigUint> for &Rep3BigUintShare<F> {
     type Output = Rep3BigUintShare<F>;
 
     fn bitxor(self, rhs: &BigUint) -> Self::Output {
-        Self::Output {
-            a: &self.a ^ rhs,
-            b: &self.b ^ rhs,
-            phantom: PhantomData,
-        }
+        Self::Output { a: &self.a ^ rhs, b: &self.b ^ rhs, phantom: PhantomData }
     }
 }
 
@@ -174,11 +148,7 @@ impl<F: PrimeField> std::ops::BitAnd<BigUint> for Rep3BigUintShare<F> {
     type Output = Rep3BigUintShare<F>;
 
     fn bitand(self, rhs: BigUint) -> Self::Output {
-        Rep3BigUintShare {
-            a: &self.a & &rhs,
-            b: &self.b & &rhs,
-            phantom: PhantomData,
-        }
+        Rep3BigUintShare { a: &self.a & &rhs, b: &self.b & &rhs, phantom: PhantomData }
     }
 }
 
@@ -186,11 +156,7 @@ impl<F: PrimeField> std::ops::BitAnd<&BigUint> for &Rep3BigUintShare<F> {
     type Output = Rep3BigUintShare<F>;
 
     fn bitand(self, rhs: &BigUint) -> Self::Output {
-        Rep3BigUintShare {
-            a: &self.a & rhs,
-            b: &self.b & rhs,
-            phantom: PhantomData,
-        }
+        Rep3BigUintShare { a: &self.a & rhs, b: &self.b & rhs, phantom: PhantomData }
     }
 }
 
@@ -235,11 +201,7 @@ impl<F: PrimeField> std::ops::Shl<usize> for Rep3BigUintShare<F> {
     type Output = Self;
 
     fn shl(self, rhs: usize) -> Self::Output {
-        Rep3BigUintShare {
-            a: &self.a << rhs,
-            b: &self.b << rhs,
-            phantom: PhantomData,
-        }
+        Rep3BigUintShare { a: &self.a << rhs, b: &self.b << rhs, phantom: PhantomData }
     }
 }
 
@@ -247,11 +209,7 @@ impl<F: PrimeField> std::ops::Shl<usize> for &Rep3BigUintShare<F> {
     type Output = Rep3BigUintShare<F>;
 
     fn shl(self, rhs: usize) -> Self::Output {
-        Rep3BigUintShare {
-            a: &self.a << rhs,
-            b: &self.b << rhs,
-            phantom: PhantomData,
-        }
+        Rep3BigUintShare { a: &self.a << rhs, b: &self.b << rhs, phantom: PhantomData }
     }
 }
 
@@ -259,11 +217,7 @@ impl<F: PrimeField> std::ops::Shr<usize> for Rep3BigUintShare<F> {
     type Output = Rep3BigUintShare<F>;
 
     fn shr(self, rhs: usize) -> Self::Output {
-        Rep3BigUintShare {
-            a: &self.a >> rhs,
-            b: &self.b >> rhs,
-            phantom: PhantomData,
-        }
+        Rep3BigUintShare { a: &self.a >> rhs, b: &self.b >> rhs, phantom: PhantomData }
     }
 }
 
@@ -271,10 +225,6 @@ impl<F: PrimeField> std::ops::Shr<usize> for &Rep3BigUintShare<F> {
     type Output = Rep3BigUintShare<F>;
 
     fn shr(self, rhs: usize) -> Self::Output {
-        Rep3BigUintShare {
-            a: &self.a >> rhs,
-            b: &self.b >> rhs,
-            phantom: PhantomData,
-        }
+        Rep3BigUintShare { a: &self.a >> rhs, b: &self.b >> rhs, phantom: PhantomData }
     }
 }

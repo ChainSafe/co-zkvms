@@ -11,9 +11,7 @@ use crate::emulator::cpu::Cpu;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
-use super::{
-    normalize_register_value, InstructionFormat, InstructionRegisterState, NormalizedOperands,
-};
+use super::{normalize_register_value, InstructionFormat, InstructionRegisterState, NormalizedOperands};
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatInline {
@@ -33,11 +31,7 @@ impl InstructionRegisterState for RegisterStateFormatInline {
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
         use rand::RngCore;
-        Self {
-            rs1: rng.next_u64(),
-            rs2: rng.next_u64(),
-            rs3: rng.next_u64(),
-        }
+        Self { rs1: rng.next_u64(), rs2: rng.next_u64(), rs3: rng.next_u64() }
     }
 
     fn rs1_value(&self) -> u64 {

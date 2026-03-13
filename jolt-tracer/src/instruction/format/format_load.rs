@@ -2,9 +2,7 @@ use crate::emulator::cpu::Cpu;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
-use super::{
-    normalize_register_value, InstructionFormat, InstructionRegisterState, NormalizedOperands,
-};
+use super::{normalize_register_value, InstructionFormat, InstructionRegisterState, NormalizedOperands};
 
 /// Same as FormatI, but with a signed `imm`. Used for load instructions,
 /// which need to do signed field arithmetic with `imm` in R1CS constraints.
@@ -26,10 +24,7 @@ impl InstructionRegisterState for RegisterStateFormatLoad {
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
         use crate::instruction::test::TEST_MEMORY_CAPACITY;
         use rand::RngCore;
-        Self {
-            rd: (rng.next_u64(), rng.next_u64()),
-            rs1: rng.next_u64() % TEST_MEMORY_CAPACITY,
-        }
+        Self { rd: (rng.next_u64(), rng.next_u64()), rs1: rng.next_u64() % TEST_MEMORY_CAPACITY }
     }
 
     fn rs1_value(&self) -> u64 {
@@ -83,21 +78,12 @@ impl InstructionFormat for FormatLoad {
 
 impl From<NormalizedOperands> for FormatLoad {
     fn from(operands: NormalizedOperands) -> Self {
-        Self {
-            rd: operands.rd,
-            rs1: operands.rs1,
-            imm: operands.imm as i64,
-        }
+        Self { rd: operands.rd, rs1: operands.rs1, imm: operands.imm as i64 }
     }
 }
 
 impl From<FormatLoad> for NormalizedOperands {
     fn from(format: FormatLoad) -> Self {
-        Self {
-            rd: format.rd,
-            rs1: format.rs1,
-            rs2: 0,
-            imm: format.imm as i128,
-        }
+        Self { rd: format.rd, rs1: format.rs1, rs2: 0, imm: format.imm as i128 }
     }
 }

@@ -244,8 +244,7 @@ impl JoltCurve for Bn254Curve {
 
         let affine_bases: Vec<G1Affine> = bases.iter().map(|b| b.0.into_affine()).collect();
         let fr_scalars: Vec<Fr> = scalars.iter().map(jolt_field_to_fr).collect();
-        let bigint_scalars: Vec<_> =
-            fr_scalars.iter().map(|s| PrimeField::into_bigint(*s)).collect();
+        let bigint_scalars: Vec<_> = fr_scalars.iter().map(|s| PrimeField::into_bigint(*s)).collect();
 
         Bn254G1(G1Projective::msm_bigint(&affine_bases, &bigint_scalars))
     }
@@ -255,8 +254,7 @@ impl JoltCurve for Bn254Curve {
 
         let affine_bases: Vec<G2Affine> = bases.iter().map(|b| b.0.into_affine()).collect();
         let fr_scalars: Vec<Fr> = scalars.iter().map(jolt_field_to_fr).collect();
-        let bigint_scalars: Vec<_> =
-            fr_scalars.iter().map(|s| PrimeField::into_bigint(*s)).collect();
+        let bigint_scalars: Vec<_> = fr_scalars.iter().map(|s| PrimeField::into_bigint(*s)).collect();
 
         Bn254G2(G2Projective::msm_bigint(&affine_bases, &bigint_scalars))
     }
@@ -275,8 +273,7 @@ fn jolt_field_to_fr<F: JoltField>(f: &F) -> Fr {
     // Serialize the field element and deserialize as Fr
     // This is safe because JoltField elements are assumed to be in the same field
     let mut bytes = [0u8; 32];
-    f.serialize_uncompressed(&mut bytes[..])
-        .expect("serialization should succeed");
+    f.serialize_uncompressed(&mut bytes[..]).expect("serialization should succeed");
     Fr::from_le_bytes_mod_order(&bytes)
 }
 

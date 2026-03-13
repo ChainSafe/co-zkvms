@@ -135,10 +135,7 @@ where
         debug_assert_eq!(v1.len(), v2.len(), "v1 and v2 must have equal length");
         debug_assert_eq!(v1.len(), s1.len(), "v1 and s1 must have equal length");
         debug_assert_eq!(v1.len(), s2.len(), "v1 and s2 must have equal length");
-        debug_assert!(
-            v1.len().is_power_of_two(),
-            "vector length must be power of 2"
-        );
+        debug_assert!(v1.len().is_power_of_two(), "vector length must be power of 2");
         if let Some(sc) = v2_scalars.as_ref() {
             debug_assert_eq!(sc.len(), v2.len(), "v2_scalars must match v2 length");
         }
@@ -189,10 +186,7 @@ where
         M1: DoryRoutines<E::G1>,
         M2: DoryRoutines<E::G2>,
     {
-        assert!(
-            self.num_rounds > 0,
-            "Not enough rounds left in prover state"
-        );
+        assert!(self.num_rounds > 0, "Not enough rounds left in prover state");
 
         let n2 = 1 << (self.num_rounds - 1); // n/2
 
@@ -210,16 +204,8 @@ where
 
         // D₁L = ⟨v₁L, Γ₂'⟩, D₁R = ⟨v₁R, Γ₂'⟩
         let ht = &self.setup.ht;
-        let d1_left = M::mask(
-            E::multi_pair_g2_setup(v1_l, g2_prime),
-            ht,
-            &self.round_d1[0],
-        );
-        let d1_right = M::mask(
-            E::multi_pair_g2_setup(v1_r, g2_prime),
-            ht,
-            &self.round_d1[1],
-        );
+        let d1_left = M::mask(E::multi_pair_g2_setup(v1_l, g2_prime), ht, &self.round_d1[0]);
+        let d1_right = M::mask(E::multi_pair_g2_setup(v1_r, g2_prime), ht, &self.round_d1[1]);
 
         // D₂L = ⟨Γ₁', v₂L⟩, D₂R = ⟨Γ₁', v₂R⟩
         // If v2 was constructed as h2 * scalars (first round), compute MSM(Γ₁', scalars) then one pairing.
@@ -230,10 +216,7 @@ where
             let g2_fin = &self.setup.g2_vec[0];
             (E::pair(&sum_left, g2_fin), E::pair(&sum_right, g2_fin))
         } else {
-            (
-                E::multi_pair_g1_setup(g1_prime, v2_l),
-                E::multi_pair_g1_setup(g1_prime, v2_r),
-            )
+            (E::multi_pair_g1_setup(g1_prime, v2_l), E::multi_pair_g1_setup(g1_prime, v2_r))
         };
         let d2_left = M::mask(d2_left_base, ht, &self.round_d2[0]);
         let d2_right = M::mask(d2_right_base, ht, &self.round_d2[1]);
@@ -245,14 +228,7 @@ where
         // E₂β = ⟨Γ₂, s₁⟩
         let e2_beta = M2::msm(&self.setup.g2_vec[..1 << self.num_rounds], &self.s1[..]);
 
-        FirstReduceMessage {
-            d1_left,
-            d1_right,
-            d2_left,
-            d2_right,
-            e1_beta,
-            e2_beta,
-        }
+        FirstReduceMessage { d1_left, d1_right, d2_left, d2_right, e1_beta, e2_beta }
     }
 
     /// Apply first challenge (beta) and combine vectors
@@ -307,24 +283,14 @@ where
         let e2_plus = M::mask(M2::msm(v2_r, s1_l), &self.setup.h2, &self.round_e2[0]);
         let e2_minus = M::mask(M2::msm(v2_l, s1_r), &self.setup.h2, &self.round_e2[1]);
 
-        SecondReduceMessage {
-            c_plus,
-            c_minus,
-            e1_plus,
-            e1_minus,
-            e2_plus,
-            e2_minus,
-        }
+        SecondReduceMessage { c_plus, c_minus, e1_plus, e1_minus, e2_plus, e2_minus }
     }
 
     /// Apply second challenge (alpha) and fold vectors
     ///
     /// Reduces the vector size by half using the alpha challenge.
     #[tracing::instrument(skip_all, name = "DoryProverState::apply_second_challenge")]
-    pub fn apply_second_challenge<M1: DoryRoutines<E::G1>, M2: DoryRoutines<E::G2>>(
-        &mut self,
-        alpha: &Scalar<E>,
-    ) {
+    pub fn apply_second_challenge<M1: DoryRoutines<E::G1>, M2: DoryRoutines<E::G2>>(&mut self, alpha: &Scalar<E>) {
         let alpha_inv = alpha.inv().expect("alpha must be invertible");
         let n2 = 1 << (self.num_rounds - 1); // n/2
 
@@ -366,10 +332,7 @@ where
     /// that the folded vectors `v₁[0]`, `v₂[0]` cannot be recovered from the
     /// proof.
     #[tracing::instrument(skip_all, name = "DoryProverState::compute_final_message")]
-    pub fn compute_final_message<M1, M2>(
-        &mut self,
-        gamma: &Scalar<E>,
-    ) -> ScalarProductMessage<E::G1, E::G2>
+    pub fn compute_final_message<M1, M2>(&mut self, gamma: &Scalar<E>) -> ScalarProductMessage<E::G1, E::G2>
     where
         M1: DoryRoutines<E::G1>,
         M2: DoryRoutines<E::G2>,
@@ -413,12 +376,7 @@ where
         let p2 = E::pair(&g1, &d2) + ht.scale(&rp2);
         let q = E::pair(&d1, &v2) + E::pair(&v1, &d2) + ht.scale(&rq);
         let rr_val = E::pair(&d1, &d2) + ht.scale(&rr);
-        for (label, val) in [
-            (b"sigma_p1" as &[u8], &p1),
-            (b"sigma_p2", &p2),
-            (b"sigma_q", &q),
-            (b"sigma_r", &rr_val),
-        ] {
+        for (label, val) in [(b"sigma_p1" as &[u8], &p1), (b"sigma_p2", &p2), (b"sigma_q", &q), (b"sigma_r", &rr_val)] {
             transcript.append_serde(label, val);
         }
         let c = transcript.challenge_scalar(b"sigma_c");
@@ -452,23 +410,13 @@ where
     E::G2: Group<Scalar = Scalar<E>>,
 {
     let (g2_fin, g1_fin) = (&setup.g2_vec[0], &setup.g1_vec[0]);
-    let (k1, k2, k3) = (
-        Scalar::<E>::random(),
-        Scalar::<E>::random(),
-        Scalar::<E>::random(),
-    );
+    let (k1, k2, k3) = (Scalar::<E>::random(), Scalar::<E>::random(), Scalar::<E>::random());
     let a1 = g2_fin.scale(&k1) + setup.h2.scale(&k2);
     let a2 = k1 * g1_fin + k3 * setup.h1;
     transcript.append_serde(b"sigma1_a1", &a1);
     transcript.append_serde(b"sigma1_a2", &a2);
     let c = transcript.challenge_scalar(b"sigma1_c");
-    Sigma1Proof {
-        a1,
-        a2,
-        z1: k1 + c * y,
-        z2: k2 + c * r_e2,
-        z3: k3 + c * r_y,
-    }
+    Sigma1Proof { a1, a2, z1: k1 + c * y, z2: k2 + c * r_e2, z3: k3 + c * r_y }
 }
 
 /// Verify Sigma1 proof.
@@ -512,17 +460,10 @@ where
     E::GT: Group<Scalar = Scalar<E>>,
 {
     let (k1, k2) = (Scalar::<E>::random(), Scalar::<E>::random());
-    let a = E::pair(
-        &setup.h1,
-        &(setup.g2_vec[0].scale(&k1) + setup.h2.scale(&k2)),
-    );
+    let a = E::pair(&setup.h1, &(setup.g2_vec[0].scale(&k1) + setup.h2.scale(&k2)));
     transcript.append_serde(b"sigma2_a", &a);
     let c = transcript.challenge_scalar(b"sigma2_c");
-    Sigma2Proof {
-        a,
-        z1: k1 + c * t1,
-        z2: k2 + c * t2,
-    }
+    Sigma2Proof { a, z1: k1 + c * t1, z2: k2 + c * t2 }
 }
 
 /// Verify Sigma2 proof.
@@ -542,10 +483,7 @@ where
     transcript.append_serde(b"sigma2_a", &proof.a);
     let c = transcript.challenge_scalar(b"sigma2_c");
     let expected = E::pair(e1, &setup.g2_0) - *d2;
-    let lhs = E::pair(
-        &setup.h1,
-        &(setup.g2_0.scale(&proof.z1) + setup.h2.scale(&proof.z2)),
-    );
+    let lhs = E::pair(&setup.h1, &(setup.g2_0.scale(&proof.z1) + setup.h2.scale(&proof.z2)));
     if lhs == proof.a + expected.scale(&c) {
         Ok(())
     } else {
@@ -595,7 +533,7 @@ impl<E: PairingCurve> DoryVerifierState<E> {
     ///
     /// Takes both reduce messages and both challenges, updates all state values.
     /// This implements the extended Dory-Reduce algorithm from sections 3.2 & 4.2.
-    #[tracing::instrument(skip_all, name = "DoryVerifierState::process_round")]
+    #[tracing::instrument(skip_all, level = "trace", name = "DoryVerifierState::process_round")]
     pub fn process_round(
         &mut self,
         first_msg: &FirstReduceMessage<E::G1, E::G2, E::GT>,
@@ -638,10 +576,7 @@ impl<E: PairingCurve> DoryVerifierState<E> {
             + self.setup.delta_2r[self.num_rounds].scale(&beta_inv);
 
         // E₁' ← E₁ + β·E₁β + α·E₁₊ + α⁻¹·E₁₋
-        self.e1 = self.e1
-            + *beta * first_msg.e1_beta
-            + *alpha * second_msg.e1_plus
-            + alpha_inv * second_msg.e1_minus;
+        self.e1 = self.e1 + *beta * first_msg.e1_beta + *alpha * second_msg.e1_plus + alpha_inv * second_msg.e1_minus;
 
         // E₂' ← E₂ + β⁻¹·E₂β + α·E₂₊ + α⁻¹·E₂₋
         self.e2 = self.e2
@@ -739,20 +674,14 @@ impl<E: PairingCurve> DoryVerifierState<E> {
         msg: &ScalarProductMessage<E::G1, E::G2>,
         gamma: &Scalar<E>,
         d: &Scalar<E>,
-        zk_data: Option<(
-            &ScalarProductProof<E::G1, E::G2, Scalar<E>, E::GT>,
-            &Scalar<E>,
-        )>,
+        zk_data: Option<(&ScalarProductProof<E::G1, E::G2, Scalar<E>, E::GT>, &Scalar<E>)>,
     ) -> Result<(), DoryError>
     where
         E::G2: Group<Scalar = Scalar<E>>,
         E::GT: Group<Scalar = Scalar<E>>,
         Scalar<E>: Field,
     {
-        debug_assert_eq!(
-            self.num_rounds, 0,
-            "num_rounds must be 0 for final verification"
-        );
+        debug_assert_eq!(self.num_rounds, 0, "num_rounds must be 0 for final verification");
 
         let d_inv = d.inv().ok_or(DoryError::InvalidProof)?;
 
@@ -761,10 +690,7 @@ impl<E: PairingCurve> DoryVerifierState<E> {
             let c = *sigma_c;
             let c_sq = c * c;
 
-            let lhs = E::pair(
-                &(sp.e1 + self.setup.g1_0.scale(d)),
-                &(sp.e2 + self.setup.g2_0.scale(&d_inv)),
-            );
+            let lhs = E::pair(&(sp.e1 + self.setup.g1_0.scale(d)), &(sp.e2 + self.setup.g2_0.scale(&d_inv)));
 
             let ht_scalar = sp.r3 + *d * sp.r2 + d_inv * sp.r1;
             let mut rhs = self.setup.chi[0] + sp.r + sp.q.scale(&c) + self.c.scale(&c_sq);
@@ -801,8 +727,7 @@ impl<E: PairingCurve> DoryVerifierState<E> {
             let p2_g2 = (self.e2 + self.setup.g2_0.scale(&(d_inv * self.s1_acc))).scale(&neg_gamma);
 
             // Pair 3: e((-γ⁻¹)·(E₁_acc + (d·s₂)·Γ₁₀), H₂)
-            let p3_g1 =
-                (self.e1 + self.setup.g1_0.scale(&(*d * self.s2_acc))).scale(&neg_gamma_inv);
+            let p3_g1 = (self.e1 + self.setup.g1_0.scale(&(*d * self.s2_acc))).scale(&neg_gamma_inv);
             let p3_g2 = self.setup.h2;
 
             // Pair 4: e(d²·E₁_init, Γ₂₀) — deferred VMV check

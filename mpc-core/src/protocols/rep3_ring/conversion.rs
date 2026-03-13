@@ -7,7 +7,7 @@ use crate::field::PrimeField;
 use crate::preprocessing::dabits::DaBitBatch;
 use crate::preprocessing::edabits::EdaBitsRingBatch;
 use crate::protocols::{
-    rep3::{Rep3PrimeFieldShare, PartyID},
+    rep3::{PartyID, Rep3PrimeFieldShare},
     rep3_ring::{
         Rep3RingShare,
         ring::{bit::Bit, int_ring::IntRing2k, ring_impl::RingElement},

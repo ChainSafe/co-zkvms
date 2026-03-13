@@ -1,7 +1,11 @@
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::identity_poly::UnmapRamAddressPolynomial;
 use jolt_core::poly::multilinear_polynomial::PolynomialEvaluation;
+#[cfg(feature = "zk")]
+use jolt_core::poly::opening_proof::OpeningId;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
+#[cfg(feature = "zk")]
+use jolt_core::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint, ValueSource};
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::witness::VirtualPolynomial;
@@ -29,10 +33,8 @@ impl<F: JoltField> Rep3RafEvaluation<F> {
         sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
     ) -> Self {
         let K = sm.ram_K;
-        let raf_claim = sm
-            .accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::RamAddress, SumcheckId::SpartanOuter)
-            .1;
+        let raf_claim =
+            sm.accumulator.get_virtual_polynomial_opening(VirtualPolynomial::RamAddress, SumcheckId::SpartanOuter).1;
 
         Self {
             input_claim: raf_claim,
@@ -55,25 +57,16 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3RafEvaluati
         self.input_claim
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &Rep3OpeningAccumulator<F>,
-        r: &[F::Challenge],
-    ) -> F {
-        let unmap_eval =
-            UnmapRamAddressPolynomial::<F>::new(self.log_K, self.start_address).evaluate(r);
+    fn expected_output_claim(&self, accumulator: &Rep3OpeningAccumulator<F>, r: &[F::Challenge]) -> F {
+        let unmap_eval = UnmapRamAddressPolynomial::<F>::new(self.log_K, self.start_address).evaluate(r);
 
-        let ra_claim = accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation)
-            .1;
+        let ra_claim =
+            accumulator.get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation).1;
 
         unmap_eval * ra_claim
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.to_vec())
     }
 
@@ -84,11 +77,9 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3RafEvaluati
         r_address: OpeningPoint<BIG_ENDIAN, F>,
         claims: Vec<F>,
     ) {
-        let r_cycle = accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::RamAddress, SumcheckId::SpartanOuter)
-            .0;
-        let ra_opening_point =
-            OpeningPoint::new([r_address.r.as_slice(), r_cycle.r.as_slice()].concat());
+        let r_cycle =
+            accumulator.get_virtual_polynomial_opening(VirtualPolynomial::RamAddress, SumcheckId::SpartanOuter).0;
+        let ra_opening_point = OpeningPoint::new([r_address.r.as_slice(), r_cycle.r.as_slice()].concat());
 
         accumulator.append_virtual(
             transcript,
@@ -97,5 +88,23 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3RafEvaluati
             ra_opening_point,
             claims[0],
         );
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::direct(OpeningId::Virtual(VirtualPolynomial::RamAddress, SumcheckId::SpartanOuter))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_claim_constraint(&self) -> Option<OutputClaimConstraint> {
+        Some(OutputClaimConstraint::product(vec![
+            ValueSource::challenge(0),
+            ValueSource::opening(OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation)),
+        ]))
+    }
+
+    #[cfg(feature = "zk")]
+    fn output_constraint_challenge_values(&self, sumcheck_challenges: &[F::Challenge]) -> Vec<F> {
+        vec![UnmapRamAddressPolynomial::<F>::new(self.log_K, self.start_address).evaluate(sumcheck_challenges)]
     }
 }

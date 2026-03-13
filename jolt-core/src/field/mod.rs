@@ -14,10 +14,7 @@ use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 pub trait FieldOps<Rhs = Self, Output = Self>:
-    Add<Rhs, Output = Output>
-    + Sub<Rhs, Output = Output>
-    + Mul<Rhs, Output = Output>
-    + Div<Rhs, Output = Output>
+    Add<Rhs, Output = Output> + Sub<Rhs, Output = Output> + Mul<Rhs, Output = Output> + Div<Rhs, Output = Output>
 {
 }
 
@@ -316,11 +313,7 @@ pub trait FmaddTrunc {
     type Other<const M: usize>;
     type Acc<const P: usize>;
 
-    fn fmadd_trunc<const M: usize, const P: usize>(
-        &self,
-        other: &Self::Other<M>,
-        acc: &mut Self::Acc<P>,
-    );
+    fn fmadd_trunc<const M: usize, const P: usize>(&self, other: &Self::Other<M>, acc: &mut Self::Acc<P>);
 }
 
 pub trait MulTrunc {

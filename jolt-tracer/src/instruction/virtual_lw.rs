@@ -17,8 +17,7 @@ impl VirtualLW {
     fn exec(&self, cpu: &mut Cpu, ram_access: &mut <VirtualLW as RISCVInstruction>::RAMAccess) {
         // virtual lw is only supported on bit32. On bit64 LW doesn't use this instruction
         assert_eq!(cpu.xlen, Xlen::Bit32);
-        let address = (cpu.x[self.operands.rs1 as usize] as u64)
-            .wrapping_add(self.operands.imm as i32 as u64);
+        let address = (cpu.x[self.operands.rs1 as usize] as u64).wrapping_add(self.operands.imm as i32 as u64);
         let value = cpu.get_mut_mmu().load_word(address);
         cpu.x[self.operands.rd as usize] = match value {
             Ok((value, memory_read)) => {

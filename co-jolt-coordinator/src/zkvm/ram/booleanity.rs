@@ -22,48 +22,32 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for BooleanitySum
         self.input_claim()
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &Rep3OpeningAccumulator<F>,
-        r: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &Rep3OpeningAccumulator<F>, r: &[F::Challenge]) -> F {
         let d = self.d();
         let log_K_chunk = DTH_ROOT_OF_K.log_2();
 
         let ra_claims: Vec<F> = (0..d)
             .map(|i| {
-                accumulator
-                    .get_committed_polynomial_opening(
-                        CommittedPolynomial::RamRa(i),
-                        SumcheckId::RamBooleanity,
-                    )
-                    .1
+                accumulator.get_committed_polynomial_opening(CommittedPolynomial::RamRa(i), SumcheckId::RamBooleanity).1
             })
             .collect();
 
         let (r_address_prime, r_cycle_prime) = r.split_at(log_K_chunk);
 
         // normalize_opening_point reverses each part separately (LowToHigh → BigEndian)
-        let r_address_prime_rev: Vec<F::Challenge> =
-            r_address_prime.iter().copied().rev().collect();
+        let r_address_prime_rev: Vec<F::Challenge> = r_address_prime.iter().copied().rev().collect();
         let r_cycle_prime_rev: Vec<F::Challenge> = r_cycle_prime.iter().copied().rev().collect();
 
         let eq_address = EqPolynomial::<F>::mle(self.r_address(), &r_address_prime_rev);
         let eq_cycle = EqPolynomial::<F>::mle(self.r_cycle(), &r_cycle_prime_rev);
 
-        let booleanity_sum: F = ra_claims
-            .iter()
-            .zip(self.gamma_powers().iter())
-            .map(|(ra, gamma)| *gamma * (ra.square() - *ra))
-            .sum();
+        let booleanity_sum: F =
+            ra_claims.iter().zip(self.gamma_powers().iter()).map(|(ra, gamma)| *gamma * (ra.square() - *ra)).sum();
 
         eq_address * eq_cycle * booleanity_sum
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         self.normalize_opening_point(opening_point)
     }
 

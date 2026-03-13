@@ -2,9 +2,7 @@ use crate::emulator::cpu::Cpu;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
-use super::{
-    normalize_register_value, InstructionFormat, InstructionRegisterState, NormalizedOperands,
-};
+use super::{normalize_register_value, InstructionFormat, InstructionRegisterState, NormalizedOperands};
 
 /// `VirtualAssertHalfwordAlignment` is the only instruction that
 /// uses `rs1` and `imm` but does not write to a destination register.
@@ -23,9 +21,7 @@ impl InstructionRegisterState for AssertAlignRegisterState {
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
         use rand::RngCore;
-        Self {
-            rs1: rng.next_u64(),
-        }
+        Self { rs1: rng.next_u64() }
     }
 
     fn rs1_value(&self) -> u64 {
@@ -52,29 +48,18 @@ impl InstructionFormat for AssertAlignFormat {
     fn random(rng: &mut rand::rngs::StdRng) -> Self {
         use common::constants::RISCV_REGISTER_COUNT;
         use rand::RngCore;
-        Self {
-            rs1: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
-            imm: rng.next_u64() as i64,
-        }
+        Self { rs1: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT), imm: rng.next_u64() as i64 }
     }
 }
 
 impl From<NormalizedOperands> for AssertAlignFormat {
     fn from(operands: NormalizedOperands) -> Self {
-        Self {
-            rs1: operands.rs1,
-            imm: operands.imm as i64,
-        }
+        Self { rs1: operands.rs1, imm: operands.imm as i64 }
     }
 }
 
 impl From<AssertAlignFormat> for NormalizedOperands {
     fn from(format: AssertAlignFormat) -> Self {
-        Self {
-            rs1: format.rs1,
-            rs2: 0,
-            rd: 0,
-            imm: format.imm as i128,
-        }
+        Self { rs1: format.rs1, rs2: 0, rd: 0, imm: format.imm as i128 }
     }
 }

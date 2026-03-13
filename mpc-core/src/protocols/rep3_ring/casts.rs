@@ -3,19 +3,17 @@
 //! Implements casts for sharings of different datatypes
 
 use super::conversion;
+use crate::field::PrimeField;
+use crate::preprocessing::edabits::{DaRing, EdaBits, EdaBitsBatch};
 use crate::protocols::rep3::{
-    self, PartyID, Rep3PrimeFieldShare,
-    arithmetic as rep3_arith,
+    self, PartyID, Rep3PrimeFieldShare, arithmetic as rep3_arith,
     conversion::MPCType,
     network::{IoContext, Rep3Network},
 };
-use crate::field::PrimeField;
-use crate::preprocessing::edabits::{DaRing, EdaBits, EdaBitsBatch};
 use crate::protocols::{
     rep3::Rep3BigUintShare,
     rep3_ring::{
-        Rep3RingShare, Rep3RingSignedShare,
-        arithmetic as rep3_ring_arith,
+        Rep3RingShare, Rep3RingSignedShare, arithmetic as rep3_ring_arith,
         ring::{bit::Bit, int_ring::IntRing2k, ring_impl::RingElement},
     },
 };
@@ -24,7 +22,6 @@ use num_traits::AsPrimitive;
 use rand::{distributions::Standard, prelude::Distribution};
 use rayon::prelude::*;
 use std::any::TypeId;
-
 
 /// A downcast of a Rep3RingShare from a larger ring to a smaller ring, truncating the excess bits.
 /// Does not require network interaction
@@ -35,18 +32,12 @@ where
 {
     assert!(T::K >= U::K);
 
-    Rep3RingShare {
-        a: RingElement(share.a.0.as_()),
-        b: RingElement(share.b.0.as_()),
-    }
+    Rep3RingShare { a: RingElement(share.a.0.as_()), b: RingElement(share.b.0.as_()) }
 }
 
 /// An upcast of a Rep3RingShare from a smaller ring to a larger ring
 /// Does require network interaction
-pub fn upcast_a2b<T, U, N>(
-    share: Rep3RingShare<T>,
-    io_context: &mut IoContext<N>,
-) -> std::io::Result<Rep3RingShare<U>>
+pub fn upcast_a2b<T, U, N>(share: Rep3RingShare<T>, io_context: &mut IoContext<N>) -> std::io::Result<Rep3RingShare<U>>
 where
     T: IntRing2k + AsPrimitive<U>,
     U: IntRing2k,
@@ -62,10 +53,7 @@ where
     }
 
     let binary = conversion::a2b(share, io_context)?;
-    let binary = Rep3RingShare {
-        a: RingElement(binary.a.0.as_()),
-        b: RingElement(binary.b.0.as_()),
-    };
+    let binary = Rep3RingShare { a: RingElement(binary.a.0.as_()), b: RingElement(binary.b.0.as_()) };
     conversion::b2a(&binary, io_context)
 }
 
@@ -91,31 +79,21 @@ where
 
     let binary_upcasted = binary
         .par_iter()
-        .map(|s| Rep3RingShare {
-            a: RingElement(s.a.0.as_()),
-            b: RingElement(s.b.0.as_()),
-        })
+        .map(|s| Rep3RingShare { a: RingElement(s.a.0.as_()), b: RingElement(s.b.0.as_()) })
         .collect::<Vec<_>>();
 
     conversion::b2a_many(&binary_upcasted, io_context)
 }
 
 /// A cast of a Rep3RingShare from a ring to another ring. In case of a downcast, the excess bits are just truncated.
-pub fn cast_a2b<T, U, N>(
-    share: Rep3RingShare<T>,
-    io_context: &mut IoContext<N>,
-) -> std::io::Result<Rep3RingShare<U>>
+pub fn cast_a2b<T, U, N>(share: Rep3RingShare<T>, io_context: &mut IoContext<N>) -> std::io::Result<Rep3RingShare<U>>
 where
     T: IntRing2k + AsPrimitive<U>,
     U: IntRing2k,
     N: Rep3Network,
     Standard: Distribution<T> + Distribution<U>,
 {
-    if T::K >= U::K {
-        Ok(downcast(share))
-    } else {
-        upcast_a2b(share, io_context)
-    }
+    if T::K >= U::K { Ok(downcast(share)) } else { upcast_a2b(share, io_context) }
 }
 
 /// A cast of a Rep3PrimeFieldShare to a Rep3RingShare. Truncates the excess bits.
@@ -144,21 +122,15 @@ where
 {
     // A special case for Bit
     if TypeId::of::<T>() == TypeId::of::<Bit>() {
-        let share =
-            crate::downcast::<_, Rep3RingShare<Bit>>(&share).expect("We already checked types");
-        let biguint_share = Rep3BigUintShare::new(
-            BigUint::from(share.a.0.convert() as u64),
-            BigUint::from(share.b.0.convert() as u64),
-        );
+        let share = crate::downcast::<_, Rep3RingShare<Bit>>(&share).expect("We already checked types");
+        let biguint_share =
+            Rep3BigUintShare::new(BigUint::from(share.a.0.convert() as u64), BigUint::from(share.b.0.convert() as u64));
 
         return rep3::conversion::bit_inject(&biguint_share, io_context);
     }
 
     let binary = conversion::a2b(share, io_context)?;
-    let biguint_share = Rep3BigUintShare::new(
-        T::cast_to_biguint(&binary.a.0),
-        T::cast_to_biguint(&binary.b.0),
-    );
+    let biguint_share = Rep3BigUintShare::new(T::cast_to_biguint(&binary.a.0), T::cast_to_biguint(&binary.b.0));
     rep3::conversion::b2a(&biguint_share, io_context)
 }
 
@@ -177,8 +149,7 @@ where
         let biguint_shares = shares
             .into_iter()
             .map(|share| {
-                let share = crate::downcast::<_, Rep3RingShare<Bit>>(&share)
-                    .expect("We already checked types");
+                let share = crate::downcast::<_, Rep3RingShare<Bit>>(&share).expect("We already checked types");
                 let biguint_share = Rep3BigUintShare::new(
                     BigUint::from(share.a.0.convert() as u64),
                     BigUint::from(share.b.0.convert() as u64),
@@ -193,12 +164,7 @@ where
     let binary = conversion::a2b_many(shares, io_context)?;
     let biguint_shares = binary
         .into_iter()
-        .map(|binary| {
-            Rep3BigUintShare::new(
-                T::cast_to_biguint(&binary.a.0),
-                T::cast_to_biguint(&binary.b.0),
-            )
-        })
+        .map(|binary| Rep3BigUintShare::new(T::cast_to_biguint(&binary.a.0), T::cast_to_biguint(&binary.b.0)))
         .collect::<Vec<_>>();
 
     rep3::conversion::b2a_many(&biguint_shares, io_context)
@@ -219,8 +185,7 @@ where
         let biguint_shares = shares
             .into_iter()
             .map(|share| {
-                let share = crate::downcast::<_, Rep3RingShare<Bit>>(&share)
-                    .expect("We already checked types");
+                let share = crate::downcast::<_, Rep3RingShare<Bit>>(&share).expect("We already checked types");
                 let biguint_share = Rep3BigUintShare::new(
                     BigUint::from(share.a.0.convert() as u64),
                     BigUint::from(share.b.0.convert() as u64),
@@ -234,12 +199,7 @@ where
 
     let biguint_shares = binary
         .into_iter()
-        .map(|binary| {
-            Rep3BigUintShare::new(
-                T::cast_to_biguint(&binary.a.0),
-                T::cast_to_biguint(&binary.b.0),
-            )
-        })
+        .map(|binary| Rep3BigUintShare::new(T::cast_to_biguint(&binary.a.0), T::cast_to_biguint(&binary.b.0)))
         .collect::<Vec<_>>();
 
     rep3::conversion::b2a_many(&biguint_shares, io_context)
@@ -254,16 +214,11 @@ pub fn signed_binary_ring_to_field_many<T: IntRing2k, F: PrimeField, N: Rep3Netw
 where
     Standard: Distribution<T>,
 {
-    let (binary, signs): (Vec<_>, Vec<_>) = singed
-        .into_iter()
-        .map(|Rep3RingSignedShare { abs, sign }| (abs, sign))
-        .unzip();
+    let (binary, signs): (Vec<_>, Vec<_>) =
+        singed.into_iter().map(|Rep3RingSignedShare { abs, sign }| (abs, sign)).unzip();
 
     let positive = r2f_b2a_many(&binary, io_context)?;
-    let negative = positive
-        .iter()
-        .map(|x| rep3::arithmetic::neg(*x))
-        .collect::<Vec<_>>();
+    let negative = positive.iter().map(|x| rep3::arithmetic::neg(*x)).collect::<Vec<_>>();
     let signs = conversion::bit_inject_from_bits_to_field_many(&signs, io_context)?;
 
     rep3::arithmetic::cmux_many::<F, N>(&signs, &positive, &negative, io_context)
@@ -418,7 +373,9 @@ where
 {
     match io_context.mpc_type {
         MPCType::Online => Ok(r2f_many(x, io_context)?),
-        MPCType::Preprocessed => r2f_preproc_many(x, eda.expect("r2f_many_selector: preprocessed mode requires eda"), io_context),
+        MPCType::Preprocessed => {
+            r2f_preproc_many(x, eda.expect("r2f_many_selector: preprocessed mode requires eda"), io_context)
+        }
     }
 }
 
@@ -436,6 +393,10 @@ where
 {
     match io_context.mpc_type {
         MPCType::Online => Ok(r2f_b2a_many(x_binary, io_context)?),
-        MPCType::Preprocessed => r2f_b2a_preproc_many(x_binary, batch.expect("r2f_b2a_many_selector: preprocessed mode requires batch"), io_context),
+        MPCType::Preprocessed => r2f_b2a_preproc_many(
+            x_binary,
+            batch.expect("r2f_b2a_many_selector: preprocessed mode requires batch"),
+            io_context,
+        ),
     }
 }

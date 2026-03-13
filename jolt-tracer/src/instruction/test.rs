@@ -73,8 +73,8 @@ test_inline_sequences!(
     // AMOADDD, AMOADDW, AMOANDD, AMOANDW, AMOMAXD, AMOMAXUD, AMOMAXUW, AMOMAXW, AMOMIND,
     // AMOMINUD, AMOMINUW, AMOMINW, AMOORD, AMOORW, AMOSWAPD, AMOSWAPW, AMOXORD, AMOXORW,
     // LB, LBU, LH, LHU, LW, LWU, SB, SH, SW
-    ADDIW, ADDW, DIV, DIVU, DIVUW, DIVW, MULH, MULHSU, MULW, REM, REMU, REMUW, REMW, SLL, SLLI,
-    SLLIW, SLLW, SRA, SRAI, SRAIW, SRAW, SRL, SRLI, SRLIW, SRLW, SUBW,
+    ADDIW, ADDW, DIV, DIVU, DIVUW, DIVW, MULH, MULHSU, MULW, REM, REMU, REMUW, REMW, SLL, SLLI, SLLIW, SLLW, SRA, SRAI,
+    SRAIW, SRAW, SRL, SRLI, SRLIW, SRLW, SUBW,
 );
 
 fn test_rng() -> StdRng {
@@ -93,9 +93,7 @@ where
         let instruction = I::random(&mut rng);
         let instr: NormalizedInstruction = instruction.into();
         let register_state =
-            <<I::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(
-                &mut rng,
-            );
+            <<I::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(&mut rng);
 
         let mut original_cpu = Cpu::new(Box::new(DummyTerminal::default()));
         original_cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
@@ -125,10 +123,7 @@ where
         let mut trace_vec = Vec::new();
         instruction.trace(&mut virtual_cpu, Some(&mut trace_vec));
 
-        assert_eq!(
-            original_cpu.pc, virtual_cpu.pc,
-            "PC register has different values after execution"
-        );
+        assert_eq!(original_cpu.pc, virtual_cpu.pc, "PC register has different values after execution");
 
         for i in 0..RISCV_REGISTER_COUNT {
             assert_eq!(

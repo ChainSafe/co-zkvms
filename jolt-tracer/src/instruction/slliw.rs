@@ -24,8 +24,7 @@ impl SLLIW {
         // operate on 32-bit values and sign-extend their 32-bit results to 64 bits. SLLIW, SRLIW,
         // and SRAIW encodings with imm[5] ≠ 0 are reserved.
         let shamt = (self.operands.imm & 0x1f) as u32;
-        cpu.x[self.operands.rd as usize] =
-            ((cpu.x[self.operands.rs1 as usize] as u32) << shamt) as i32 as i64;
+        cpu.x[self.operands.rd as usize] = ((cpu.x[self.operands.rs1 as usize] as u32) << shamt) as i32 as i64;
     }
 }
 
@@ -48,11 +47,7 @@ impl RISCVTrace for SLLIW {
     /// 2. Sign-extend the lower 32 bits to 64 bits
     ///
     /// The shift amount is restricted to 5 bits (0-31) for 32-bit operations.
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let mask = match xlen {
             Xlen::Bit32 => panic!("SLLIW is invalid in 32b mode"),
             Xlen::Bit64 => 0x1f, //low 5bits

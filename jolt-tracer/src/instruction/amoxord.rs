@@ -36,9 +36,7 @@ impl AMOXORD {
 
         // XOR the values and store back to memory
         let new_value = (original_value as u64) ^ xor_value;
-        cpu.mmu
-            .store_doubleword(address, new_value)
-            .expect("MMU store error");
+        cpu.mmu.store_doubleword(address, new_value).expect("MMU store error");
 
         // Return the original value
         cpu.x[self.operands.rd as usize] = original_value;
@@ -82,11 +80,7 @@ impl RISCVTrace for AMOXORD {
     /// - Self-inverse: x ^ y ^ y = x (useful for temporary modifications)
     /// - Toggle behavior: x ^ 1 flips bit, x ^ 0 preserves bit
     /// - Branchless conditional flip based on mask patterns
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let v_rs2 = allocator.allocate();
         let v_rd = allocator.allocate();
 

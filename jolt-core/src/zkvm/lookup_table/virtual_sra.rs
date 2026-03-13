@@ -55,12 +55,7 @@ impl<const XLEN: usize> JoltLookupTable for VirtualSRATable<XLEN> {
 
 impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for VirtualSRATable<XLEN> {
     fn suffixes(&self) -> Vec<Suffixes> {
-        vec![
-            Suffixes::One,
-            Suffixes::RightShift,
-            Suffixes::RightShiftHelper,
-            Suffixes::SignExtension,
-        ]
+        vec![Suffixes::One, Suffixes::RightShift, Suffixes::RightShiftHelper, Suffixes::SignExtension]
     }
 
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {

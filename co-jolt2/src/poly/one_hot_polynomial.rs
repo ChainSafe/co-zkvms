@@ -69,7 +69,7 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
     /// - samples a secret mask `r` and its one-hot vector `E = e(r)`,
     /// - opens `c[j] = open(k(j) XOR r)` once for all active cycles,
     /// - injects `E` into field shares once (length K).
-    #[tracing::instrument(skip_all, name = "one_hot::from_indices", fields(K))]
+    #[tracing::instrument(skip_all, level = "trace", name = "one_hot::from_indices", fields(K))]
     pub fn from_indices<N: Rep3Network>(
         nonzero_indices: Vec<Option<Rep3RingShare<u8>>>,
         K: usize,
@@ -866,8 +866,6 @@ pub fn compute_g_from_masked_indices_many<F: JoltField, const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::SeedableRng;
-    use rand_chacha::ChaCha12Rng;
     use ark_std::UniformRand;
     use jolt_core::ark_bn254::Fr;
     use jolt_core::ark_bn254::{G1Affine, G1Projective};
@@ -878,10 +876,15 @@ mod tests {
     use mpc_core::protocols::rep3::combine_field_element;
     use num_traits::{One, Zero};
     use rand::RngCore;
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha12Rng;
     use std::path::Path;
     use std::sync::RwLock;
 
-    fn share_field_element_rep3<F: JoltField, R: rand::Rng + rand::CryptoRng>(val: F, rng: &mut R) -> [Rep3PrimeFieldShare<F>; 3] {
+    fn share_field_element_rep3<F: JoltField, R: rand::Rng + rand::CryptoRng>(
+        val: F,
+        rng: &mut R,
+    ) -> [Rep3PrimeFieldShare<F>; 3] {
         mpc_core::protocols::rep3::share_field_element(val, rng)
     }
 
@@ -934,7 +937,10 @@ mod tests {
                 }
                 Some(kj) => {
                     // Indices are binary/XOR shared for the RandOHV construction.
-                    let shares = mpc_core::protocols::rep3_ring::share_ring_element_binary(mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement(kj), rng);
+                    let shares = mpc_core::protocols::rep3_ring::share_ring_element_binary(
+                        mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement(kj),
+                        rng,
+                    );
                     for pid in 0..3 {
                         nonzero_indices_shares[pid].push(Some(shares[pid]));
                     }

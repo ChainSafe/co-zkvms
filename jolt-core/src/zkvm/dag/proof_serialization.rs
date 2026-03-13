@@ -1,32 +1,40 @@
 use std::{
+    cell::RefCell,
     collections::BTreeMap,
     io::{Read, Write},
+    rc::Rc,
 };
 
-use ark_serialize::{
-    CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate,
-};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate};
 use num::FromPrimitive;
+use tracer::JoltDevice;
 
 use crate::zkvm::witness::AllCommittedPolynomials;
 use crate::{
+    curve::JoltCurve,
     field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
-        opening_proof::{OpeningId, OpeningPoint, Openings, ReducedOpeningProof, SumcheckId},
+        opening_proof::{
+            OpeningId, OpeningPoint, Openings, ReducedOpeningProof, SumcheckId, VerifierOpeningAccumulator,
+        },
     },
+    subprotocols::blindfold::BlindFoldProof,
     subprotocols::sumcheck::SumcheckInstanceProof,
     transcripts::Transcript,
     zkvm::{
-        dag::state_manager::{ProofData, ProofKeys, Proofs},
+        dag::state_manager::{ProofData, ProofKeys, Proofs, StateManager},
         witness::{CommittedPolynomial, VirtualPolynomial},
+        JoltVerifierPreprocessing,
     },
 };
 
-pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
+pub struct JoltProof<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript> {
     pub opening_claims: Claims<F>,
     pub commitments: Vec<PCS::Commitment>,
-    pub proofs: Proofs<F, PCS, FS>,
+    pub proofs: Proofs<F, C, PCS, FS>,
+    #[cfg(feature = "zk")]
+    pub blindfold_proof: Option<BlindFoldProof<F, C>>,
     pub untrusted_advice_commitment: Option<PCS::Commitment>,
     pub trace_length: usize,
     pub ram_K: usize,
@@ -34,30 +42,23 @@ pub struct JoltProof<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcr
     pub twist_sumcheck_switch_index: usize,
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSerialize
-    for JoltProof<F, PCS, FS>
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSerialize
+    for JoltProof<F, C, PCS, FS>
 {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
+    fn serialize_with_mode<W: Write>(&self, mut writer: W, compress: Compress) -> Result<(), SerializationError> {
         // serialize ram_K and bytecode_d first
         self.ram_K.serialize_with_mode(&mut writer, compress)?;
         self.bytecode_d.serialize_with_mode(&mut writer, compress)?;
         // ensure that all committed polys are set up before serializing proofs
         let _guard = AllCommittedPolynomials::initialize(self.ram_K, self.bytecode_d);
-        self.opening_claims
-            .serialize_with_mode(&mut writer, compress)?;
-        self.commitments
-            .serialize_with_mode(&mut writer, compress)?;
-        self.untrusted_advice_commitment
-            .serialize_with_mode(&mut writer, compress)?;
+        self.opening_claims.serialize_with_mode(&mut writer, compress)?;
+        self.commitments.serialize_with_mode(&mut writer, compress)?;
+        self.untrusted_advice_commitment.serialize_with_mode(&mut writer, compress)?;
         self.proofs.serialize_with_mode(&mut writer, compress)?;
-        self.trace_length
-            .serialize_with_mode(&mut writer, compress)?;
-        self.twist_sumcheck_switch_index
-            .serialize_with_mode(&mut writer, compress)?;
+        #[cfg(feature = "zk")]
+        self.blindfold_proof.serialize_with_mode(&mut writer, compress)?;
+        self.trace_length.serialize_with_mode(&mut writer, compress)?;
+        self.twist_sumcheck_switch_index.serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
     fn serialized_size(&self, compress: Compress) -> usize {
@@ -65,6 +66,16 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
             + self.commitments.serialized_size(compress)
             + self.untrusted_advice_commitment.serialized_size(compress)
             + self.proofs.serialized_size(compress)
+            + {
+                #[cfg(feature = "zk")]
+                {
+                    self.blindfold_proof.serialized_size(compress)
+                }
+                #[cfg(not(feature = "zk"))]
+                {
+                    0
+                }
+            }
             + self.trace_length.serialized_size(compress)
             + self.ram_K.serialized_size(compress)
             + self.bytecode_d.serialized_size(compress)
@@ -72,14 +83,14 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
-    for JoltProof<F, PCS, FS>
-{
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid for JoltProof<F, C, PCS, FS> {
     fn check(&self) -> Result<(), SerializationError> {
         self.opening_claims.check()?;
         self.commitments.check()?;
         self.untrusted_advice_commitment.check()?;
         self.proofs.check()?;
+        #[cfg(feature = "zk")]
+        self.blindfold_proof.check()?;
         self.trace_length.check()?;
         self.ram_K.check()?;
         self.bytecode_d.check()?;
@@ -88,8 +99,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDeserialize
-    for JoltProof<F, PCS, FS>
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDeserialize
+    for JoltProof<F, C, PCS, FS>
 {
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
@@ -102,14 +113,14 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
         // ensure that all committed polys are set up before deserializing proofs
         let _guard = AllCommittedPolynomials::initialize(ram_K, bytecode_d);
         let opening_claims = Claims::deserialize_with_mode(&mut reader, compress, validate)?;
-        let commitments =
-            Vec::<PCS::Commitment>::deserialize_with_mode(&mut reader, compress, validate)?;
+        let commitments = Vec::<PCS::Commitment>::deserialize_with_mode(&mut reader, compress, validate)?;
         let untrusted_advice_commitment =
             Option::<PCS::Commitment>::deserialize_with_mode(&mut reader, compress, validate)?;
-        let proofs = Proofs::<F, PCS, FS>::deserialize_with_mode(&mut reader, compress, validate)?;
+        let proofs = Proofs::<F, C, PCS, FS>::deserialize_with_mode(&mut reader, compress, validate)?;
+        #[cfg(feature = "zk")]
+        let blindfold_proof = Option::<BlindFoldProof<F, C>>::deserialize_with_mode(&mut reader, compress, validate)?;
         let trace_length = usize::deserialize_with_mode(&mut reader, compress, validate)?;
-        let twist_sumcheck_switch_index =
-            usize::deserialize_with_mode(&mut reader, compress, validate)?;
+        let twist_sumcheck_switch_index = usize::deserialize_with_mode(&mut reader, compress, validate)?;
         // drop(guard);
 
         Ok(Self {
@@ -117,6 +128,8 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
             commitments,
             untrusted_advice_commitment,
             proofs,
+            #[cfg(feature = "zk")]
+            blindfold_proof,
             trace_length,
             ram_K,
             bytecode_d,
@@ -125,16 +138,43 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F, PCS, FS> {}
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F, C, PCS, FS> {
+    pub fn to_verifier_state_manager<'a>(
+        self,
+        preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
+        program_io: JoltDevice,
+    ) -> StateManager<'a, F, C, FS, PCS> {
+        #[cfg(feature = "zk")]
+        let zk_mode = self.blindfold_proof.is_some();
+        #[cfg(not(feature = "zk"))]
+        let zk_mode = false;
+
+        let mut accumulator =
+            if zk_mode { VerifierOpeningAccumulator::new_zk() } else { VerifierOpeningAccumulator::new() };
+        accumulator.prime_openings(self.opening_claims.0.clone());
+
+        StateManager {
+            transcript: Rc::new(RefCell::new(FS::new(b"Jolt"))),
+            proofs: Rc::new(RefCell::new(self.proofs)),
+            commitments: Rc::new(RefCell::new(self.commitments)),
+            untrusted_advice_commitment: self.untrusted_advice_commitment,
+            trusted_advice_commitment: None,
+            #[cfg(feature = "zk")]
+            blindfold_proof: self.blindfold_proof,
+            ram_K: self.ram_K,
+            twist_sumcheck_switch_index: self.twist_sumcheck_switch_index,
+            trace_length: self.trace_length,
+            program_io,
+            preprocessing,
+            accumulator: Rc::new(RefCell::new(accumulator)),
+        }
+    }
+}
 
 pub struct Claims<F: JoltField>(pub Openings<F>);
 
 impl<F: JoltField> CanonicalSerialize for Claims<F> {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
+    fn serialize_with_mode<W: Write>(&self, mut writer: W, compress: Compress) -> Result<(), SerializationError> {
         self.0.len().serialize_with_mode(&mut writer, compress)?;
         for (key, (_opening_point, claim)) in self.0.iter() {
             key.serialize_with_mode(&mut writer, compress)?;
@@ -178,11 +218,7 @@ impl<F: JoltField> CanonicalDeserialize for Claims<F> {
 }
 
 impl CanonicalSerialize for OpeningId {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
+    fn serialize_with_mode<W: Write>(&self, mut writer: W, compress: Compress) -> Result<(), SerializationError> {
         match self {
             OpeningId::Committed(committed_polynomial, sumcheck_id) => {
                 0u8.serialize_with_mode(&mut writer, compress)?;
@@ -194,8 +230,19 @@ impl CanonicalSerialize for OpeningId {
                 (*sumcheck_id as u8).serialize_with_mode(&mut writer, compress)?;
                 virtual_polynomial.serialize_with_mode(&mut writer, compress)
             }
-            OpeningId::UntrustedAdvice => 2u8.serialize_with_mode(&mut writer, compress),
-            OpeningId::TrustedAdvice => 3u8.serialize_with_mode(&mut writer, compress),
+            OpeningId::ReducedOpeningClaim(index) => {
+                2u8.serialize_with_mode(&mut writer, compress)?;
+                0u8.serialize_with_mode(&mut writer, compress)?;
+                index.serialize_with_mode(&mut writer, compress)
+            }
+            OpeningId::UntrustedAdvice => {
+                3u8.serialize_with_mode(&mut writer, compress)?;
+                0u8.serialize_with_mode(&mut writer, compress)
+            }
+            OpeningId::TrustedAdvice => {
+                4u8.serialize_with_mode(&mut writer, compress)?;
+                0u8.serialize_with_mode(&mut writer, compress)
+            }
         }
     }
 
@@ -209,8 +256,9 @@ impl CanonicalSerialize for OpeningId {
                 // +1 for OpeningIdVariant, +1 for sumcheck_id (which is a u8)
                 virtual_polynomial.serialized_size(compress) + 2
             }
-            OpeningId::UntrustedAdvice => 1,
-            OpeningId::TrustedAdvice => 1,
+            OpeningId::ReducedOpeningClaim(index) => index.serialized_size(compress) + 2,
+            OpeningId::UntrustedAdvice => 2,
+            OpeningId::TrustedAdvice => 2,
         }
     }
 }
@@ -231,34 +279,29 @@ impl CanonicalDeserialize for OpeningId {
         let sumcheck_id = u8::deserialize_with_mode(&mut reader, compress, validate)?;
         match opening_type {
             0 => {
-                let polynomial =
-                    CommittedPolynomial::deserialize_with_mode(&mut reader, compress, validate)?;
+                let polynomial = CommittedPolynomial::deserialize_with_mode(&mut reader, compress, validate)?;
                 Ok(OpeningId::Committed(
                     polynomial,
                     SumcheckId::from_u8(sumcheck_id).ok_or(SerializationError::InvalidData)?,
                 ))
             }
             1 => {
-                let polynomial =
-                    VirtualPolynomial::deserialize_with_mode(&mut reader, compress, validate)?;
+                let polynomial = VirtualPolynomial::deserialize_with_mode(&mut reader, compress, validate)?;
                 Ok(OpeningId::Virtual(
                     polynomial,
                     SumcheckId::from_u8(sumcheck_id).ok_or(SerializationError::InvalidData)?,
                 ))
             }
-            2 => Ok(OpeningId::UntrustedAdvice),
-            3 => Ok(OpeningId::TrustedAdvice),
+            2 => Ok(OpeningId::ReducedOpeningClaim(u32::deserialize_with_mode(&mut reader, compress, validate)?)),
+            3 => Ok(OpeningId::UntrustedAdvice),
+            4 => Ok(OpeningId::TrustedAdvice),
             _ => Err(SerializationError::InvalidData),
         }
     }
 }
 
 impl CanonicalSerialize for CommittedPolynomial {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
+    fn serialize_with_mode<W: Write>(&self, mut writer: W, compress: Compress) -> Result<(), SerializationError> {
         self.to_index().serialize_with_mode(&mut writer, compress)
     }
 
@@ -285,11 +328,7 @@ impl CanonicalDeserialize for CommittedPolynomial {
 }
 
 impl CanonicalSerialize for VirtualPolynomial {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
+    fn serialize_with_mode<W: Write>(&self, mut writer: W, compress: Compress) -> Result<(), SerializationError> {
         self.to_index().serialize_with_mode(&mut writer, compress)
     }
 
@@ -316,11 +355,7 @@ impl CanonicalDeserialize for VirtualPolynomial {
 }
 
 impl CanonicalSerialize for ProofKeys {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
+    fn serialize_with_mode<W: Write>(&self, writer: W, compress: Compress) -> Result<(), SerializationError> {
         (*self as u8).serialize_with_mode(writer, compress)
     }
 
@@ -346,14 +381,10 @@ impl CanonicalDeserialize for ProofKeys {
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSerialize
-    for ProofData<F, PCS, FS>
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSerialize
+    for ProofData<F, C, PCS, FS>
 {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
+    fn serialize_with_mode<W: Write>(&self, mut writer: W, compress: Compress) -> Result<(), SerializationError> {
         match self {
             ProofData::SumcheckProof(proof) => {
                 0u8.serialize_with_mode(&mut writer, compress)?;
@@ -379,16 +410,14 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalSe
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid
-    for ProofData<F, PCS, FS>
-{
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript> Valid for ProofData<F, C, PCS, FS> {
     fn check(&self) -> Result<(), SerializationError> {
         Ok(())
     }
 }
 
-impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDeserialize
-    for ProofData<F, PCS, FS>
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDeserialize
+    for ProofData<F, C, PCS, FS>
 {
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
@@ -398,13 +427,11 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>, FS: Transcript> CanonicalDe
         let variant = u8::deserialize_with_mode(&mut reader, compress, validate)?;
         match variant {
             0 => {
-                let proof =
-                    SumcheckInstanceProof::deserialize_with_mode(&mut reader, compress, validate)?;
+                let proof = SumcheckInstanceProof::deserialize_with_mode(&mut reader, compress, validate)?;
                 Ok(ProofData::SumcheckProof(proof))
             }
             1 => {
-                let proof =
-                    ReducedOpeningProof::deserialize_with_mode(&mut reader, compress, validate)?;
+                let proof = ReducedOpeningProof::deserialize_with_mode(&mut reader, compress, validate)?;
                 Ok(ProofData::ReducedOpeningProof(proof))
             }
             2 => {

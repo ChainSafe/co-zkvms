@@ -13,9 +13,8 @@ use crate::{
 use super::{
     format::format_r::FormatR, virtual_advice::VirtualAdvice, virtual_assert_eq::VirtualAssertEQ,
     virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
-    virtual_sign_extend_word::VirtualSignExtendWord,
-    virtual_zero_extend_word::VirtualZeroExtendWord, Cycle, Instruction, RISCVInstruction,
-    RISCVTrace,
+    virtual_sign_extend_word::VirtualSignExtendWord, virtual_zero_extend_word::VirtualZeroExtendWord, Cycle,
+    Instruction, RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -33,11 +32,8 @@ impl REMUW {
         // including on a divide by zero.
         let dividend = cpu.x[self.operands.rs1 as usize] as u32;
         let divisor = cpu.x[self.operands.rs2 as usize] as u32;
-        cpu.x[self.operands.rd as usize] = (if divisor == 0 {
-            dividend
-        } else {
-            dividend.wrapping_rem(divisor)
-        }) as i32 as i64;
+        cpu.x[self.operands.rd as usize] =
+            (if divisor == 0 { dividend } else { dividend.wrapping_rem(divisor) }) as i32 as i64;
     }
 }
 
@@ -95,11 +91,7 @@ impl RISCVTrace for REMUW {
     /// Special case: Division by zero returns dividend (handled by VirtualAssertValidUnsignedRemainder)
     ///
     /// Note: No overflow check needed since remainder operations work modulo 2^32.
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let a0 = self.operands.rs1; // dividend (contains 32-bit value)
         let a1 = self.operands.rs2; // divisor (contains 32-bit value)
         let a2 = allocator.allocate(); // quotient from oracle

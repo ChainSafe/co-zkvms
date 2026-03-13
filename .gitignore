@@ -39,3 +39,7 @@ co-jolt-coordinator/enclave/host_proxy
 
 # Dory SRS files (generated at runtime)
 dory_urs_*.urs
+
+.artifacts*
+.traces*
+.preprocessing*

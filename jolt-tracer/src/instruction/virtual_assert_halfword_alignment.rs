@@ -13,16 +13,9 @@ declare_riscv_instr!(
 );
 
 impl VirtualAssertHalfwordAlignment {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        _: &mut <VirtualAssertHalfwordAlignment as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualAssertHalfwordAlignment as RISCVInstruction>::RAMAccess) {
         let address = cpu.x[self.operands.rs1 as usize] + self.operands.imm;
-        assert!(
-            address & 1 == 0,
-            "RAM access (LH or LHU) is not halfword aligned: {address:x}"
-        );
+        assert!(address & 1 == 0, "RAM access (LH or LHU) is not halfword aligned: {address:x}");
     }
 }
 

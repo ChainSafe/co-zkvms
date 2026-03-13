@@ -8,9 +8,7 @@ pub enum AttestationPolicy {
     AcceptAll,
     /// Verify against AWS Nitro root of trust + expected PCR values.
     #[allow(dead_code)]
-    AwsNitro {
-        expected_pcrs: HashMap<usize, Vec<u8>>,
-    },
+    AwsNitro { expected_pcrs: HashMap<usize, Vec<u8>> },
 }
 
 /// Verify an attestation document against the given policy.
@@ -34,9 +32,7 @@ pub fn verify_attestation(
             // 4. Extract public_key from attestation doc
             // 5. Verify public_key matches TLS cert's public key
             //    (proves the ephemeral key was generated inside THIS enclave)
-            Err(eyre::eyre!(
-                "AwsNitro attestation verification not yet implemented"
-            ))
+            Err(eyre::eyre!("AwsNitro attestation verification not yet implemented"))
         }
     }
 }

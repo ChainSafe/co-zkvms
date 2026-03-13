@@ -1,16 +1,21 @@
 use eyre::Context;
 use jolt_core::poly::eq_poly::EqPolynomial;
+#[cfg(feature = "zk")]
+use jolt_core::poly::opening_proof::OpeningId;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::poly::unipoly::{CompressedUniPoly, UniPoly};
+#[cfg(feature = "zk")]
+use jolt_core::subprotocols::blindfold::InputClaimConstraint;
 use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_core::transcripts::{AppendToTranscript, Transcript};
 use jolt_core::zkvm::instruction_lookups::D;
-use jolt_core::zkvm::witness::CommittedPolynomial;
+use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 
 use crate::poly::opening_proof::Rep3OpeningAccumulator;
 use crate::zkvm::dag::stage::Rep3SumcheckInstance;
+use jolt_core::curve::Bn254Curve;
 use jolt_core::field::JoltField;
 
 // ---------------------------------------------------------------------------
@@ -24,16 +29,8 @@ pub struct Rep3InstructionRaSumcheck<F: JoltField> {
 }
 
 impl<F: JoltField> Rep3InstructionRaSumcheck<F> {
-    pub fn new(
-        input_claim: F,
-        r_cycle: Vec<F::Challenge>,
-        r_address_chunks: Vec<Vec<F::Challenge>>,
-    ) -> Self {
-        Self {
-            input_claim,
-            r_cycle,
-            r_address_chunks,
-        }
+    pub fn new(input_claim: F, r_cycle: Vec<F::Challenge>, r_address_chunks: Vec<Vec<F::Challenge>>) -> Self {
+        Self { input_claim, r_cycle, r_address_chunks }
     }
 
     pub fn degree(&self) -> usize {
@@ -44,10 +41,7 @@ impl<F: JoltField> Rep3InstructionRaSumcheck<F> {
         self.r_cycle.len()
     }
 
-    pub fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    pub fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.to_vec())
     }
 
@@ -84,11 +78,7 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3Instruction
         self.input_claim
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &Rep3OpeningAccumulator<F>,
-        r: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &Rep3OpeningAccumulator<F>, r: &[F::Challenge]) -> F {
         let eq_eval = EqPolynomial::<F>::mle(&self.r_cycle, r);
         let ra_claim_prod: F = (0..D)
             .map(|i| {
@@ -103,10 +93,7 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3Instruction
         eq_eval * ra_claim_prod
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.to_vec())
     }
 
@@ -128,6 +115,14 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3Instruction
             );
         }
     }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::direct(OpeningId::Virtual(
+            VirtualPolynomial::InstructionRa,
+            SumcheckId::InstructionReadRaf,
+        ))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -140,7 +135,7 @@ pub fn prove_coordinator<F, ProofTranscript, N>(
     accumulator: &mut Rep3OpeningAccumulator<F>,
     transcript: &mut ProofTranscript,
     network: &mut N,
-) -> eyre::Result<(SumcheckInstanceProof<F, ProofTranscript>, Vec<F::Challenge>)>
+) -> eyre::Result<(SumcheckInstanceProof<F, Bn254Curve, ProofTranscript>, Vec<F::Challenge>)>
 where
     F: JoltField,
     ProofTranscript: Transcript,
@@ -179,24 +174,18 @@ where
 
         batched_claim = round_poly.evaluate(&r_j);
 
-        network
-            .broadcast_request(r_j)
-            .context("broadcast RA round challenge")?;
+        network.broadcast_request(r_j).context("broadcast RA round challenge")?;
     }
 
     // Receive opening claims.
     let opening_claims = receive_opening_claims::<F, N>(network)?;
-    eyre::ensure!(
-        opening_claims.len() == 1,
-        "expected 1 instance, got {}",
-        opening_claims.len()
-    );
+    eyre::ensure!(opening_claims.len() == 1, "expected 1 instance, got {}", opening_claims.len());
     let claims = opening_claims.into_iter().next().unwrap();
 
     let opening_point = coord.normalize_opening_point(&r_sumcheck);
     coord.cache_openings(accumulator, transcript, opening_point, claims);
 
-    Ok((SumcheckInstanceProof::new(compressed_polys), r_sumcheck))
+    Ok((SumcheckInstanceProof::<F, Bn254Curve, ProofTranscript>::new(compressed_polys), r_sumcheck))
 }
 
 // ---------------------------------------------------------------------------
@@ -208,9 +197,7 @@ where
     F: JoltField,
     N: Rep3NetworkCoordinator,
 {
-    let shares = network
-        .receive_responses::<Vec<AdditiveShare<F>>>()
-        .context("receive RA round eval shares")?;
+    let shares = network.receive_responses::<Vec<AdditiveShare<F>>>().context("receive RA round eval shares")?;
     Ok(additive::combine_additive_vec(shares))
 }
 
@@ -219,9 +206,8 @@ where
     F: JoltField,
     N: Rep3NetworkCoordinator,
 {
-    let shares = network
-        .receive_responses::<Vec<Vec<AdditiveShare<F>>>>()
-        .context("receive RA opening claim shares")?;
+    let shares =
+        network.receive_responses::<Vec<Vec<AdditiveShare<F>>>>().context("receive RA opening claim shares")?;
 
     // shares: 3 parties, each Vec<Vec<AdditiveShare<F>>>
     // For the RA sumcheck there is 1 instance with D claims.

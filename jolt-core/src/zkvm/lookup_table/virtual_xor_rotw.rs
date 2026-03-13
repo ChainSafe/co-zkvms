@@ -10,9 +10,7 @@ use super::JoltLookupTable;
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct VirtualXORROTWTable<const XLEN: usize, const ROTATION: u32>;
 
-impl<const XLEN: usize, const ROTATION: u32> JoltLookupTable
-    for VirtualXORROTWTable<XLEN, ROTATION>
-{
+impl<const XLEN: usize, const ROTATION: u32> JoltLookupTable for VirtualXORROTWTable<XLEN, ROTATION> {
     fn materialize_entry(&self, index: u128) -> u64 {
         match XLEN {
             #[cfg(test)]
@@ -22,8 +20,7 @@ impl<const XLEN: usize, const ROTATION: u32> JoltLookupTable
                 let x_lower = x_bits as u8 & 0x0F;
                 let y_lower = y_bits as u8 & 0x0F;
                 let xor_result = x_lower ^ y_lower;
-                let rotated =
-                    ((xor_result >> rotation) | (xor_result << (XLEN / 2 - rotation))) & 0x0F;
+                let rotated = ((xor_result >> rotation) | (xor_result << (XLEN / 2 - rotation))) & 0x0F;
                 rotated as u64
             }
             64 => {
@@ -58,9 +55,7 @@ impl<const XLEN: usize, const ROTATION: u32> JoltLookupTable
     }
 }
 
-impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
-    for VirtualXORROTWTable<XLEN, ROTATION>
-{
+impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN> for VirtualXORROTWTable<XLEN, ROTATION> {
     fn suffixes(&self) -> Vec<Suffixes> {
         debug_assert_eq!(XLEN, 64);
         match ROTATION {

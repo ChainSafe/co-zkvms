@@ -4,8 +4,8 @@ use std::sync::Arc;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use eyre::{eyre, Context};
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
-use mpc_net::topology::MpcStarNetCoordinator;
 use mpc_core::protocols::rep3::PartyID;
+use mpc_net::topology::MpcStarNetCoordinator;
 use vsock::VsockListener;
 
 use super::ephemeral_identity::EphemeralIdentity;
@@ -30,37 +30,26 @@ impl VsockTlsCoordinator {
     ///
     /// After TLS handshake, sends the attestation document (if any) as a
     /// length-prefixed first message, then reads the worker's party_id.
-    pub fn accept(
-        vsock_port: u32,
-        identity: &EphemeralIdentity,
-        attestation_doc: Option<&[u8]>,
-    ) -> eyre::Result<Self> {
-        rustls::crypto::ring::default_provider()
-            .install_default()
-            .ok();
+    pub fn accept(vsock_port: u32, identity: &EphemeralIdentity, attestation_doc: Option<&[u8]>) -> eyre::Result<Self> {
+        rustls::crypto::ring::default_provider().install_default().ok();
 
         let server_config = Arc::new(
             rustls::ServerConfig::builder()
                 .with_no_client_auth()
-                .with_single_cert(
-                    vec![identity.cert_der.clone()],
-                    identity.key_der.clone_key(),
-                )
+                .with_single_cert(vec![identity.cert_der.clone()], identity.key_der.clone_key())
                 .context("building rustls ServerConfig")?,
         );
 
-        let listener = VsockListener::bind_with_cid_port(VMADDR_CID_ANY, vsock_port)
-            .context("binding vsock listener")?;
+        let listener =
+            VsockListener::bind_with_cid_port(VMADDR_CID_ANY, vsock_port).context("binding vsock listener")?;
 
         let mut indexed_streams: Vec<(usize, TlsStream)> = Vec::with_capacity(NUM_PARTIES);
 
         for i in 0..NUM_PARTIES {
-            let (vsock_stream, _addr) = listener
-                .accept()
-                .with_context(|| format!("accepting vsock connection {i}"))?;
+            let (vsock_stream, _addr) = listener.accept().with_context(|| format!("accepting vsock connection {i}"))?;
 
-            let tls_conn = rustls::ServerConnection::new(Arc::clone(&server_config))
-                .context("creating TLS server connection")?;
+            let tls_conn =
+                rustls::ServerConnection::new(Arc::clone(&server_config)).context("creating TLS server connection")?;
             let mut tls_stream = rustls::StreamOwned::new(tls_conn, vsock_stream);
 
             // Send attestation doc as length-prefixed first message
@@ -94,18 +83,14 @@ impl VsockTlsCoordinator {
         // Verify we got exactly parties 0, 1, 2
         for (i, (id, _)) in indexed_streams.iter().enumerate() {
             if *id != i {
-                return Err(eyre!(
-                    "expected party_id {i} at index {i}, got {id} (duplicate or missing party)"
-                ));
+                return Err(eyre!("expected party_id {i} at index {i}, got {id} (duplicate or missing party)"));
             }
         }
 
         let [s0, s1, s2] = <[(usize, TlsStream); 3]>::try_from(indexed_streams)
             .map_err(|v| eyre!("expected 3 streams, got {}", v.len()))?;
 
-        Ok(Self {
-            streams: [s0.1, s1.1, s2.1],
-        })
+        Ok(Self { streams: [s0.1, s1.1, s2.1] })
     }
 }
 
@@ -114,8 +99,7 @@ impl VsockTlsCoordinator {
 fn serialize_uncompressed<T: CanonicalSerialize>(data: &T) -> eyre::Result<Vec<u8>> {
     let size = data.uncompressed_size();
     let mut buf = Vec::with_capacity(size);
-    data.serialize_uncompressed(&mut buf)
-        .context("serialize_uncompressed")?;
+    data.serialize_uncompressed(&mut buf).context("serialize_uncompressed")?;
     Ok(buf)
 }
 
@@ -141,9 +125,7 @@ fn recv_from_stream<T: CanonicalDeserialize>(stream: &mut TlsStream) -> eyre::Re
 }
 
 impl MpcStarNetCoordinator for VsockTlsCoordinator {
-    fn receive_responses<T: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-    ) -> eyre::Result<Vec<T>> {
+    fn receive_responses<T: CanonicalSerialize + CanonicalDeserialize>(&mut self) -> eyre::Result<Vec<T>> {
         let mut responses = Vec::with_capacity(NUM_PARTIES);
         for stream in self.streams.iter_mut() {
             responses.push(recv_from_stream(stream)?);
@@ -176,10 +158,7 @@ impl MpcStarNetCoordinator for VsockTlsCoordinator {
         Ok(vec![self.receive_response(party_id, 0)?])
     }
 
-    fn broadcast_request<T: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-        data: T,
-    ) -> eyre::Result<()> {
+    fn broadcast_request<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: T) -> eyre::Result<()> {
         let bytes = serialize_uncompressed(&data)?;
         for stream in self.streams.iter_mut() {
             send_to_stream(stream, &bytes)?;
@@ -187,16 +166,9 @@ impl MpcStarNetCoordinator for VsockTlsCoordinator {
         Ok(())
     }
 
-    fn send_requests<T: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-        data: Vec<T>,
-    ) -> eyre::Result<()> {
+    fn send_requests<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: Vec<T>) -> eyre::Result<()> {
         if data.len() != NUM_PARTIES {
-            return Err(eyre!(
-                "send_requests expects {} items, got {}",
-                NUM_PARTIES,
-                data.len()
-            ));
+            return Err(eyre!("send_requests expects {} items, got {}", NUM_PARTIES, data.len()));
         }
         for (item, stream) in data.iter().zip(self.streams.iter_mut()) {
             let bytes = serialize_uncompressed(item)?;

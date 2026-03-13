@@ -6,9 +6,7 @@ use mpc_core::MaybeShared;
 
 pub mod dory;
 
-pub trait Rep3CommitmentScheme<F: JoltField, ProofTranscript: Transcript>:
-    CommitmentScheme<Field = F>
-{
+pub trait Rep3CommitmentScheme<F: JoltField, ProofTranscript: Transcript>: CommitmentScheme<Field = F> {
     fn coordinate_prove<Network>(
         setup: &Self::ProverSetup,
         transcript: &mut ProofTranscript,
@@ -26,11 +24,7 @@ pub trait Rep3CommitmentScheme<F: JoltField, ProofTranscript: Transcript>:
         commitment: Self::Commitment,
     ) -> (Self::Commitment, Option<F>);
 
-    fn combine_commitment_shares(
-        commitments: &[&MaybeShared<Self::Commitment>],
-    ) -> Self::Commitment;
+    fn combine_commitment_shares(commitments: &[&MaybeShared<Self::Commitment>]) -> Self::Commitment;
 
-    fn combine_hint_shares(
-        hints: &[&MaybeShared<Self::OpeningProofHint>],
-    ) -> Self::OpeningProofHint;
+    fn combine_hint_shares(hints: &[&MaybeShared<Self::OpeningProofHint>]) -> Self::OpeningProofHint;
 }

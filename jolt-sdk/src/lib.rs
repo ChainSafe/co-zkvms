@@ -9,6 +9,8 @@ pub use host_utils::*;
 
 #[cfg(feature = "host")]
 pub mod client;
+#[cfg(feature = "host")]
+pub use rand;
 
 pub mod platform;
 pub use platform::*;

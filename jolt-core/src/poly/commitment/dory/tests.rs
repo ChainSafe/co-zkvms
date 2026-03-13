@@ -23,16 +23,12 @@ mod tests {
         let num_vars = poly.get_num_vars();
 
         let mut rng = thread_rng();
-        let opening_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
-            .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
-            .collect();
+        let opening_point: Vec<<Fr as JoltField>::Challenge> =
+            (0..num_vars).map(|_| <Fr as JoltField>::Challenge::random(&mut rng)).collect();
 
         let (commitment, row_commitments) = DoryCommitmentScheme::commit(&poly, prover_setup);
 
-        let evaluation = <MultilinearPolynomial<Fr> as PolynomialEvaluation<Fr>>::evaluate(
-            &poly,
-            &opening_point,
-        );
+        let evaluation = <MultilinearPolynomial<Fr> as PolynomialEvaluation<Fr>>::evaluate(&poly, &opening_point);
 
         let mut prove_transcript = Blake2bTranscript::new(b"dory_test");
         bind_opening_inputs::<Fr, _>(&mut prove_transcript, &opening_point, &evaluation);
@@ -55,10 +51,7 @@ mod tests {
             &commitment,
         );
 
-        assert!(
-            verification_result.is_ok(),
-            "Dory verification failed for {poly_type_name}: {verification_result:?}"
-        );
+        assert!(verification_result.is_ok(), "Dory verification failed for {poly_type_name}: {verification_result:?}");
     }
 
     fn setup_dory_for_test(num_vars: usize) -> (ArkworksProverSetup, ArkworksVerifierSetup) {
@@ -250,9 +243,8 @@ mod tests {
         let coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
         let poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(coeffs.clone()));
 
-        let opening_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
-            .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
-            .collect();
+        let opening_point: Vec<<Fr as JoltField>::Challenge> =
+            (0..num_vars).map(|_| <Fr as JoltField>::Challenge::random(&mut rng)).collect();
 
         let prover_setup = DoryCommitmentScheme::setup_prover(num_vars);
         let verifier_setup = DoryCommitmentScheme::setup_verifier(&prover_setup);
@@ -276,13 +268,8 @@ mod tests {
         {
             let tampered_evaluation = Fr::rand(&mut rng);
 
-            let mut verify_transcript =
-                Blake2bTranscript::new(DoryCommitmentScheme::protocol_name());
-            bind_opening_inputs::<Fr, _>(
-                &mut verify_transcript,
-                &opening_point,
-                &tampered_evaluation,
-            );
+            let mut verify_transcript = Blake2bTranscript::new(DoryCommitmentScheme::protocol_name());
+            bind_opening_inputs::<Fr, _>(&mut verify_transcript, &opening_point, &tampered_evaluation);
             let result = DoryCommitmentScheme::verify(
                 &proof,
                 &verifier_setup,
@@ -292,10 +279,7 @@ mod tests {
                 &commitment,
             );
 
-            assert!(
-                result.is_err(),
-                "Verification should fail with tampered evaluation"
-            );
+            assert!(result.is_err(), "Verification should fail with tampered evaluation");
         }
 
         // Test 1b: Tamper with the committed evaluation in ZK proofs
@@ -310,13 +294,8 @@ mod tests {
                 panic!("ZK proof missing committed evaluation fields");
             }
 
-            let mut verify_transcript =
-                Blake2bTranscript::new(DoryCommitmentScheme::protocol_name());
-            bind_opening_inputs::<Fr, _>(
-                &mut verify_transcript,
-                &opening_point,
-                &correct_evaluation,
-            );
+            let mut verify_transcript = Blake2bTranscript::new(DoryCommitmentScheme::protocol_name());
+            bind_opening_inputs::<Fr, _>(&mut verify_transcript, &opening_point, &correct_evaluation);
             let result = DoryCommitmentScheme::verify(
                 &tampered_proof,
                 &verifier_setup,
@@ -326,25 +305,16 @@ mod tests {
                 &commitment,
             );
 
-            assert!(
-                result.is_err(),
-                "Verification should fail with tampered committed evaluation"
-            );
+            assert!(result.is_err(), "Verification should fail with tampered committed evaluation");
         }
 
         // Test 2: Tamper with the opening point
         {
-            let tampered_opening_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
-                .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
-                .collect();
+            let tampered_opening_point: Vec<<Fr as JoltField>::Challenge> =
+                (0..num_vars).map(|_| <Fr as JoltField>::Challenge::random(&mut rng)).collect();
 
-            let mut verify_transcript =
-                Blake2bTranscript::new(DoryCommitmentScheme::protocol_name());
-            bind_opening_inputs::<Fr, _>(
-                &mut verify_transcript,
-                &tampered_opening_point,
-                &correct_evaluation,
-            );
+            let mut verify_transcript = Blake2bTranscript::new(DoryCommitmentScheme::protocol_name());
+            bind_opening_inputs::<Fr, _>(&mut verify_transcript, &tampered_opening_point, &correct_evaluation);
             let result = DoryCommitmentScheme::verify(
                 &proof,
                 &verifier_setup,
@@ -354,27 +324,18 @@ mod tests {
                 &commitment,
             );
 
-            assert!(
-                result.is_err(),
-                "Verification should fail with tampered opening point"
-            );
+            assert!(result.is_err(), "Verification should fail with tampered opening point");
         }
 
         // Test 3: Use wrong commitment
         {
             // Create a different polynomial and its commitment
             let wrong_coeffs: Vec<Fr> = (0..num_coeffs).map(|_| Fr::rand(&mut rng)).collect();
-            let wrong_poly =
-                MultilinearPolynomial::LargeScalars(DensePolynomial::new(wrong_coeffs));
+            let wrong_poly = MultilinearPolynomial::LargeScalars(DensePolynomial::new(wrong_coeffs));
             let (wrong_commitment, _) = DoryCommitmentScheme::commit(&wrong_poly, &prover_setup);
 
-            let mut verify_transcript =
-                Blake2bTranscript::new(DoryCommitmentScheme::protocol_name());
-            bind_opening_inputs::<Fr, _>(
-                &mut verify_transcript,
-                &opening_point,
-                &correct_evaluation,
-            );
+            let mut verify_transcript = Blake2bTranscript::new(DoryCommitmentScheme::protocol_name());
+            bind_opening_inputs::<Fr, _>(&mut verify_transcript, &opening_point, &correct_evaluation);
             let result = DoryCommitmentScheme::verify(
                 &proof,
                 &verifier_setup,
@@ -384,20 +345,13 @@ mod tests {
                 &wrong_commitment,
             );
 
-            assert!(
-                result.is_err(),
-                "Verification should fail with wrong commitment"
-            );
+            assert!(result.is_err(), "Verification should fail with wrong commitment");
         }
 
         // Test 4: Use wrong domain in transcript
         {
             let mut verify_transcript = Blake2bTranscript::new(b"wrong_domain");
-            bind_opening_inputs::<Fr, _>(
-                &mut verify_transcript,
-                &opening_point,
-                &correct_evaluation,
-            );
+            bind_opening_inputs::<Fr, _>(&mut verify_transcript, &opening_point, &correct_evaluation);
             let result = DoryCommitmentScheme::verify(
                 &proof,
                 &verifier_setup,
@@ -407,21 +361,13 @@ mod tests {
                 &commitment,
             );
 
-            assert!(
-                result.is_err(),
-                "Verification should fail with wrong transcript domain"
-            );
+            assert!(result.is_err(), "Verification should fail with wrong transcript domain");
         }
 
         // Test 5: Verify that correct proof still passes
         {
-            let mut verify_transcript =
-                Blake2bTranscript::new(DoryCommitmentScheme::protocol_name());
-            bind_opening_inputs::<Fr, _>(
-                &mut verify_transcript,
-                &opening_point,
-                &correct_evaluation,
-            );
+            let mut verify_transcript = Blake2bTranscript::new(DoryCommitmentScheme::protocol_name());
+            bind_opening_inputs::<Fr, _>(&mut verify_transcript, &opening_point, &correct_evaluation);
             let result = DoryCommitmentScheme::verify(
                 &proof,
                 &verifier_setup,
@@ -431,10 +377,7 @@ mod tests {
                 &commitment,
             );
 
-            assert!(
-                result.is_ok(),
-                "Verification should succeed with correct proof"
-            );
+            assert!(result.is_ok(), "Verification should succeed with correct proof");
         }
     }
 
@@ -453,33 +396,22 @@ mod tests {
         let _guard = DoryGlobals::initialize_context(K, T, DoryContext::Main, None);
 
         let mut rng = thread_rng();
-        let nonzero_indices: Vec<Option<u8>> = (0..T)
-            .map(|_| {
-                if rng.gen::<bool>() {
-                    Some(rng.gen::<u8>() % K as u8)
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let nonzero_indices: Vec<Option<u8>> =
+            (0..T).map(|_| if rng.gen::<bool>() { Some(rng.gen::<u8>() % K as u8) } else { None }).collect();
 
         let one_hot_poly = OneHotPolynomial::from_indices(nonzero_indices, K);
         let num_vars = one_hot_poly.get_num_vars();
         let poly = MultilinearPolynomial::OneHot(one_hot_poly);
 
-        let opening_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
-            .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
-            .collect();
+        let opening_point: Vec<<Fr as JoltField>::Challenge> =
+            (0..num_vars).map(|_| <Fr as JoltField>::Challenge::random(&mut rng)).collect();
 
         let prover_setup = DoryCommitmentScheme::setup_prover(num_vars);
         let verifier_setup = DoryCommitmentScheme::setup_verifier(&prover_setup);
 
         let (commitment, row_commitments) = DoryCommitmentScheme::commit(&poly, &prover_setup);
 
-        let evaluation = <MultilinearPolynomial<Fr> as PolynomialEvaluation<Fr>>::evaluate(
-            &poly,
-            &opening_point,
-        );
+        let evaluation = <MultilinearPolynomial<Fr> as PolynomialEvaluation<Fr>>::evaluate(&poly, &opening_point);
 
         let mut prove_transcript = Blake2bTranscript::new(b"dory_test");
         bind_opening_inputs::<Fr, _>(&mut prove_transcript, &opening_point, &evaluation);
@@ -502,10 +434,7 @@ mod tests {
             &commitment,
         );
 
-        assert!(
-            verification_result.is_ok(),
-            "Dory verification failed for OneHot: {verification_result:?}"
-        );
+        assert!(verification_result.is_ok(), "Dory verification failed for OneHot: {verification_result:?}");
     }
 
     #[test]
@@ -533,10 +462,8 @@ mod tests {
         let verifier_setup = DoryCommitmentScheme::setup_verifier(&prover_setup);
 
         // Step 2: Commit to each polynomial
-        let commitments_and_hints: Vec<_> = polys
-            .iter()
-            .map(|poly| DoryCommitmentScheme::commit(poly, &prover_setup))
-            .collect();
+        let commitments_and_hints: Vec<_> =
+            polys.iter().map(|poly| DoryCommitmentScheme::commit(poly, &prover_setup)).collect();
 
         let commitments: Vec<_> = commitments_and_hints.iter().map(|(c, _)| *c).collect();
         let hints: Vec<_> = commitments_and_hints.into_iter().map(|(_, h)| h).collect();
@@ -549,9 +476,8 @@ mod tests {
         let combined_hint = DoryCommitmentScheme::combine_hints(hints, &coeffs);
 
         // Step 5: Generate evaluation point first
-        let opening_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
-            .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
-            .collect();
+        let opening_point: Vec<<Fr as JoltField>::Challenge> =
+            (0..num_vars).map(|_| <Fr as JoltField>::Challenge::random(&mut rng)).collect();
 
         // Step 6: Compute expected evaluation as linear combination: eval = coeff[0]*P0(r) + ... + coeff[4]*P4(r)
         let mut evaluation = Fr::zero();
@@ -588,10 +514,7 @@ mod tests {
             &combined_commitment,
         );
 
-        assert!(
-            result.is_ok(),
-            "Verification should succeed for homomorphically combined commitment: {result:?}"
-        );
+        assert!(result.is_ok(), "Verification should succeed for homomorphically combined commitment: {result:?}");
     }
 
     #[test]
@@ -632,9 +555,8 @@ mod tests {
         let combined_hint = DoryCommitmentScheme::combine_hints(hints, &coeffs);
 
         // Step 5: Generate evaluation point
-        let opening_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
-            .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
-            .collect();
+        let opening_point: Vec<<Fr as JoltField>::Challenge> =
+            (0..num_vars).map(|_| <Fr as JoltField>::Challenge::random(&mut rng)).collect();
 
         // Step 6: Compute expected evaluation as linear combination
         let mut evaluation = Fr::zero();
@@ -650,8 +572,7 @@ mod tests {
 
         // Step 8: Verify that directly committing to the combined polynomial gives the same result
         // as homomorphically combining the individual commitments
-        let (direct_commitment, direct_hint) =
-            DoryCommitmentScheme::commit(&combined_poly, &prover_setup);
+        let (direct_commitment, direct_hint) = DoryCommitmentScheme::commit(&combined_poly, &prover_setup);
 
         // The commitments should match
         assert_eq!(
@@ -682,10 +603,7 @@ mod tests {
             &combined_commitment,
         );
 
-        assert!(
-            result.is_ok(),
-            "Verification should succeed with batch_commit flow: {result:?}"
-        );
+        assert!(result.is_ok(), "Verification should succeed with batch_commit flow: {result:?}");
 
         // Step 11: Also verify that proving with the direct hint works
         let mut prove_transcript2 = Blake2bTranscript::new(b"dory_batch_commit_e2e_test");
@@ -709,10 +627,7 @@ mod tests {
             &direct_commitment,
         );
 
-        assert!(
-            result2.is_ok(),
-            "Verification should also succeed with direct commitment: {result2:?}"
-        );
+        assert!(result2.is_ok(), "Verification should also succeed with direct commitment: {result2:?}");
     }
 
     #[test]
@@ -836,14 +751,8 @@ mod tests {
         // AddressMajor: index = cycle * K + addr = 7 * 8 + 3 = 59
         assert_eq!(idx_addr, 59);
 
-        assert_eq!(
-            cycle_major.index_to_address_cycle(idx_cycle, K, T),
-            (addr, cycle)
-        );
-        assert_eq!(
-            addr_major.index_to_address_cycle(idx_addr, K, T),
-            (addr, cycle)
-        );
+        assert_eq!(cycle_major.index_to_address_cycle(idx_cycle, K, T), (addr, cycle));
+        assert_eq!(addr_major.index_to_address_cycle(idx_addr, K, T), (addr, cycle));
     }
 
     /// Test that AddressMajor one-hot polynomial proof/verify works correctly.
@@ -857,41 +766,25 @@ mod tests {
         let K = 32;
         let T = 32;
 
-        let _guard = DoryGlobals::initialize_context(
-            K,
-            T,
-            DoryContext::Main,
-            Some(DoryLayout::AddressMajor),
-        );
+        let _guard = DoryGlobals::initialize_context(K, T, DoryContext::Main, Some(DoryLayout::AddressMajor));
 
         let mut rng = thread_rng();
-        let nonzero_indices: Vec<Option<u8>> = (0..T)
-            .map(|_| {
-                if rng.gen::<bool>() {
-                    Some(rng.gen::<u8>() % K as u8)
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let nonzero_indices: Vec<Option<u8>> =
+            (0..T).map(|_| if rng.gen::<bool>() { Some(rng.gen::<u8>() % K as u8) } else { None }).collect();
 
         let one_hot_poly = OneHotPolynomial::from_indices(nonzero_indices, K);
         let num_vars = one_hot_poly.get_num_vars();
         let poly = MultilinearPolynomial::OneHot(one_hot_poly);
 
-        let opening_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
-            .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
-            .collect();
+        let opening_point: Vec<<Fr as JoltField>::Challenge> =
+            (0..num_vars).map(|_| <Fr as JoltField>::Challenge::random(&mut rng)).collect();
 
         let prover_setup = DoryCommitmentScheme::setup_prover(num_vars);
         let verifier_setup = DoryCommitmentScheme::setup_verifier(&prover_setup);
 
         let (commitment, row_commitments) = DoryCommitmentScheme::commit(&poly, &prover_setup);
 
-        let evaluation = <MultilinearPolynomial<Fr> as PolynomialEvaluation<Fr>>::evaluate(
-            &poly,
-            &opening_point,
-        );
+        let evaluation = <MultilinearPolynomial<Fr> as PolynomialEvaluation<Fr>>::evaluate(&poly, &opening_point);
 
         let mut prove_transcript = Blake2bTranscript::new(b"dory_test");
         bind_opening_inputs::<Fr, _>(&mut prove_transcript, &opening_point, &evaluation);
@@ -932,12 +825,7 @@ mod tests {
         let K = 16usize;
         let T = 64usize;
 
-        let _guard = DoryGlobals::initialize_context(
-            K,
-            T,
-            DoryContext::Main,
-            Some(DoryLayout::AddressMajor),
-        );
+        let _guard = DoryGlobals::initialize_context(K, T, DoryContext::Main, Some(DoryLayout::AddressMajor));
 
         let num_columns = DoryGlobals::get_num_columns();
         let num_rows = DoryGlobals::get_max_num_rows();
@@ -946,15 +834,8 @@ mod tests {
 
         let dense_coeffs: Vec<Fr> = (0..T).map(|_| Fr::rand(&mut rng)).collect();
 
-        let nonzero_indices: Vec<Option<u8>> = (0..T)
-            .map(|_| {
-                if rng.gen::<bool>() {
-                    Some(rng.gen::<u8>() % K as u8)
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let nonzero_indices: Vec<Option<u8>> =
+            (0..T).map(|_| if rng.gen::<bool>() { Some(rng.gen::<u8>() % K as u8) } else { None }).collect();
         let one_hot_poly = OneHotPolynomial::<Fr>::from_indices(nonzero_indices.clone(), K);
 
         let dense_rlc_coeff: Fr = Fr::rand(&mut rng);
@@ -1004,10 +885,7 @@ mod tests {
 
         // Compare results
         for (col, (actual, exp)) in vmp_result.iter().zip(expected.iter()).enumerate() {
-            assert_eq!(
-                *actual, *exp,
-                "VMP mismatch at column {col}: actual={actual:?}, expected={exp:?}"
-            );
+            assert_eq!(*actual, *exp, "VMP mismatch at column {col}: actual={actual:?}, expected={exp:?}");
         }
     }
 }

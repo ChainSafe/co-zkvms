@@ -36,9 +36,7 @@ impl AMOORW {
 
         // OR the values and store back to memory
         let new_value = (original_value as u32) | or_value;
-        cpu.mmu
-            .store_word(address, new_value)
-            .expect("MMU store error");
+        cpu.mmu.store_word(address, new_value).expect("MMU store error");
 
         // Return the original value
         cpu.x[self.operands.rd as usize] = original_value;
@@ -79,11 +77,7 @@ impl RISCVTrace for AMOORW {
     ///
     /// Memory ordering: Provides acquire-release semantics, though in zkVM's
     /// single-threaded execution model, ordering is implicitly guaranteed.
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let v_rd = allocator.allocate();
         let v_rs2 = allocator.allocate();
 
@@ -103,14 +97,7 @@ impl RISCVTrace for AMOORW {
                 let v_word = allocator.allocate();
                 let v_shift = allocator.allocate();
 
-                amo_pre64(
-                    &mut asm,
-                    self.operands.rs1,
-                    *v_rd,
-                    *v_dword_address,
-                    *v_dword,
-                    *v_shift,
-                );
+                amo_pre64(&mut asm, self.operands.rs1, *v_rd, *v_dword_address, *v_dword, *v_shift);
                 asm.emit_r::<OR>(*v_rs2, *v_rd, self.operands.rs2);
                 amo_post64(
                     &mut asm,

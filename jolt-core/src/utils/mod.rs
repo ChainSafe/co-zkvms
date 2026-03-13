@@ -11,6 +11,7 @@ pub mod profiling;
 pub mod small_scalar;
 pub mod small_value;
 pub mod thread;
+pub mod tracing;
 /// Macros that determine the optimal iterator type based on the feature flags.
 ///
 /// For some cases (ex. offloading to GPU), we may not want to use a parallel iterator.
@@ -88,10 +89,7 @@ macro_rules! join_conditional {
 /// assert_eq!(index_to_field_bitvector::<Fr>(1, 3), vec![zero, zero, one]);
 /// assert_eq!(index_to_field_bitvector::<Fr>(1, 7), vec![zero, zero, zero, zero, zero, zero, one]);
 /// ```
-pub fn index_to_field_bitvector<F: JoltField + ChallengeFieldOps<F>>(
-    value: u128,
-    bits: usize,
-) -> Vec<F> {
+pub fn index_to_field_bitvector<F: JoltField + ChallengeFieldOps<F>>(value: u128, bits: usize) -> Vec<F> {
     if bits != 128 {
         assert!(value < 1u128 << bits);
     }
@@ -108,21 +106,15 @@ pub fn index_to_field_bitvector<F: JoltField + ChallengeFieldOps<F>>(
     bitvector
 }
 
-#[tracing::instrument(skip_all)]
+#[::tracing::instrument(skip_all)]
 pub fn compute_dotproduct<F: JoltField>(a: &[F], b: &[F]) -> F {
-    a.par_iter()
-        .zip_eq(b.par_iter())
-        .map(|(a_i, b_i)| *a_i * *b_i)
-        .sum()
+    a.par_iter().zip_eq(b.par_iter()).map(|(a_i, b_i)| *a_i * *b_i).sum()
 }
 
 /// Compute dotproduct optimized for values being 0 / 1
-#[tracing::instrument(skip_all)]
+#[::tracing::instrument(skip_all)]
 pub fn compute_dotproduct_low_optimized<F: JoltField>(a: &[F], b: &[F]) -> F {
-    a.par_iter()
-        .zip_eq(b.par_iter())
-        .map(|(a_i, b_i)| mul_0_1_optimized(a_i, b_i))
-        .sum()
+    a.par_iter().zip_eq(b.par_iter()).map(|(a_i, b_i)| mul_0_1_optimized(a_i, b_i)).sum()
 }
 
 #[inline(always)]

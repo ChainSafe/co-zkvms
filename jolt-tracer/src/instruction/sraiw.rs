@@ -25,8 +25,7 @@ impl SRAIW {
         // operate on 32-bit values and sign-extend their 32-bit results to 64 bits. SLLIW, SRLIW,
         // and SRAIW encodings with imm[5] ≠ 0 are reserved.
         let shamt = (self.operands.imm & 0x1f) as u32;
-        cpu.x[self.operands.rd as usize] =
-            ((cpu.x[self.operands.rs1 as usize] as i32) >> shamt) as i64;
+        cpu.x[self.operands.rd as usize] = ((cpu.x[self.operands.rs1 as usize] as i32) >> shamt) as i64;
     }
 }
 
@@ -51,11 +50,7 @@ impl RISCVTrace for SRAIW {
     /// 3. Sign-extend the result again to ensure proper 32-bit semantics
     ///
     /// The double sign-extension ensures correct handling of negative 32-bit values.
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let v_rs1 = allocator.allocate();
 
         let shift = self.operands.imm & 0x1f;

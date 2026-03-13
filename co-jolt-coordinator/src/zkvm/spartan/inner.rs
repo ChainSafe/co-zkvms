@@ -1,5 +1,7 @@
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::opening_proof::{OpeningId, OpeningPoint, SumcheckId, BIG_ENDIAN};
+#[cfg(feature = "zk")]
+use jolt_core::subprotocols::blindfold::InputClaimConstraint;
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::r1cs::inputs::{JoltR1CSInputs, ALL_R1CS_INPUTS};
@@ -32,15 +34,12 @@ impl<F: JoltField> Rep3InnerSumcheck<F> {
         let gamma: F = sm.transcript.challenge_scalar();
 
         // Read Az/Bz/Cz claims from accumulator
-        let (outer_sumcheck_r, claim_az) = sm
-            .accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter);
-        let (_, claim_bz) = sm
-            .accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter);
-        let (_, claim_cz) = sm
-            .accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanCz, SumcheckId::SpartanOuter);
+        let (outer_sumcheck_r, claim_az) =
+            sm.accumulator.get_virtual_polynomial_opening(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter);
+        let (_, claim_bz) =
+            sm.accumulator.get_virtual_polynomial_opening(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter);
+        let (_, claim_cz) =
+            sm.accumulator.get_virtual_polynomial_opening(VirtualPolynomial::SpartanCz, SumcheckId::SpartanOuter);
 
         let input_claim = claim_az + gamma * claim_bz + gamma.square() * claim_cz;
 
@@ -48,8 +47,7 @@ impl<F: JoltField> Rep3InnerSumcheck<F> {
         let claimed_witness_evals: Vec<F> = ALL_R1CS_INPUTS
             .iter()
             .map(|r1cs_input| {
-                let key =
-                    OpeningId::try_from(r1cs_input).expect("Failed to map R1CS input to OpeningId");
+                let key = OpeningId::try_from(r1cs_input).expect("Failed to map R1CS input to OpeningId");
                 sm.accumulator.get_opening(key)
             })
             .collect();
@@ -58,13 +56,7 @@ impl<F: JoltField> Rep3InnerSumcheck<F> {
         let padded_trace_length = sm.trace_length.next_power_of_two();
         let key = UniformSpartanKey::new(padded_trace_length);
 
-        Self {
-            gamma,
-            input_claim,
-            key,
-            outer_sumcheck_r: outer_sumcheck_r.r,
-            claimed_witness_evals,
-        }
+        Self { gamma, input_claim, key, outer_sumcheck_r: outer_sumcheck_r.r, claimed_witness_evals }
     }
 
     pub fn gamma(&self) -> F {
@@ -89,11 +81,7 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3InnerSumche
         self.input_claim
     }
 
-    fn expected_output_claim(
-        &self,
-        _accumulator: &Rep3OpeningAccumulator<F>,
-        r: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, _accumulator: &Rep3OpeningAccumulator<F>, r: &[F::Challenge]) -> F {
         let num_cycles_bits = self.key.num_steps.ilog2() as usize;
         let (_r_cycle, rx_var) = self.outer_sumcheck_r.split_at(num_cycles_bits);
 
@@ -102,17 +90,12 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3InnerSumche
         let eval_c = self.key.evaluate_uniform_c_at_point(rx_var, r);
 
         let left = eval_a + self.gamma * eval_b + self.gamma.square() * eval_c;
-        let eval_z =
-            self.key
-                .evaluate_z_mle_with_segment_evals(&self.claimed_witness_evals, r, true);
+        let eval_z = self.key.evaluate_z_mle_with_segment_evals(&self.claimed_witness_evals, r, true);
 
         left * eval_z
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.to_vec())
     }
 
@@ -124,5 +107,19 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3InnerSumche
         _claims: Vec<F>,
     ) {
         // No polynomial openings to cache (matches vanilla InnerSumcheck)
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::weighted_openings(&[
+            OpeningId::Virtual(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter),
+            OpeningId::Virtual(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter),
+            OpeningId::Virtual(VirtualPolynomial::SpartanCz, SumcheckId::SpartanOuter),
+        ])
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(&self, _accumulator: &Rep3OpeningAccumulator<F>) -> Vec<F> {
+        vec![self.gamma, self.gamma.square()]
     }
 }

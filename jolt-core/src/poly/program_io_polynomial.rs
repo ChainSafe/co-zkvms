@@ -18,11 +18,8 @@ impl<F: JoltField> ProgramIOPolynomial<F> {
         // TODO(moodlezoup) avoid next_power_of_two
         let mut coeffs: Vec<u64> = vec![0; range_end.next_power_of_two() as usize];
 
-        let mut input_index = remap_address(
-            program_io.memory_layout.input_start,
-            &program_io.memory_layout,
-        )
-        .unwrap() as usize;
+        let mut input_index =
+            remap_address(program_io.memory_layout.input_start, &program_io.memory_layout).unwrap() as usize;
         let ws = RAM_WORD_SIZE as usize;
         // Convert input bytes into words and populate `coeffs`
         for chunk in program_io.inputs.chunks(ws) {
@@ -30,11 +27,8 @@ impl<F: JoltField> ProgramIOPolynomial<F> {
             input_index += 1;
         }
 
-        let mut output_index = remap_address(
-            program_io.memory_layout.output_start,
-            &program_io.memory_layout,
-        )
-        .unwrap() as usize;
+        let mut output_index =
+            remap_address(program_io.memory_layout.output_start, &program_io.memory_layout).unwrap() as usize;
         // Convert output bytes into words and populate `coeffs`
         for chunk in program_io.outputs.chunks(ws) {
             coeffs[output_index] = bytes_to_ram_word(chunk);
@@ -42,23 +36,17 @@ impl<F: JoltField> ProgramIOPolynomial<F> {
         }
 
         // Copy panic bit
-        let panic_index = remap_address(program_io.memory_layout.panic, &program_io.memory_layout)
-            .unwrap() as usize;
+        let panic_index = remap_address(program_io.memory_layout.panic, &program_io.memory_layout).unwrap() as usize;
         coeffs[panic_index] = program_io.panic as u64;
 
         if !program_io.panic {
             // Set termination bit
-            let termination_index = remap_address(
-                program_io.memory_layout.termination,
-                &program_io.memory_layout,
-            )
-            .unwrap() as usize;
+            let termination_index =
+                remap_address(program_io.memory_layout.termination, &program_io.memory_layout).unwrap() as usize;
             coeffs[termination_index] = 1;
         }
 
-        Self {
-            poly: coeffs.into(),
-        }
+        Self { poly: coeffs.into() }
     }
 
     pub fn evaluate(&self, r_address: &[F::Challenge]) -> F {

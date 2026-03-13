@@ -105,13 +105,7 @@ impl<E: PairingCurve> ProverSetup<E> {
         // Precompute e(h₁, h₂)
         let ht = E::pair(&h1, &h2);
 
-        Self {
-            g1_vec,
-            g2_vec,
-            h1,
-            h2,
-            ht,
-        }
+        Self { g1_vec, g2_vec, h1, h2, ht }
     }
 
     /// Derive verifier setup from prover setup
@@ -251,25 +245,20 @@ fn get_storage_path(max_log_n: usize) -> Option<PathBuf> {
 /// - File creation fails
 /// - Serialization of prover or verifier setup fails
 #[cfg(all(feature = "disk-persistence", not(target_arch = "wasm32")))]
-pub fn save_setup<E: PairingCurve>(
-    prover: &ProverSetup<E>,
-    verifier: &VerifierSetup<E>,
-    max_log_n: usize,
-) where
+pub fn save_setup<E: PairingCurve>(prover: &ProverSetup<E>, verifier: &VerifierSetup<E>, max_log_n: usize)
+where
     ProverSetup<E>: DorySerialize,
     VerifierSetup<E>: DorySerialize,
 {
     let storage_path = get_storage_path(max_log_n).expect("Failed to determine storage directory");
 
     if let Some(parent) = storage_path.parent() {
-        fs::create_dir_all(parent)
-            .unwrap_or_else(|e| panic!("Failed to create storage directory: {e}"));
+        fs::create_dir_all(parent).unwrap_or_else(|e| panic!("Failed to create storage directory: {e}"));
     }
 
     tracing::info!("Saving setup to {}", storage_path.display());
 
-    let file =
-        File::create(&storage_path).unwrap_or_else(|e| panic!("Failed to create setup file: {e}"));
+    let file = File::create(&storage_path).unwrap_or_else(|e| panic!("Failed to create setup file: {e}"));
 
     let mut writer = BufWriter::new(file);
 
@@ -293,22 +282,16 @@ pub fn save_setup<E: PairingCurve>(
 /// - File cannot be opened
 /// - Deserialization fails
 #[cfg(all(feature = "disk-persistence", not(target_arch = "wasm32")))]
-pub fn load_setup<E: PairingCurve>(
-    max_log_n: usize,
-) -> Result<(ProverSetup<E>, VerifierSetup<E>), crate::DoryError>
+pub fn load_setup<E: PairingCurve>(max_log_n: usize) -> Result<(ProverSetup<E>, VerifierSetup<E>), crate::DoryError>
 where
     ProverSetup<E>: DoryDeserialize,
     VerifierSetup<E>: DoryDeserialize,
 {
-    let storage_path = get_storage_path(max_log_n).ok_or_else(|| {
-        crate::DoryError::InvalidURS("Failed to determine storage directory".to_string())
-    })?;
+    let storage_path = get_storage_path(max_log_n)
+        .ok_or_else(|| crate::DoryError::InvalidURS("Failed to determine storage directory".to_string()))?;
 
     if !storage_path.exists() {
-        return Err(crate::DoryError::InvalidURS(format!(
-            "Setup file not found at {}",
-            storage_path.display()
-        )));
+        return Err(crate::DoryError::InvalidURS(format!("Setup file not found at {}", storage_path.display())));
     }
 
     tracing::info!("Looking for saved setup at {}", storage_path.display());
@@ -318,13 +301,11 @@ where
 
     let mut reader = BufReader::new(file);
 
-    let prover = DoryDeserialize::deserialize_compressed(&mut reader).map_err(|e| {
-        crate::DoryError::InvalidURS(format!("Failed to deserialize prover setup: {e}"))
-    })?;
+    let prover = DoryDeserialize::deserialize_compressed(&mut reader)
+        .map_err(|e| crate::DoryError::InvalidURS(format!("Failed to deserialize prover setup: {e}")))?;
 
-    let verifier = DoryDeserialize::deserialize_compressed(&mut reader).map_err(|e| {
-        crate::DoryError::InvalidURS(format!("Failed to deserialize verifier setup: {e}"))
-    })?;
+    let verifier = DoryDeserialize::deserialize_compressed(&mut reader)
+        .map_err(|e| crate::DoryError::InvalidURS(format!("Failed to deserialize verifier setup: {e}")))?;
 
     tracing::info!("Loaded setup for max_log_n={}", max_log_n);
 

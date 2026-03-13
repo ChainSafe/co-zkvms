@@ -28,13 +28,7 @@ impl ECALL {
             PrivilegeMode::Machine | PrivilegeMode::Reserved => TrapType::EnvironmentCallFromMMode,
         };
 
-        cpu.raise_trap(
-            Trap {
-                trap_type,
-                value: 0,
-            },
-            self.address,
-        );
+        cpu.raise_trap(Trap { trap_type, value: 0 }, self.address);
     }
 }
 

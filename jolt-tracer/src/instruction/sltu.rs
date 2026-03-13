@@ -14,8 +14,7 @@ declare_riscv_instr!(
 
 impl SLTU {
     fn exec(&self, cpu: &mut Cpu, _: &mut <SLTU as RISCVInstruction>::RAMAccess) {
-        cpu.x[self.operands.rd as usize] = match cpu
-            .unsigned_data(cpu.x[self.operands.rs1 as usize])
+        cpu.x[self.operands.rd as usize] = match cpu.unsigned_data(cpu.x[self.operands.rs1 as usize])
             < cpu.unsigned_data(cpu.x[self.operands.rs2 as usize])
         {
             true => 1,

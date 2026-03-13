@@ -4,9 +4,7 @@ use ark_ff::biginteger::{I8OrI96, S128, S64};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 /// A trait for small scalars ({u/i}{8/16/32/64/128})
-pub trait SmallScalar:
-    Copy + Ord + Sync + CanonicalSerialize + CanonicalDeserialize + Allocative
-{
+pub trait SmallScalar: Copy + Ord + Sync + CanonicalSerialize + CanonicalDeserialize + Allocative {
     /// Performs a field multiplication. Uses `JoltField::mul_{u/i}{64/128}` under the hood.
     fn field_mul<F: JoltField>(&self, n: F) -> F;
     /// Converts a small scalar into a (potentially Montgomery form) `JoltField` type

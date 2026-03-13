@@ -6,14 +6,7 @@ use super::virtual_sw::VirtualSW;
 use crate::utils::inline_helpers::InstrAssembler;
 
 #[cfg(feature = "rv64")]
-pub fn amo_pre64(
-    asm: &mut InstrAssembler,
-    rs1: u8,
-    v_rd: u8,
-    v_dword_address: u8,
-    v_dword: u8,
-    v_shift: u8,
-) {
+pub fn amo_pre64(asm: &mut InstrAssembler, rs1: u8, v_rd: u8, v_dword_address: u8, v_dword: u8, v_shift: u8) {
     use super::andi::ANDI;
     use super::ld::LD;
     use super::slli::SLLI;

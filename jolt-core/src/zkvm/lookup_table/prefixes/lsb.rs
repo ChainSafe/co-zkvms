@@ -9,13 +9,7 @@ use super::{PrefixCheckpoint, SparseDensePrefix};
 pub enum LsbPrefix<const XLEN: usize> {}
 
 impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for LsbPrefix<XLEN> {
-    fn prefix_mle<C>(
-        _checkpoints: &[PrefixCheckpoint<F>],
-        _r_x: Option<C>,
-        c: u32,
-        b: LookupBits,
-        j: usize,
-    ) -> F
+    fn prefix_mle<C>(_checkpoints: &[PrefixCheckpoint<F>], _r_x: Option<C>, c: u32, b: LookupBits, j: usize) -> F
     where
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
@@ -32,12 +26,7 @@ impl<const XLEN: usize, F: JoltField> SparseDensePrefix<F> for LsbPrefix<XLEN> {
         }
     }
 
-    fn update_prefix_checkpoint<C>(
-        _: &[PrefixCheckpoint<F>],
-        _: C,
-        r_y: C,
-        j: usize,
-    ) -> PrefixCheckpoint<F>
+    fn update_prefix_checkpoint<C>(_: &[PrefixCheckpoint<F>], _: C, r_y: C, j: usize) -> PrefixCheckpoint<F>
     where
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,

@@ -85,10 +85,7 @@ pub fn init_cache(g1_vec: &[ArkG1], g2_vec: &[ArkG2]) {
         })
         .collect();
 
-    *write_guard = Some(Arc::new(PreparedCache {
-        g1_prepared,
-        g2_prepared,
-    }));
+    *write_guard = Some(Arc::new(PreparedCache { g1_prepared, g2_prepared }));
 }
 
 /// Get a shared reference to the prepared cache.

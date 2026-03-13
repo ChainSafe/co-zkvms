@@ -22,9 +22,7 @@ pub struct NormalizedOperands {
     pub imm: i128,
 }
 
-pub trait InstructionFormat:
-    Default + Debug + From<NormalizedOperands> + Into<NormalizedOperands>
-{
+pub trait InstructionFormat: Default + Debug + From<NormalizedOperands> + Into<NormalizedOperands> {
     type RegisterState: InstructionRegisterState + PartialEq;
 
     fn parse(word: u32) -> Self;
@@ -34,9 +32,7 @@ pub trait InstructionFormat:
     fn random(rng: &mut rand::rngs::StdRng) -> Self;
 }
 
-pub trait InstructionRegisterState:
-    Default + Copy + Clone + Serialize + DeserializeOwned + Debug
-{
+pub trait InstructionRegisterState: Default + Copy + Clone + Serialize + DeserializeOwned + Debug {
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng) -> Self;
     fn rs1_value(&self) -> u64 {

@@ -32,12 +32,7 @@ impl<F: JoltField> DensePolynomial<F> {
             Z.len()
         );
 
-        DensePolynomial {
-            num_vars: Z.len().log_2(),
-            len: Z.len(),
-            Z,
-            binding_scratch_space: None,
-        }
+        DensePolynomial { num_vars: Z.len().log_2(), len: Z.len(), Z, binding_scratch_space: None }
     }
 
     pub fn new_padded(evals: Vec<F>) -> Self {
@@ -101,17 +96,14 @@ impl<F: JoltField> DensePolynomial<F> {
         let n = self.len() / 2;
         let (left, right) = self.Z.split_at_mut(n);
 
-        left.iter_mut()
-            .zip(right.iter())
-            .filter(|(&mut a, &b)| a != b)
-            .for_each(|(a, b)| {
-                let m = *b - *a;
-                if m.is_one() {
-                    *a += (*r).into();
-                } else {
-                    *a += *r * m;
-                }
-            });
+        left.iter_mut().zip(right.iter()).filter(|(&mut a, &b)| a != b).for_each(|(a, b)| {
+            let m = *b - *a;
+            if m.is_one() {
+                *a += (*r).into();
+            } else {
+                *a += *r * m;
+            }
+        });
 
         self.num_vars -= 1;
         self.len = n;
@@ -125,12 +117,9 @@ impl<F: JoltField> DensePolynomial<F> {
 
         let (left, right) = self.Z.split_at_mut(n);
 
-        left.par_iter_mut()
-            .zip(right.par_iter())
-            .filter(|(&mut a, &b)| a != b)
-            .for_each(|(a, b)| {
-                *a += *r * (*b - *a);
-            });
+        left.par_iter_mut().zip(right.par_iter()).filter(|(&mut a, &b)| a != b).for_each(|(a, b)| {
+            *a += *r * (*b - *a);
+        });
 
         self.num_vars -= 1;
         self.len = n;
@@ -153,12 +142,7 @@ impl<F: JoltField> DensePolynomial<F> {
         let num_vars = self.num_vars - 1;
         let len = n;
 
-        Self {
-            num_vars,
-            len,
-            Z: new_evals,
-            binding_scratch_space: None,
-        }
+        Self { num_vars, len, Z: new_evals, binding_scratch_space: None }
     }
 
     #[tracing::instrument(skip_all)]
@@ -194,12 +178,7 @@ impl<F: JoltField> DensePolynomial<F> {
         let num_vars = self.num_vars - 1;
         let len = n;
 
-        Self {
-            num_vars,
-            len,
-            Z: new_evals,
-            binding_scratch_space: None,
-        }
+        Self { num_vars, len, Z: new_evals, binding_scratch_space: None }
     }
 
     /// Note: does not truncate
@@ -223,20 +202,16 @@ impl<F: JoltField> DensePolynomial<F> {
 
         let scratch_space = self.binding_scratch_space.as_mut().unwrap();
 
-        scratch_space
-            .par_iter_mut()
-            .take(n)
-            .enumerate()
-            .for_each(|(i, z)| {
-                let m = self.Z[2 * i + 1] - self.Z[2 * i];
-                *z = if m.is_zero() {
-                    self.Z[2 * i]
-                } else if m.is_one() {
-                    self.Z[2 * i] + r
-                } else {
-                    self.Z[2 * i] + *r * m
-                }
-            });
+        scratch_space.par_iter_mut().take(n).enumerate().for_each(|(i, z)| {
+            let m = self.Z[2 * i + 1] - self.Z[2 * i];
+            *z = if m.is_zero() {
+                self.Z[2 * i]
+            } else if m.is_one() {
+                self.Z[2 * i] + r
+            } else {
+                self.Z[2 * i] + *r * m
+            }
+        });
 
         std::mem::swap(&mut self.Z, scratch_space);
 
@@ -382,20 +357,17 @@ impl<F: JoltField> DensePolynomial<F> {
             let (evals_left, evals_right) = current.split_at_mut(stride);
             let (evals_right, _) = evals_right.split_at_mut(stride);
 
-            evals_left
-                .par_iter_mut()
-                .zip(evals_right.par_iter())
-                .for_each(|(x, y)| {
-                    let slope = *y - *x;
-                    if slope.is_zero() {
-                        return;
-                    }
-                    if slope.is_one() {
-                        *x += r_val.into();
-                    } else {
-                        *x += r_val * slope;
-                    }
-                });
+            evals_left.par_iter_mut().zip(evals_right.par_iter()).for_each(|(x, y)| {
+                let slope = *y - *x;
+                if slope.is_zero() {
+                    return;
+                }
+                if slope.is_one() {
+                    *x += r_val.into();
+                } else {
+                    *x += r_val * slope;
+                }
+            });
         }
         current[0]
     }
@@ -418,11 +390,7 @@ impl<F: JoltField> DensePolynomial<F> {
 
     #[tracing::instrument(skip_all, name = "DensePolynomial::from")]
     pub fn from_usize(Z: &[usize]) -> Self {
-        DensePolynomial::new(
-            (0..Z.len())
-                .map(|i| F::from_u64(Z[i] as u64))
-                .collect::<Vec<F>>(),
-        )
+        DensePolynomial::new((0..Z.len()).map(|i| F::from_u64(Z[i] as u64)).collect::<Vec<F>>())
     }
 
     #[tracing::instrument(skip_all, name = "DensePolynomial::from")]
@@ -431,25 +399,14 @@ impl<F: JoltField> DensePolynomial<F> {
     }
 
     pub fn random<R: RngCore + CryptoRng>(num_vars: usize, mut rng: &mut R) -> Self {
-        Self::new(
-            std::iter::from_fn(|| Some(F::random(&mut rng)))
-                .take(1 << num_vars)
-                .collect(),
-        )
+        Self::new(std::iter::from_fn(|| Some(F::random(&mut rng))).take(1 << num_vars).collect())
     }
 
     #[tracing::instrument(skip_all)]
-    pub fn linear_combination(
-        polynomials: &[&MultilinearPolynomial<F>],
-        coefficients: &[F],
-    ) -> Self {
+    pub fn linear_combination(polynomials: &[&MultilinearPolynomial<F>], coefficients: &[F]) -> Self {
         debug_assert_eq!(polynomials.len(), coefficients.len());
 
-        let max_length = polynomials
-            .iter()
-            .map(|poly| poly.original_len())
-            .max()
-            .unwrap();
+        let max_length = polynomials.iter().map(|poly| poly.original_len()).max().unwrap();
 
         let result: Vec<F> = (0..max_length)
             .into_par_iter()
@@ -558,10 +515,7 @@ impl<F: JoltField> PolynomialEvaluation<F> for DensePolynomial<F> {
                             acc
                         },
                     );
-                inner_sums
-                    .into_iter()
-                    .map(|s| OptimizedMul::mul_01_optimized(eq1_val, s))
-                    .collect::<Vec<_>>()
+                inner_sums.into_iter().map(|s| OptimizedMul::mul_01_optimized(eq1_val, s)).collect::<Vec<_>>()
             })
             .reduce(
                 || vec![F::zero(); num_polys],
@@ -671,10 +625,7 @@ mod tests {
         // g(x_0,x_1) => c_0*(1 - x_0)(1 - x_1) + c_1*(1-x_0)(x_1) + c_2*(x_0)(1-x_1) + c_3*(x_0)(x_1)
         // g(3, 4) = 8*(1 - 3)(1 - 4) + 8*(1-3)(4) + 8*(3)(1-4) + 8*(3)(4) = 48 + -64 + -72 + 96  = 8
         // g(5, 10) = 8*(1 - 5)(1 - 10) + 8*(1 - 5)(10) + 8*(5)(1-10) + 8*(5)(10) = 96 + -16 + -72 + 96  = 8
-        assert_eq!(
-            dense_poly.evaluate(vec![Fr::from(3), Fr::from(4)].as_slice()),
-            Fr::from(8)
-        );
+        assert_eq!(dense_poly.evaluate(vec![Fr::from(3), Fr::from(4)].as_slice()), Fr::from(8));
     }
     #[test]
     fn compare_random_evaluations() {
@@ -695,9 +646,8 @@ mod tests {
 
             // Try 10 random evaluation points
             for _ in 0..10 {
-                let eval_point: Vec<<Fr as JoltField>::Challenge> = (0..num_vars)
-                    .map(|_| <Fr as JoltField>::Challenge::random(&mut rng))
-                    .collect();
+                let eval_point: Vec<<Fr as JoltField>::Challenge> =
+                    (0..num_vars).map(|_| <Fr as JoltField>::Challenge::random(&mut rng)).collect();
 
                 let eval1 = poly.evaluate(&eval_point);
                 let eval2 = poly.inside_out_evaluate(&eval_point);

@@ -8,12 +8,12 @@
 //! Online cost: 3 bits / 1 round (same as standard bit injection).
 
 use super::backing_store;
+use crate::field::PrimeField;
 use crate::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use crate::protocols::rep3::{
     PartyID, Rep3PrimeFieldShare,
     network::{IoContext, Rep3Network},
 };
-use crate::field::PrimeField;
 use crate::protocols::rep3_ring::{Rep3RingShare, ring::bit::Bit};
 use rand::{RngCore, SeedableRng};
 use rayon::prelude::*;
@@ -73,9 +73,7 @@ impl<F: PrimeField> LazyDaBits<F> {
             pos1: 0,
             seed2: [0u8; crate::SEED_SIZE],
             pos2: 0,
-            field_bytes: usize::try_from(F::MODULUS_BIT_SIZE)
-                .expect("u32 fits into usize")
-                .div_ceil(8),
+            field_bytes: usize::try_from(F::MODULUS_BIT_SIZE).expect("u32 fits into usize").div_ceil(8),
             party_id,
             total: 0,
             cursor: 0,
@@ -93,15 +91,7 @@ impl<F: PrimeField> LazyDaBits<F> {
         stored: Vec<F>,
         party_id: PartyID,
     ) -> Self {
-        Self::new_with_store(
-            seed1,
-            pos1,
-            seed2,
-            pos2,
-            total,
-            backing_store::BackingStore::from_vec(stored),
-            party_id,
-        )
+        Self::new_with_store(seed1, pos1, seed2, pos2, total, backing_store::BackingStore::from_vec(stored), party_id)
     }
 
     pub(crate) fn new_with_store(
@@ -118,9 +108,7 @@ impl<F: PrimeField> LazyDaBits<F> {
             pos1,
             seed2,
             pos2,
-            field_bytes: usize::try_from(F::MODULUS_BIT_SIZE)
-                .expect("u32 fits into usize")
-                .div_ceil(8),
+            field_bytes: usize::try_from(F::MODULUS_BIT_SIZE).expect("u32 fits into usize").div_ceil(8),
             party_id,
             total,
             cursor: 0,
@@ -144,11 +132,7 @@ impl<F: PrimeField> LazyDaBits<F> {
 
     /// Drain `n` daBit tuples from the pool.
     pub fn take_batch(&mut self, n: usize) -> eyre::Result<DaBitBatch<F>> {
-        eyre::ensure!(
-            self.cursor + n <= self.total,
-            "LazyDaBits: need {n}, have {}",
-            self.total - self.cursor
-        );
+        eyre::ensure!(self.cursor + n <= self.total, "LazyDaBits: need {n}, have {}", self.total - self.cursor);
 
         let fb = self.field_bytes;
         let cursor_base = self.cursor;
@@ -167,27 +151,15 @@ impl<F: PrimeField> LazyDaBits<F> {
             let stored_slice = {
                 #[cfg(feature = "reuse-preproc")]
                 {
-                    self.stored
-                        .read_reuse(store_base, store_base + 2 * n)
-                        .unwrap_or_else(|e| {
-                            panic!(
-                                "LazyDaBits(P2): read_reuse({}..{}) failed: {e}",
-                                store_base,
-                                store_base + 2 * n
-                            );
-                        })
+                    self.stored.read_reuse(store_base, store_base + 2 * n).unwrap_or_else(|e| {
+                        panic!("LazyDaBits(P2): read_reuse({}..{}) failed: {e}", store_base, store_base + 2 * n);
+                    })
                 }
                 #[cfg(not(feature = "reuse-preproc"))]
                 {
-                    self.stored
-                        .read_consume(store_base, store_base + 2 * n)
-                        .unwrap_or_else(|e| {
-                            panic!(
-                                "LazyDaBits(P2): read_consume({}..{}) failed: {e}",
-                                store_base,
-                                store_base + 2 * n
-                            );
-                        })
+                    self.stored.read_consume(store_base, store_base + 2 * n).unwrap_or_else(|e| {
+                        panic!("LazyDaBits(P2): read_consume({}..{}) failed: {e}", store_base, store_base + 2 * n);
+                    })
                 }
             };
             let v_shares: Vec<Rep3PrimeFieldShare<F>> = (0..n)
@@ -201,11 +173,7 @@ impl<F: PrimeField> LazyDaBits<F> {
             self.cursor += n;
             self.persist_cursor();
             self.stored.consume(store_base, store_base + 2 * n);
-            return Ok(DaBitBatch {
-                gammas: vec![false; n],
-                thetas,
-                v_shares,
-            });
+            return Ok(DaBitBatch { gammas: vec![false; n], thetas, v_shares });
         }
 
         // P0 and P1: regenerate from seeds.
@@ -218,43 +186,24 @@ impl<F: PrimeField> LazyDaBits<F> {
         match party_id {
             PartyID::ID0 => {
                 // seed1 = P0↔P1 (interleaved), seed2 = P0↔P2
-                let s1_buf = seek_and_generate(
-                    self.seed1,
-                    self.pos1,
-                    interleaved_offset,
-                    interleaved_needed,
-                );
+                let s1_buf = seek_and_generate(self.seed1, self.pos1, interleaved_offset, interleaved_needed);
                 // g2 from seed2 (P0↔P2 stream)
                 let g2_bytes = seek_and_generate(self.seed2, self.pos2, cursor_base, n);
 
-                let gammas: Vec<bool> = (0..n)
-                    .map(|i| ((s1_buf[i * da_stride] ^ g2_bytes[i]) & 1) != 0)
-                    .collect();
+                let gammas: Vec<bool> = (0..n).map(|i| ((s1_buf[i * da_stride] ^ g2_bytes[i]) & 1) != 0).collect();
 
                 let stored_slice = {
                     #[cfg(feature = "reuse-preproc")]
                     {
-                        self.stored
-                            .read_reuse(cursor_base, cursor_base + n)
-                            .unwrap_or_else(|e| {
-                                panic!(
-                                    "LazyDaBits(P0): read_reuse({}..{}) failed: {e}",
-                                    cursor_base,
-                                    cursor_base + n
-                                );
-                            })
+                        self.stored.read_reuse(cursor_base, cursor_base + n).unwrap_or_else(|e| {
+                            panic!("LazyDaBits(P0): read_reuse({}..{}) failed: {e}", cursor_base, cursor_base + n);
+                        })
                     }
                     #[cfg(not(feature = "reuse-preproc"))]
                     {
-                        self.stored
-                            .read_consume(cursor_base, cursor_base + n)
-                            .unwrap_or_else(|e| {
-                                panic!(
-                                    "LazyDaBits(P0): read_consume({}..{}) failed: {e}",
-                                    cursor_base,
-                                    cursor_base + n
-                                );
-                            })
+                        self.stored.read_consume(cursor_base, cursor_base + n).unwrap_or_else(|e| {
+                            panic!("LazyDaBits(P0): read_consume({}..{}) failed: {e}", cursor_base, cursor_base + n);
+                        })
                     }
                 };
                 let v_shares: Vec<Rep3PrimeFieldShare<F>> = (0..n)
@@ -268,11 +217,7 @@ impl<F: PrimeField> LazyDaBits<F> {
                 self.cursor += n;
                 self.persist_cursor();
                 self.stored.consume(cursor_base, cursor_base + n);
-                Ok(DaBitBatch {
-                    gammas,
-                    thetas: vec![false; n],
-                    v_shares,
-                })
+                Ok(DaBitBatch { gammas, thetas: vec![false; n], v_shares })
             }
             PartyID::ID1 => {
                 // seed1 = P1↔P2, seed2 = P1↔P0 (same stream as P0's seed1)
@@ -281,12 +226,7 @@ impl<F: PrimeField> LazyDaBits<F> {
                 let thetas: Vec<bool> = theta_bytes.iter().map(|b| (b & 1) != 0).collect();
 
                 // alpha1, r1 from seed2 (P1↔P0 = P0↔P1 interleaved stream)
-                let s2_buf = seek_and_generate(
-                    self.seed2,
-                    self.pos2,
-                    interleaved_offset,
-                    interleaved_needed,
-                );
+                let s2_buf = seek_and_generate(self.seed2, self.pos2, interleaved_offset, interleaved_needed);
 
                 let v_shares: Vec<Rep3PrimeFieldShare<F>> = (0..n)
                     .map(|i| {
@@ -301,11 +241,7 @@ impl<F: PrimeField> LazyDaBits<F> {
                     .collect();
 
                 self.cursor += n;
-                Ok(DaBitBatch {
-                    gammas: vec![false; n],
-                    thetas,
-                    v_shares,
-                })
+                Ok(DaBitBatch { gammas: vec![false; n], thetas, v_shares })
             }
             PartyID::ID2 => unreachable!(), // handled above
         }
@@ -350,10 +286,7 @@ impl<F: PrimeField> LazyDaBits<F> {
 
         let meta_path = dir.join("dabits.meta");
         let meta = backing_store::read_meta(&meta_path)?;
-        assert_eq!(
-            meta.party_id_byte,
-            backing_store::party_id_to_byte(party_id)
-        );
+        assert_eq!(meta.party_id_byte, backing_store::party_id_to_byte(party_id));
 
         let stored = if meta.total > 0 && party_id != PartyID::ID1 {
             let data_path = dir.join("dabits.stored");
@@ -384,9 +317,7 @@ impl<F: PrimeField> LazyDaBits<F> {
     }
 
     /// Return the RNG seeds and positions for this lazy source.
-    pub(crate) fn extension_seeds(
-        &self,
-    ) -> ([u8; crate::SEED_SIZE], u128, [u8; crate::SEED_SIZE], u128) {
+    pub(crate) fn extension_seeds(&self) -> ([u8; crate::SEED_SIZE], u128, [u8; crate::SEED_SIZE], u128) {
         (self.seed1, self.pos1, self.seed2, self.pos2)
     }
 
@@ -440,9 +371,7 @@ pub fn random_dabits_lazy<F: PrimeField, N: Rep3NetworkWorker>(
         return Ok(LazyDaBits::empty(party_id));
     }
 
-    let fb = usize::try_from(F::MODULUS_BIT_SIZE)
-        .expect("u32 fits into usize")
-        .div_ceil(8);
+    let fb = usize::try_from(F::MODULUS_BIT_SIZE).expect("u32 fits into usize").div_ceil(8);
 
     // Fork a dedicated Rep3Rand and snapshot state BEFORE generating bytes.
     let mut eda_rand = io.main().rngs.rand.fork();
@@ -463,10 +392,7 @@ pub fn random_dabits_lazy<F: PrimeField, N: Rep3NetworkWorker>(
             let (stream1, stream2) = {
                 let mut s1 = vec![0u8; stream1_len];
                 let mut s2 = vec![0u8; stream2_len];
-                rayon::join(
-                    || eda_rand.rng1.fill_bytes(&mut s1),
-                    || eda_rand.rng2.fill_bytes(&mut s2),
-                );
+                rayon::join(|| eda_rand.rng1.fill_bytes(&mut s1), || eda_rand.rng2.fill_bytes(&mut s2));
                 (s1, s2)
             };
             let g2_bytes = &stream2;
@@ -499,10 +425,7 @@ pub fn random_dabits_lazy<F: PrimeField, N: Rep3NetworkWorker>(
             let (stream2, stream1) = {
                 let mut s2 = vec![0u8; stream2_len];
                 let mut s1 = vec![0u8; stream1_len];
-                rayon::join(
-                    || eda_rand.rng2.fill_bytes(&mut s2),
-                    || eda_rand.rng1.fill_bytes(&mut s1),
-                );
+                rayon::join(|| eda_rand.rng2.fill_bytes(&mut s2), || eda_rand.rng1.fill_bytes(&mut s1));
                 (s2, s1)
             };
             let theta_bytes = &stream1;
@@ -535,10 +458,7 @@ pub fn random_dabits_lazy<F: PrimeField, N: Rep3NetworkWorker>(
             let (stream2, _stream1) = {
                 let mut s2 = vec![0u8; stream2_len];
                 let mut s1 = vec![0u8; stream1_len];
-                rayon::join(
-                    || eda_rand.rng2.fill_bytes(&mut s2),
-                    || eda_rand.rng1.fill_bytes(&mut s1),
-                );
+                rayon::join(|| eda_rand.rng2.fill_bytes(&mut s2), || eda_rand.rng1.fill_bytes(&mut s1));
                 (s2, s1)
             };
             let theta_bytes = &stream2;
@@ -573,9 +493,7 @@ pub fn random_dabits_lazy<F: PrimeField, N: Rep3NetworkWorker>(
         }
     };
 
-    Ok(LazyDaBits::new(
-        seed1, pos1, seed2, pos2, num, stored, party_id,
-    ))
+    Ok(LazyDaBits::new(seed1, pos1, seed2, pos2, num, stored, party_id))
 }
 
 // bit_inject_field_many moved to conversion.rs as bit_inject_field_preproc_many
@@ -618,13 +536,13 @@ pub(crate) fn parse_field<Fp: PrimeField>(bytes: &[u8], start: usize) -> Fp {
 #[cfg(all(test, feature = "test-utils"))]
 mod tests {
     use super::*;
-    use crate::protocols::rep3::test_utils::run_rep3_local_test_with_coordinator;
-    use ark_bn254::Fr;
     use crate::protocols::rep3::combine_field_elements;
+    use crate::protocols::rep3::test_utils::run_rep3_local_test_with_coordinator;
     use crate::protocols::rep3_ring::{
         ring::{bit::Bit as RingBit, ring_impl::RingElement},
         share_ring_element,
     };
+    use ark_bn254::Fr;
     use rand::SeedableRng;
     use rand_chacha::ChaCha20Rng;
 
@@ -634,9 +552,7 @@ mod tests {
     fn random_dabits_lazy_roundtrip() {
         const NBITS: usize = 64;
         let mut rng = ChaCha20Rng::seed_from_u64(0xDAB1_3001);
-        let bits = (0..NBITS)
-            .map(|_| (rng.next_u32() & 1) == 1)
-            .collect::<Vec<_>>();
+        let bits = (0..NBITS).map(|_| (rng.next_u32() & 1) == 1).collect::<Vec<_>>();
 
         let per_bit_shares = bits
             .iter()
@@ -653,17 +569,19 @@ mod tests {
                 let n = x_shares.len();
                 let mut lazy = random_dabits_lazy::<Fr, _>(n, &mut io_ctx)?;
                 let batch = lazy.take_batch(n)?;
-                crate::protocols::rep3_ring::conversion::bit_inject_field_preproc_many::<Fr, _>(&x_shares, &batch, io_ctx.main()).map_err(Into::into)
+                crate::protocols::rep3_ring::conversion::bit_inject_field_preproc_many::<Fr, _>(
+                    &x_shares,
+                    &batch,
+                    io_ctx.main(),
+                )
+                .map_err(Into::into)
             },
             |(): (), _net| Ok(()),
         )
         .0;
 
         let combined = combine_field_elements(&outputs[0], &outputs[1], &outputs[2]);
-        let expected = bits
-            .into_iter()
-            .map(|b| Fr::from(b as u64))
-            .collect::<Vec<_>>();
+        let expected = bits.into_iter().map(|b| Fr::from(b as u64)).collect::<Vec<_>>();
         assert_eq!(combined, expected);
     }
 }

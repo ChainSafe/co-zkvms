@@ -9,9 +9,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
 use rayon::prelude::*;
 use strum_macros::EnumIter;
 
-use super::{
-    compact_polynomial::CompactPolynomial, dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial,
-};
+use super::{compact_polynomial::CompactPolynomial, dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial};
 use crate::field::JoltField;
 
 /// Wrapper enum for the various multilinear polynomial types used in Jolt
@@ -261,64 +259,36 @@ impl<F: JoltField> MultilinearPolynomial<F> {
     pub fn dot_product(&self, other: &[F]) -> F {
         match self {
             MultilinearPolynomial::LargeScalars(poly) => compute_dotproduct(&poly.Z, other),
-            MultilinearPolynomial::U8Scalars(poly) => poly
-                .coeffs
-                .par_iter()
-                .zip_eq(other.par_iter())
-                .map(|(a, b)| a.field_mul(*b))
-                .sum(),
-            MultilinearPolynomial::U16Scalars(poly) => poly
-                .coeffs
-                .par_iter()
-                .zip_eq(other.par_iter())
-                .map(|(a, b)| a.field_mul(*b))
-                .sum(),
-            MultilinearPolynomial::U32Scalars(poly) => poly
-                .coeffs
-                .par_iter()
-                .zip_eq(other.par_iter())
-                .map(|(a, b)| a.field_mul(*b))
-                .sum(),
-            MultilinearPolynomial::U64Scalars(poly) => poly
-                .coeffs
-                .par_iter()
-                .zip_eq(other.par_iter())
-                .map(|(a, b)| a.field_mul(*b))
-                .sum(),
-            MultilinearPolynomial::I64Scalars(poly) => poly
-                .coeffs
-                .par_iter()
-                .zip_eq(other.par_iter())
-                .map(|(a, b)| a.field_mul(*b))
-                .sum(),
-            MultilinearPolynomial::I128Scalars(poly) => poly
-                .coeffs
-                .par_iter()
-                .zip_eq(other.par_iter())
-                .map(|(a, b)| a.field_mul(*b))
-                .sum(),
-            MultilinearPolynomial::U128Scalars(poly) => poly
-                .coeffs
-                .par_iter()
-                .zip_eq(other.par_iter())
-                .map(|(a, b)| a.field_mul(*b))
-                .sum(),
-            MultilinearPolynomial::S128Scalars(poly) => poly
-                .coeffs
-                .par_iter()
-                .zip_eq(other.par_iter())
-                .map(|(a, b)| a.field_mul(*b))
-                .sum(),
+            MultilinearPolynomial::U8Scalars(poly) => {
+                poly.coeffs.par_iter().zip_eq(other.par_iter()).map(|(a, b)| a.field_mul(*b)).sum()
+            }
+            MultilinearPolynomial::U16Scalars(poly) => {
+                poly.coeffs.par_iter().zip_eq(other.par_iter()).map(|(a, b)| a.field_mul(*b)).sum()
+            }
+            MultilinearPolynomial::U32Scalars(poly) => {
+                poly.coeffs.par_iter().zip_eq(other.par_iter()).map(|(a, b)| a.field_mul(*b)).sum()
+            }
+            MultilinearPolynomial::U64Scalars(poly) => {
+                poly.coeffs.par_iter().zip_eq(other.par_iter()).map(|(a, b)| a.field_mul(*b)).sum()
+            }
+            MultilinearPolynomial::I64Scalars(poly) => {
+                poly.coeffs.par_iter().zip_eq(other.par_iter()).map(|(a, b)| a.field_mul(*b)).sum()
+            }
+            MultilinearPolynomial::I128Scalars(poly) => {
+                poly.coeffs.par_iter().zip_eq(other.par_iter()).map(|(a, b)| a.field_mul(*b)).sum()
+            }
+            MultilinearPolynomial::U128Scalars(poly) => {
+                poly.coeffs.par_iter().zip_eq(other.par_iter()).map(|(a, b)| a.field_mul(*b)).sum()
+            }
+            MultilinearPolynomial::S128Scalars(poly) => {
+                poly.coeffs.par_iter().zip_eq(other.par_iter()).map(|(a, b)| a.field_mul(*b)).sum()
+            }
             _ => unimplemented!("Unexpected MultilinearPolynomial variant"),
         }
     }
 
     #[inline]
-    pub fn sumcheck_evals_array<const DEGREE: usize>(
-        &self,
-        index: usize,
-        order: BindingOrder,
-    ) -> [F; DEGREE] {
+    pub fn sumcheck_evals_array<const DEGREE: usize>(&self, index: usize, order: BindingOrder) -> [F; DEGREE] {
         debug_assert!(DEGREE > 0);
         debug_assert!(index < self.len() / 2);
 
@@ -603,7 +573,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
 }
 
 impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
-    #[tracing::instrument(skip_all, name = "MultilinearPolynomial::evaluate")]
+    #[tracing::instrument(skip_all, level = "trace", name = "MultilinearPolynomial::evaluate")]
     fn evaluate<C>(&self, r: &[C]) -> F
     where
         C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
@@ -613,72 +583,63 @@ impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
             MultilinearPolynomial::LargeScalars(poly) => {
                 let m = r.len() / 2;
                 let (r2, r1) = r.split_at(m);
-                let (eq_one, eq_two) =
-                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+                let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
 
                 poly.split_eq_evaluate(r.len(), &eq_one, &eq_two)
             }
             MultilinearPolynomial::U8Scalars(poly) => {
                 let m = r.len() / 2;
                 let (r2, r1) = r.split_at(m);
-                let (eq_one, eq_two) =
-                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+                let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
 
                 poly.split_eq_evaluate(r.len(), &eq_one, &eq_two)
             }
             MultilinearPolynomial::U16Scalars(poly) => {
                 let m = r.len() / 2;
                 let (r2, r1) = r.split_at(m);
-                let (eq_one, eq_two) =
-                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+                let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
 
                 poly.split_eq_evaluate(r.len(), &eq_one, &eq_two)
             }
             MultilinearPolynomial::U32Scalars(poly) => {
                 let m = r.len() / 2;
                 let (r2, r1) = r.split_at(m);
-                let (eq_one, eq_two) =
-                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+                let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
 
                 poly.split_eq_evaluate(r.len(), &eq_one, &eq_two)
             }
             MultilinearPolynomial::U64Scalars(poly) => {
                 let m = r.len() / 2;
                 let (r2, r1) = r.split_at(m);
-                let (eq_one, eq_two) =
-                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+                let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
 
                 poly.split_eq_evaluate(r.len(), &eq_one, &eq_two)
             }
             MultilinearPolynomial::I64Scalars(poly) => {
                 let m = r.len() / 2;
                 let (r2, r1) = r.split_at(m);
-                let (eq_one, eq_two) =
-                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+                let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
 
                 poly.split_eq_evaluate(r.len(), &eq_one, &eq_two)
             }
             MultilinearPolynomial::I128Scalars(poly) => {
                 let m = r.len() / 2;
                 let (r2, r1) = r.split_at(m);
-                let (eq_one, eq_two) =
-                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+                let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
 
                 poly.split_eq_evaluate(r.len(), &eq_one, &eq_two)
             }
             MultilinearPolynomial::U128Scalars(poly) => {
                 let m = r.len() / 2;
                 let (r2, r1) = r.split_at(m);
-                let (eq_one, eq_two) =
-                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+                let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
 
                 poly.split_eq_evaluate(r.len(), &eq_one, &eq_two)
             }
             MultilinearPolynomial::S128Scalars(poly) => {
                 let m = r.len() / 2;
                 let (r2, r1) = r.split_at(m);
-                let (eq_one, eq_two) =
-                    rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
+                let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
 
                 poly.split_eq_evaluate(r.len(), &eq_one, &eq_two)
             }
@@ -745,11 +706,7 @@ mod tests {
             1..=8 => MultilinearPolynomial::from(
                 (0..len)
                     .map(|_| {
-                        let mask = if max_num_bits == 8 {
-                            u8::MAX
-                        } else {
-                            (1u8 << max_num_bits) - 1
-                        };
+                        let mask = if max_num_bits == 8 { u8::MAX } else { (1u8 << max_num_bits) - 1 };
                         (rng.next_u32() & (mask as u32)) as u8
                     })
                     .collect::<Vec<_>>(),
@@ -757,11 +714,7 @@ mod tests {
             9..=16 => MultilinearPolynomial::from(
                 (0..len)
                     .map(|_| {
-                        let mask = if max_num_bits == 16 {
-                            u16::MAX
-                        } else {
-                            (1u16 << max_num_bits) - 1
-                        };
+                        let mask = if max_num_bits == 16 { u16::MAX } else { (1u16 << max_num_bits) - 1 };
                         (rng.next_u32() & (mask as u32)) as u16
                     })
                     .collect::<Vec<_>>(),
@@ -769,11 +722,7 @@ mod tests {
             17..=32 => MultilinearPolynomial::from(
                 (0..len)
                     .map(|_| {
-                        let mask = if max_num_bits == 32 {
-                            u32::MAX
-                        } else {
-                            (1u32 << max_num_bits) - 1
-                        };
+                        let mask = if max_num_bits == 32 { u32::MAX } else { (1u32 << max_num_bits) - 1 };
                         (rng.next_u64() & (mask as u64)) as u32
                     })
                     .collect::<Vec<_>>(),
@@ -781,31 +730,18 @@ mod tests {
             33..=64 => MultilinearPolynomial::from(
                 (0..len)
                     .map(|_| {
-                        let mask = if max_num_bits == 64 {
-                            u64::MAX
-                        } else {
-                            (1u64 << max_num_bits) - 1
-                        };
+                        let mask = if max_num_bits == 64 { u64::MAX } else { (1u64 << max_num_bits) - 1 };
                         rng.next_u64() & mask
                     })
                     .collect::<Vec<_>>(),
             ),
-            _ => MultilinearPolynomial::from(
-                (0..len).map(|_| Fr::random(&mut rng)).collect::<Vec<_>>(),
-            ),
+            _ => MultilinearPolynomial::from((0..len).map(|_| Fr::random(&mut rng)).collect::<Vec<_>>()),
         }
     }
 
     #[test]
     fn test_poly_to_field_elements() {
-        let max_num_bits = [
-            vec![8; 100],
-            vec![16; 100],
-            vec![32; 100],
-            vec![64; 100],
-            vec![256; 300],
-        ]
-        .concat();
+        let max_num_bits = [vec![8; 100], vec![16; 100], vec![32; 100], vec![64; 100], vec![256; 300]].concat();
 
         for &max_num_bits in max_num_bits.iter() {
             let len = 1 << 2;

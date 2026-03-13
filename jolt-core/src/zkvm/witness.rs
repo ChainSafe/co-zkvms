@@ -71,14 +71,9 @@ impl AllCommittedPolynomials {
         unsafe {
             if let Some(existing) = ALL_COMMITTED_POLYNOMIALS.get() {
                 // Check if existing polynomials match requested dimensions
-                let existing_ram_d = existing
-                    .iter()
-                    .filter(|p| matches!(p, CommittedPolynomial::RamRa(_)))
-                    .count();
-                let existing_bytecode_d = existing
-                    .iter()
-                    .filter(|p| matches!(p, CommittedPolynomial::BytecodeRa(_)))
-                    .count();
+                let existing_ram_d = existing.iter().filter(|p| matches!(p, CommittedPolynomial::RamRa(_))).count();
+                let existing_bytecode_d =
+                    existing.iter().filter(|p| matches!(p, CommittedPolynomial::BytecodeRa(_))).count();
 
                 if existing_ram_d == ram_d && existing_bytecode_d == bytecode_d {
                     // Parameters match, reuse existing polynomials
@@ -123,50 +118,29 @@ impl AllCommittedPolynomials {
         }
 
         unsafe {
-            ALL_COMMITTED_POLYNOMIALS
-                .set(polynomials)
-                .expect("ALL_COMMITTED_POLYNOMIALS is already initialized");
+            ALL_COMMITTED_POLYNOMIALS.set(polynomials).expect("ALL_COMMITTED_POLYNOMIALS is already initialized");
         }
 
         AllCommittedPolynomials()
     }
 
     pub fn iter() -> impl Iterator<Item = &'static CommittedPolynomial> {
-        unsafe {
-            ALL_COMMITTED_POLYNOMIALS
-                .get()
-                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")
-                .iter()
-        }
+        unsafe { ALL_COMMITTED_POLYNOMIALS.get().expect("ALL_COMMITTED_POLYNOMIALS is uninitialized").iter() }
     }
 
     pub fn par_iter() -> impl ParallelIterator<Item = &'static CommittedPolynomial> {
-        unsafe {
-            ALL_COMMITTED_POLYNOMIALS
-                .get()
-                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")
-                .par_iter()
-        }
+        unsafe { ALL_COMMITTED_POLYNOMIALS.get().expect("ALL_COMMITTED_POLYNOMIALS is uninitialized").par_iter() }
     }
 }
 
 impl CommittedPolynomial {
     pub fn len() -> usize {
-        unsafe {
-            ALL_COMMITTED_POLYNOMIALS
-                .get()
-                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")
-                .len()
-        }
+        unsafe { ALL_COMMITTED_POLYNOMIALS.get().expect("ALL_COMMITTED_POLYNOMIALS is uninitialized").len() }
     }
 
     // TODO(moodlezoup): return Result<Self>
     pub fn from_index(index: usize) -> Self {
-        unsafe {
-            ALL_COMMITTED_POLYNOMIALS
-                .get()
-                .expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")[index]
-        }
+        unsafe { ALL_COMMITTED_POLYNOMIALS.get().expect("ALL_COMMITTED_POLYNOMIALS is uninitialized")[index] }
     }
 
     // TODO(moodlezoup): return Result<usize>
@@ -260,9 +234,7 @@ pub static ALL_VIRTUAL_POLYNOMIALS: LazyLock<Vec<VirtualPolynomial>> = LazyLock:
         polynomials.push(VirtualPolynomial::OpFlags(flag));
     }
     for table in LookupTables::iter() {
-        polynomials.push(VirtualPolynomial::LookupTableFlag(
-            LookupTables::<XLEN>::enum_index(&table),
-        ));
+        polynomials.push(VirtualPolynomial::LookupTableFlag(LookupTables::<XLEN>::enum_index(&table)));
     }
 
     polynomials
@@ -274,10 +246,6 @@ impl VirtualPolynomial {
     }
 
     pub fn to_index(&self) -> usize {
-        ALL_VIRTUAL_POLYNOMIALS
-            .iter()
-            .find_position(|poly| *poly == self)
-            .unwrap()
-            .0
+        ALL_VIRTUAL_POLYNOMIALS.iter().find_position(|poly| *poly == self).unwrap().0
     }
 }

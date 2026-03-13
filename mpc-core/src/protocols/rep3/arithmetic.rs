@@ -5,8 +5,8 @@
 use core::panic;
 use num_traits::cast::ToPrimitive;
 
-use itertools::{Itertools, izip};
 use crate::field::PrimeField;
+use itertools::{Itertools, izip};
 use num_bigint::BigUint;
 use num_traits::One;
 use num_traits::Zero;
@@ -16,9 +16,9 @@ use crate::protocols::rep3::rngs::Rep3Rand;
 use crate::protocols::rep3::{PartyID, detail, network::Rep3Network};
 use rayon::prelude::*;
 
-use super::{binary, conversion, network::IoContext};
 use super::binary::Rep3BigUintShare;
 pub use super::types::arithmetic::Rep3PrimeFieldShare;
+use super::{binary, conversion, network::IoContext};
 
 use ark_linear_sumcheck::rng::FeedableRNG;
 use eyre::Context;
@@ -59,20 +59,12 @@ pub fn add_assign_public<F: PrimeField>(shared: &mut FieldShare<F>, public: F, i
 }
 
 /// Performs subtraction between a shared value and a public value, returning shared - public.
-pub fn sub_shared_by_public<F: PrimeField>(
-    shared: FieldShare<F>,
-    public: F,
-    id: PartyID,
-) -> FieldShare<F> {
+pub fn sub_shared_by_public<F: PrimeField>(shared: FieldShare<F>, public: F, id: PartyID) -> FieldShare<F> {
     add_public(shared, -public, id)
 }
 
 /// Performs subtraction between a shared value and a public value, returning public - shared.
-pub fn sub_public_by_shared<F: PrimeField>(
-    public: F,
-    shared: FieldShare<F>,
-    id: PartyID,
-) -> FieldShare<F> {
+pub fn sub_public_by_shared<F: PrimeField>(public: F, shared: FieldShare<F>, id: PartyID) -> FieldShare<F> {
     add_public(-shared, public, id)
 }
 
@@ -84,10 +76,7 @@ pub fn mul<F: PrimeField, N: Rep3Network>(
 ) -> IoResult<FieldShare<F>> {
     let local_a = (a * b).into_fe() + io_context.rngs.rand.masking_field_element::<F>();
     let local_b = io_context.network.reshare(local_a)?;
-    Ok(FieldShare {
-        a: local_a,
-        b: local_b,
-    })
+    Ok(FieldShare { a: local_a, b: local_b })
 }
 
 /// Performs a reshare on all shares in the vector.
@@ -102,9 +91,7 @@ pub fn reshare_vec<F: PrimeField, N: Rep3Network>(
             "During execution of reshare_vec: Invalid number of elements received",
         ));
     }
-    Ok(izip!(local_a, local_b)
-        .map(|(a, b)| FieldShare::new(a, b))
-        .collect())
+    Ok(izip!(local_a, local_b).map(|(a, b)| FieldShare::new(a, b)).collect())
 }
 
 /// Performs multiplication of a shared value and a public value.
@@ -134,11 +121,8 @@ pub fn mul_vec_par<F: PrimeField, N: Rep3Network>(
     io_context: &mut IoContext<N>,
 ) -> IoResult<Vec<FieldShare<F>>> {
     debug_assert_eq!(lhs.len(), rhs.len());
-    let rngs = tracing::trace_span!("rngs").in_scope(|| {
-        (0..lhs.len())
-            .map(|_| io_context.rngs.rand.masking_field_element::<F>())
-            .collect_vec()
-    });
+    let rngs = tracing::trace_span!("rngs")
+        .in_scope(|| (0..lhs.len()).map(|_| io_context.rngs.rand.masking_field_element::<F>()).collect_vec());
     let local_a = tracing::trace_span!("cpu mul par").in_scope(|| {
         lhs.par_iter()
             .zip(rhs.par_iter())
@@ -159,10 +143,7 @@ pub fn div<F: PrimeField, N: Rep3Network>(
 }
 
 /// Performs division of a shared value by a public value, returning shared / public.
-pub fn div_shared_by_public<F: PrimeField>(
-    shared: FieldShare<F>,
-    public: F,
-) -> eyre::Result<FieldShare<F>> {
+pub fn div_shared_by_public<F: PrimeField>(shared: FieldShare<F>, public: F) -> eyre::Result<FieldShare<F>> {
     if public.is_zero() {
         eyre::bail!("Cannot invert zero");
     }
@@ -185,10 +166,7 @@ pub fn neg<F: PrimeField>(a: FieldShare<F>) -> FieldShare<F> {
 }
 
 /// Computes the inverse of a shared value.
-pub fn inv<F: PrimeField, N: Rep3Network>(
-    a: FieldShare<F>,
-    io_context: &mut IoContext<N>,
-) -> IoResult<FieldShare<F>> {
+pub fn inv<F: PrimeField, N: Rep3Network>(a: FieldShare<F>, io_context: &mut IoContext<N>) -> IoResult<FieldShare<F>> {
     let r = rand(io_context);
     let y = mul_open(a, r, io_context)?;
     if y.is_zero() {
@@ -197,9 +175,7 @@ pub fn inv<F: PrimeField, N: Rep3Network>(
             "During execution of inverse in MPC: cannot compute inverse of zero",
         ));
     }
-    let y_inv = y
-        .inverse()
-        .expect("we checked if y is zero. Must be possible to invert.");
+    let y_inv = y.inverse().expect("we checked if y is zero. Must be possible to invert.");
     Ok(r * y_inv)
 }
 
@@ -222,10 +198,7 @@ pub fn inv_vec<F: PrimeField, N: Rep3Network>(
 }
 
 /// Performs the opening of a shared value and returns the equivalent public value.
-pub fn open<F: PrimeField, N: Rep3Network>(
-    a: FieldShare<F>,
-    io_context: &mut IoContext<N>,
-) -> IoResult<F> {
+pub fn open<F: PrimeField, N: Rep3Network>(a: FieldShare<F>, io_context: &mut IoContext<N>) -> IoResult<F> {
     let c = io_context.network.reshare(a.b)?;
     Ok(a.a + a.b + c)
 }
@@ -245,9 +218,7 @@ pub fn open_vec<'a, F: PrimeField, N: Rep3Network>(
     io_context: &mut IoContext<N>,
 ) -> IoResult<Vec<F>> {
     let a = a.into_iter();
-    let (a, b) = a
-        .map(|share| (share.a, share.b))
-        .collect::<(Vec<F>, Vec<F>)>();
+    let (a, b) = a.map(|share| (share.a, share.b)).collect::<(Vec<F>, Vec<F>)>();
     let c = io_context.network.reshare_many(&b)?;
     Ok(izip!(a, b, c).map(|(a, b, c)| a + b + c).collect_vec())
 }
@@ -277,9 +248,7 @@ pub fn cmux_vec<F: PrimeField, N: Rep3Network>(
     let result_a = truthy
         .iter()
         .zip(falsy.iter())
-        .map(|(t, f)| {
-            ((*t - *f) * cond).into_fe() + f.a + io_context.rngs.rand.masking_field_element::<F>()
-        })
+        .map(|(t, f)| ((*t - *f) * cond).into_fe() + f.a + io_context.rngs.rand.masking_field_element::<F>())
         .collect_vec();
     reshare_vec(result_a, io_context)
 }
@@ -296,9 +265,7 @@ pub fn cmux_many<F: PrimeField, N: Rep3Network>(
         .iter()
         .zip(falsy.iter())
         .zip(cond.iter())
-        .map(|((t, f), c)| {
-            ((*t - *f) * *c).into_fe() + f.a + io_context.rngs.rand.masking_field_element::<F>()
-        })
+        .map(|((t, f), c)| ((*t - *f) * *c).into_fe() + f.a + io_context.rngs.rand.masking_field_element::<F>())
         .collect_vec();
     reshare_vec(result_a, io_context)
 }
@@ -329,14 +296,8 @@ pub fn promote_to_trivial_share<F: PrimeField>(id: PartyID, public_value: F) -> 
 }
 
 /// Transforms a vector of public values into a vector of shared values: \[a\] = a.
-pub fn promote_to_trivial_shares<F: PrimeField>(
-    public_values: Vec<F>,
-    id: PartyID,
-) -> Vec<FieldShare<F>> {
-    public_values
-        .into_iter()
-        .map(|value| promote_to_trivial_share(id, value))
-        .collect()
+pub fn promote_to_trivial_shares<F: PrimeField>(public_values: Vec<F>, id: PartyID) -> Vec<FieldShare<F>> {
+    public_values.into_iter().map(|value| promote_to_trivial_share(id, value)).collect()
 }
 
 /// This function performs a multiplication directly followed by an opening. This safes one round of communication in some MPC protocols compared to calling `mul` and `open` separately.
@@ -356,9 +317,8 @@ pub fn mul_open_vec<F: PrimeField, N: Rep3Network>(
     b: &[FieldShare<F>],
     io_context: &mut IoContext<N>,
 ) -> IoResult<Vec<F>> {
-    let mut a = izip!(a, b)
-        .map(|(a, b)| (a * b).into_fe() + io_context.rngs.rand.masking_field_element::<F>())
-        .collect_vec();
+    let mut a =
+        izip!(a, b).map(|(a, b)| (a * b).into_fe() + io_context.rngs.rand.masking_field_element::<F>()).collect_vec();
     let (b, c) = io_context.network.broadcast_many(&a)?;
     izip!(a.iter_mut(), b, c).for_each(|(a, b, c)| *a += b + c);
     Ok(a)
@@ -386,9 +346,7 @@ pub fn sqrt<F: PrimeField, N: Rep3Network>(
     let mul = mul_vec(&lhs, &rhs, io_context)?;
 
     // Open mul
-    io_context
-        .network
-        .send_next_many(&mul.iter().map(|s| s.b.to_owned()).collect_vec())?;
+    io_context.network.send_next_many(&mul.iter().map(|s| s.b.to_owned()).collect_vec())?;
     let c = io_context.network.recv_prev_many::<F>()?;
     if c.len() != 2 {
         return Err(std::io::Error::new(
@@ -463,10 +421,7 @@ pub fn lt_many<F: PrimeField, N: Rep3Network>(
 ) -> IoResult<Vec<FieldShare<F>>> {
     // a < b is equivalent to !(a >= b)
     let res = ge_many(lhs, rhs, io_context)?;
-    Ok(res
-        .into_iter()
-        .map(|tmp| sub_public_by_shared(F::one(), tmp, io_context.id))
-        .collect())
+    Ok(res.into_iter().map(|tmp| sub_public_by_shared(F::one(), tmp, io_context.id)).collect())
 }
 
 /// Returns 1 if lhs < rhs and 0 otherwise. Checks if a shared value is less than the public value. The result is a shared value that has value 1 if the shared value is less than the public value and 0 otherwise.
@@ -684,10 +639,7 @@ pub fn eq_bit_public_many<F: PrimeField, N: Rep3Network>(
             ),
         ));
     }
-    let public = public
-        .iter()
-        .map(|&p| promote_to_trivial_share(io_context.id, p))
-        .collect::<Vec<_>>();
+    let public = public.iter().map(|&p| promote_to_trivial_share(io_context.id, p)).collect::<Vec<_>>();
     eq_bit_many(shared, &public, io_context)
 }
 
@@ -749,10 +701,7 @@ pub fn neq_public<F: PrimeField, N: Rep3Network>(
 }
 
 /// Outputs whether a shared value is zero (true) or not (false).
-pub fn is_zero<F: PrimeField, N: Rep3Network>(
-    a: FieldShare<F>,
-    io_context: &mut IoContext<N>,
-) -> IoResult<bool> {
+pub fn is_zero<F: PrimeField, N: Rep3Network>(a: FieldShare<F>, io_context: &mut IoContext<N>) -> IoResult<bool> {
     let zero_share = FieldShare::default();
     let res = eq_bit(zero_share, a, io_context)?;
     let x = open_bit(res, io_context)?;
@@ -770,11 +719,7 @@ pub fn pow_2_public<F: PrimeField>(shared: FieldShare<F>, public: F) -> FieldSha
         let shift: BigUint = public.into_biguint();
         let shift = shift.to_u32().expect("can cast shift operand to u32");
         if shift >= F::MODULUS_BIT_SIZE {
-            panic!(
-                "Expected left shift to be maximal {}, but was {}",
-                F::MODULUS_BIT_SIZE,
-                shift
-            );
+            panic!("Expected left shift to be maximal {}, but was {}", F::MODULUS_BIT_SIZE, shift);
         } else {
             mul_public(shared, F::from_u64(2u64).pow(public.into_bigint()))
         }
@@ -815,11 +760,7 @@ pub(crate) fn arithmetic_xor_many<F: PrimeField, N: Rep3Network>(
 
     let _guard = tracing::trace_span!("reshare_many").entered();
     let b = io_context.network.reshare_many(&a)?;
-    let res = a
-        .into_iter()
-        .zip(b)
-        .map(|(a, b)| FieldShare { a, b })
-        .collect();
+    let res = a.into_iter().zip(b).map(|(a, b)| FieldShare { a, b }).collect();
     drop(_guard);
     Ok(res)
 }
@@ -835,43 +776,31 @@ pub(crate) fn arithmetic_xor_many_par<F: PrimeField, N: Rep3Network>(
     let mut a = vec![F::zero(); x.len()];
     let random_seeds = io_context.rngs.rand.random_seeds();
 
-    x.par_iter()
-        .zip(y.par_iter())
-        .zip_eq(a.par_iter_mut())
-        .enumerate()
-        .for_each_init(
-            || random_seeds,
-            |(seed1, seed2), (i, ((x, y), a))| {
-                seed1[1] = seed1[1].wrapping_add(i as u8);
-                seed1[1] = seed1[1].wrapping_add(i as u8);
-                let mut rng = Rep3Rand::new(*seed1, *seed2);
-                let mut d = (x * y).into_fe() + rng.masking_field_element::<F>();
-                d.double_in_place();
-                let e = x.a + y.a;
-                let res_a = e - d;
-                *a = res_a;
-                // (*seed1, *seed2) = rng.random_seeds()
-            },
-        );
+    x.par_iter().zip(y.par_iter()).zip_eq(a.par_iter_mut()).enumerate().for_each_init(
+        || random_seeds,
+        |(seed1, seed2), (i, ((x, y), a))| {
+            seed1[1] = seed1[1].wrapping_add(i as u8);
+            seed1[1] = seed1[1].wrapping_add(i as u8);
+            let mut rng = Rep3Rand::new(*seed1, *seed2);
+            let mut d = (x * y).into_fe() + rng.masking_field_element::<F>();
+            d.double_in_place();
+            let e = x.a + y.a;
+            let res_a = e - d;
+            *a = res_a;
+            // (*seed1, *seed2) = rng.random_seeds()
+        },
+    );
 
     let _guard = tracing::trace_span!("reshare_many").entered();
     let b = io_context.network.reshare_many(&a)?;
-    let res = a
-        .into_par_iter()
-        .zip(b)
-        .map(|(a, b)| FieldShare { a, b })
-        .collect();
+    let res = a.into_par_iter().zip(b).map(|(a, b)| FieldShare { a, b }).collect();
     drop(_guard);
     Ok(res)
 }
 
-pub fn get_mask_scalar_rep3<F: PrimeField, R: RngCore + FeedableRNG>(
-    rng: &mut SSRandom<R>,
-) -> (F, F) {
-    let mask_share = (
-        F::rand(&mut rng.rng_1) - F::rand(&mut rng.rng_0),
-        F::rand(&mut rng.rng_1) - F::rand(&mut rng.rng_0),
-    );
+pub fn get_mask_scalar_rep3<F: PrimeField, R: RngCore + FeedableRNG>(rng: &mut SSRandom<R>) -> (F, F) {
+    let mask_share =
+        (F::rand(&mut rng.rng_1) - F::rand(&mut rng.rng_0), F::rand(&mut rng.rng_1) - F::rand(&mut rng.rng_0));
     rng.update();
     mask_share
 }
@@ -881,11 +810,7 @@ pub fn product<F: PrimeField, N: Rep3Network>(
     shares: &[Rep3PrimeFieldShare<F>],
     io_ctx: &mut IoContext<N>,
 ) -> eyre::Result<Rep3PrimeFieldShare<F>> {
-    shares
-        .iter()
-        .skip(1)
-        .try_fold(shares[0], |acc, x| mul(acc, *x, io_ctx))
-        .context("while computing product")
+    shares.iter().skip(1).try_fold(shares[0], |acc, x| mul(acc, *x, io_ctx)).context("while computing product")
 }
 
 pub fn product_into_additive<F: PrimeField + FieldExt, N: Rep3Network>(
@@ -905,9 +830,7 @@ pub fn product_into_additive<F: PrimeField + FieldExt, N: Rep3Network>(
         .iter()
         .skip(1)
         .take(num_multiplications - 2)
-        .try_fold(shares[0] * public_extra.unwrap_or(F::one()), |acc, x| {
-            mul(acc, *x, io_ctx)
-        })
+        .try_fold(shares[0] * public_extra.unwrap_or(F::one()), |acc, x| mul(acc, *x, io_ctx))
         .context("while computing product")?;
 
     Ok(product_except_last * *shares.last().unwrap())
@@ -924,12 +847,9 @@ where
     let first_share = shares.next().unwrap();
     let first_share_ref = first_share.as_ref();
     shares
-        .try_fold(
-            (0..first_share_ref.len())
-                .map(|i| first_share_ref[i])
-                .collect_vec(),
-            |acc, x| mul_vec(&acc, x.as_ref(), io_ctx),
-        )
+        .try_fold((0..first_share_ref.len()).map(|i| first_share_ref[i]).collect_vec(), |acc, x| {
+            mul_vec(&acc, x.as_ref(), io_ctx)
+        })
         .context("while computing product")
 }
 
@@ -940,28 +860,18 @@ pub fn product_many_into_additive<F: PrimeField + FieldExt, N: Rep3Network>(
 ) -> eyre::Result<Vec<AdditiveShare<F>>> {
     let num_multiplications = shares[0].len();
     if num_multiplications == 1 {
-        return Ok(shares
-            .iter()
-            .map(|x| (x[0] * public_extra.unwrap_or(F::one())).into_additive())
-            .collect());
+        return Ok(shares.iter().map(|x| (x[0] * public_extra.unwrap_or(F::one())).into_additive()).collect());
     } else if num_multiplications == 2 {
-        return Ok(shares
-            .iter()
-            .map(|x| x[0] * (x[1] * public_extra.unwrap_or(F::one())))
-            .collect());
+        return Ok(shares.iter().map(|x| x[0] * (x[1] * public_extra.unwrap_or(F::one()))).collect());
     }
 
     let products_except_last = shares
         .iter()
         .skip(1)
         .take(num_multiplications - 2)
-        .try_fold(
-            shares
-                .iter()
-                .map(|x| x[0] * public_extra.unwrap_or(F::one()))
-                .collect_vec(),
-            |acc, x| mul_vec(&acc, *x, io_ctx),
-        )
+        .try_fold(shares.iter().map(|x| x[0] * public_extra.unwrap_or(F::one())).collect_vec(), |acc, x| {
+            mul_vec(&acc, *x, io_ctx)
+        })
         .context("while computing product")?;
     Ok(products_except_last
         .into_iter()
@@ -1007,25 +917,15 @@ pub fn mul_public_0_1_optimized<F: PrimeField>(shared: FieldShare<F>, public: F)
     }
 }
 
-pub fn sum_batched<F: PrimeField>(
-    vals: &[Vec<Rep3PrimeFieldShare<F>>],
-) -> Vec<Rep3PrimeFieldShare<F>> {
+pub fn sum_batched<F: PrimeField>(vals: &[Vec<Rep3PrimeFieldShare<F>>]) -> Vec<Rep3PrimeFieldShare<F>> {
     let bathes_len = vals[0].len();
-    (0..bathes_len)
-        .map(|i| {
-            vals.iter()
-                .map(|val| val[i])
-                .sum::<Rep3PrimeFieldShare<F>>()
-        })
-        .collect()
+    (0..bathes_len).map(|i| vals.iter().map(|val| val[i]).sum::<Rep3PrimeFieldShare<F>>()).collect()
 }
 
 /// Reconstructs a vector of field elements from its arithmetic replicated shares.
 /// # Panics
 /// Panics if the provided `Vec` sizes do not match.
-pub fn combine_field_elements_vec<F: PrimeField>(
-    shares: Vec<Vec<Rep3PrimeFieldShare<F>>>,
-) -> Vec<F> {
+pub fn combine_field_elements_vec<F: PrimeField>(shares: Vec<Vec<Rep3PrimeFieldShare<F>>>) -> Vec<F> {
     let [s0, s1, s2]: [Vec<_>; 3] = shares.try_into().unwrap();
     crate::protocols::rep3::combine_field_elements(&s0, &s1, &s2)
 }
@@ -1049,8 +949,5 @@ pub fn neq_many<F: PrimeField, N: Rep3Network>(
     b: &[FieldShare<F>],
     io_context: &mut IoContext<N>,
 ) -> eyre::Result<Vec<FieldShare<F>>> {
-    Ok(eq_many(a, b, io_context)?
-        .into_iter()
-        .map(|x| sub_public_by_shared(F::one(), x, io_context.id))
-        .collect())
+    Ok(eq_many(a, b, io_context)?.into_iter().map(|x| sub_public_by_shared(F::one(), x, io_context.id)).collect())
 }

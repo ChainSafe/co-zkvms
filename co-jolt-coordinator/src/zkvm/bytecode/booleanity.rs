@@ -21,11 +21,7 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for BooleanitySum
         self.input_claim()
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &Rep3OpeningAccumulator<F>,
-        r: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &Rep3OpeningAccumulator<F>, r: &[F::Challenge]) -> F {
         let d = self.d();
 
         let ra_claims: Vec<F> = (0..d)
@@ -39,13 +35,8 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for BooleanitySum
             })
             .collect();
 
-        let r_cycle = accumulator
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::LookupOutput,
-                SumcheckId::SpartanOuter,
-            )
-            .0
-            .r;
+        let r_cycle =
+            accumulator.get_virtual_polynomial_opening(VirtualPolynomial::LookupOutput, SumcheckId::SpartanOuter).0.r;
 
         // Mirrors vanilla BooleanitySumcheck::expected_output_claim.
         // normalize_opening_point reverses address and cycle parts separately,
@@ -53,27 +44,14 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for BooleanitySum
         // We reconstruct the LowToHigh point used during binding:
         //   r_address was bound LowToHigh → reversed = r_address in big-endian
         //   r_cycle was bound LowToHigh → reversed = r_cycle in big-endian
-        let expected_r: Vec<F::Challenge> = self
-            .r_address()
-            .iter()
-            .cloned()
-            .rev()
-            .chain(r_cycle.iter().cloned().rev())
-            .collect();
+        let expected_r: Vec<F::Challenge> =
+            self.r_address().iter().cloned().rev().chain(r_cycle.iter().cloned().rev()).collect();
 
         EqPolynomial::<F>::mle(r, &expected_r)
-            * self
-                .gamma_powers()
-                .iter()
-                .zip(ra_claims.iter())
-                .map(|(gamma, &ra)| (ra.square() - ra) * gamma)
-                .sum::<F>()
+            * self.gamma_powers().iter().zip(ra_claims.iter()).map(|(gamma, &ra)| (ra.square() - ra) * gamma).sum::<F>()
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         self.normalize_opening_point(opening_point)
     }
 

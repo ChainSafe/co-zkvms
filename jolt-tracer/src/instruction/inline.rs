@@ -24,8 +24,7 @@ use std::collections::HashMap;
 use std::sync::RwLock;
 
 // Type alias for the inline_sequence functions signature
-pub type InlineSequenceFunction =
-    Box<dyn Fn(InstrAssembler, FormatInline) -> Vec<Instruction> + Send + Sync>;
+pub type InlineSequenceFunction = Box<dyn Fn(InstrAssembler, FormatInline) -> Vec<Instruction> + Send + Sync>;
 
 // Key type for the registry: (opcode, funct3, funct7)
 type InlineKey = (u32, u32, u32);
@@ -68,18 +67,13 @@ pub fn register_inline(
         return Err(format!("funct7 value {funct7} exceeds maximum of 127"));
     }
 
-    let mut registry = INLINE_REGISTRY
-        .write()
-        .map_err(|_| "Failed to acquire write lock on inline registry")?;
+    let mut registry = INLINE_REGISTRY.write().map_err(|_| "Failed to acquire write lock on inline registry")?;
 
     let key = (opcode, funct3, funct7);
     if registry.contains_key(&key) {
         return Err(format!(
             "Inline '{}' with opcode={opcode:#x}, funct3={funct3}, funct7={funct7} is already registered",
-            registry
-                .get(&key)
-                .map(|(name, _)| name.as_str())
-                .unwrap_or("unknown")
+            registry.get(&key).map(|(name, _)| name.as_str()).unwrap_or("unknown")
         ));
     }
 
@@ -96,10 +90,7 @@ pub fn register_inline(
 /// - Inline name
 pub fn list_registered_inlines() -> Vec<((u32, u32, u32), String)> {
     match INLINE_REGISTRY.read() {
-        Ok(registry) => registry
-            .iter()
-            .map(|(&key, (name, _))| (key, name.clone()))
-            .collect(),
+        Ok(registry) => registry.iter().map(|(&key, (name, _))| (key, name.clone())).collect(),
         Err(_) => {
             eprintln!("Warning: Failed to acquire read lock on inline registry");
             Vec::new()
@@ -195,23 +186,14 @@ impl RISCVTrace for INLINE {
         }
     }
 
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let key = (self.opcode, self.funct3, self.funct7);
 
         match INLINE_REGISTRY.read() {
             Ok(registry) => {
                 match registry.get(&key) {
                     Some((_name, virtual_seq_fn)) => {
-                        let asm = InstrAssembler::new_inline(
-                            self.address,
-                            self.is_compressed,
-                            xlen,
-                            allocator,
-                        );
+                        let asm = InstrAssembler::new_inline(self.address, self.is_compressed, xlen, allocator);
                         // Generate the virtual instruction sequence
                         virtual_seq_fn(asm, self.operands)
                     }
@@ -277,9 +259,7 @@ mod tests {
             Box::new(|_, _| vec![]),
         );
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("funct3 value 8 exceeds maximum"));
+        assert!(result.unwrap_err().contains("funct3 value 8 exceeds maximum"));
 
         // Test funct7 validation
         let result = register_inline(
@@ -290,9 +270,7 @@ mod tests {
             Box::new(|_, _| vec![]),
         );
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("funct7 value 128 exceeds maximum"));
+        assert!(result.unwrap_err().contains("funct7 value 128 exceeds maximum"));
     }
 
     #[test]

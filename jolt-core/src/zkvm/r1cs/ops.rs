@@ -33,10 +33,7 @@ impl Term {
 
     /// Create a new term with given input index and i128 coefficient.
     pub const fn new_i128(input_index: usize, coeff: i128) -> Self {
-        Self {
-            input_index,
-            coeff: I8OrI96::from_i128(coeff),
-        }
+        Self { input_index, coeff: I8OrI96::from_i128(coeff) }
     }
 
     /// Format term for pretty printing (test only).
@@ -51,12 +48,7 @@ impl Term {
         } else if coeff_i128 == -1 {
             write!(f, "-{:?}", JoltR1CSInputs::from_index(self.input_index))
         } else {
-            write!(
-                f,
-                "{}⋅{:?}",
-                coeff_i128,
-                JoltR1CSInputs::from_index(self.input_index)
-            )
+            write!(f, "{}⋅{:?}", coeff_i128, JoltR1CSInputs::from_index(self.input_index))
         }
     }
 }
@@ -259,10 +251,7 @@ impl LC {
 
     /// Break a LC into (terms, len, const)
     const fn decompose(lc: LC) -> ([Term; 5], usize, I8OrI96) {
-        let mut terms = [Term {
-            input_index: 0,
-            coeff: I8OrI96::zero(),
-        }; 5];
+        let mut terms = [Term { input_index: 0, coeff: I8OrI96::zero() }; 5];
         let mut len = 0usize;
         let mut c = I8OrI96::zero();
         match lc {
@@ -386,10 +375,9 @@ impl LC {
                 Term::new(t4.input_index, t4.coeff.mul(multiplier)),
                 Term::new(t5.input_index, t5.coeff.mul(multiplier)),
             ]),
-            LC::Terms1Const([t1], c) => LC::Terms1Const(
-                [Term::new(t1.input_index, t1.coeff.mul(multiplier))],
-                c.mul(multiplier),
-            ),
+            LC::Terms1Const([t1], c) => {
+                LC::Terms1Const([Term::new(t1.input_index, t1.coeff.mul(multiplier))], c.mul(multiplier))
+            }
             LC::Terms2Const([t1, t2], c) => LC::Terms2Const(
                 [
                     Term::new(t1.input_index, t1.coeff.mul(multiplier)),
@@ -434,19 +422,13 @@ impl LC {
 
     /// Evaluate this linear combination at a specific row in the witness polynomials
     #[inline]
-    pub fn evaluate_row<F: JoltField>(
-        &self,
-        flattened_polynomials: &[MultilinearPolynomial<F>],
-        row: usize,
-    ) -> F {
+    pub fn evaluate_row<F: JoltField>(&self, flattened_polynomials: &[MultilinearPolynomial<F>], row: usize) -> F {
         let mut result = F::zero();
 
         // Add variable terms
         for i in 0..self.num_terms() {
             if let Some(term) = self.term(i) {
-                let value = term
-                    .coeff
-                    .field_mul(flattened_polynomials[term.input_index].get_coeff(row));
+                let value = term.coeff.field_mul(flattened_polynomials[term.input_index].get_coeff(row));
                 result += value;
             }
         }
@@ -468,8 +450,7 @@ impl LC {
             LC::Const(c) => c.field_mul(eq_ry[const_col]),
             LC::Terms1([t1]) => t1.coeff.field_mul(eq_ry[t1.input_index]),
             LC::Terms2([t1, t2]) => {
-                t1.coeff.field_mul(eq_ry[t1.input_index])
-                    + t2.coeff.field_mul(eq_ry[t2.input_index])
+                t1.coeff.field_mul(eq_ry[t1.input_index]) + t2.coeff.field_mul(eq_ry[t2.input_index])
             }
             LC::Terms3([t1, t2, t3]) => {
                 t1.coeff.field_mul(eq_ry[t1.input_index])
@@ -489,9 +470,7 @@ impl LC {
                     + t4.coeff.field_mul(eq_ry[t4.input_index])
                     + t5.coeff.field_mul(eq_ry[t5.input_index])
             }
-            LC::Terms1Const([t1], c) => {
-                t1.coeff.field_mul(eq_ry[t1.input_index]) + c.field_mul(eq_ry[const_col])
-            }
+            LC::Terms1Const([t1], c) => t1.coeff.field_mul(eq_ry[t1.input_index]) + c.field_mul(eq_ry[const_col]),
             LC::Terms2Const([t1, t2], c) => {
                 t1.coeff.field_mul(eq_ry[t1.input_index])
                     + t2.coeff.field_mul(eq_ry[t2.input_index])
@@ -570,12 +549,7 @@ impl LC {
     /// Accumulate evaluations of this LC into the evals vector
     /// Used for efficiently computing matrix-vector products
     #[inline]
-    pub fn accumulate_evaluations<F: JoltField>(
-        &self,
-        evals: &mut [F],
-        wr_scale: F,
-        num_vars: usize,
-    ) {
+    pub fn accumulate_evaluations<F: JoltField>(&self, evals: &mut [F], wr_scale: F, num_vars: usize) {
         self.for_each_term(|input_index, coeff| {
             evals[input_index] += coeff.field_mul(wr_scale);
         });
@@ -646,10 +620,8 @@ impl LC {
                             if term.coeff.to_i128() < 0 {
                                 write!(f, " - ")?;
                                 // Create a term with positive coefficient for display
-                                let display_term = Term::new(
-                                    term.input_index,
-                                    I8OrI96::from_i128(-term.coeff.to_i128()),
-                                );
+                                let display_term =
+                                    Term::new(term.input_index, I8OrI96::from_i128(-term.coeff.to_i128()));
                                 display_term.pretty_fmt(f)?;
                             } else {
                                 write!(f, " + ")?;

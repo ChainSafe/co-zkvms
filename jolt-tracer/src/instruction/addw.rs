@@ -22,9 +22,8 @@ declare_riscv_instr!(
 
 impl ADDW {
     fn exec(&self, cpu: &mut Cpu, _: &mut <ADDW as RISCVInstruction>::RAMAccess) {
-        cpu.x[self.operands.rd as usize] = cpu.x[self.operands.rs1 as usize]
-            .wrapping_add(cpu.x[self.operands.rs2 as usize])
-            as i32 as i64;
+        cpu.x[self.operands.rd as usize] =
+            cpu.x[self.operands.rs1 as usize].wrapping_add(cpu.x[self.operands.rs2 as usize]) as i32 as i64;
     }
 }
 
@@ -37,11 +36,7 @@ impl RISCVTrace for ADDW {
         }
     }
 
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
         asm.emit_r::<ADD>(self.operands.rd, self.operands.rs1, self.operands.rs2);
         asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, self.operands.rd, 0);

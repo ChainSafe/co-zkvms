@@ -37,9 +37,7 @@ impl AMOADDD {
 
         // Add the values and store back to memory
         let new_value = original_value.wrapping_add(add_value) as u64;
-        cpu.mmu
-            .store_doubleword(address, new_value)
-            .expect("MMU store error");
+        cpu.mmu.store_doubleword(address, new_value).expect("MMU store error");
 
         // Return the original value
         cpu.x[self.operands.rd as usize] = original_value;
@@ -56,11 +54,7 @@ impl RISCVTrace for AMOADDD {
     }
 
     /// AMOADD.D atomically adds rs2 to a memory location and returns the original value.
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let v_rs2 = allocator.allocate();
         let v_rd = allocator.allocate();
 

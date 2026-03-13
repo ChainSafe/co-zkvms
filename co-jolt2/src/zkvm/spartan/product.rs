@@ -73,7 +73,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         Rep3Value::Public(self.input_claim)
     }
 
-    #[tracing::instrument(skip_all, name = "ProductVirtSumcheck::compute_message")]
+    #[tracing::instrument(skip_all, level = "trace", name = "ProductVirtSumcheck::compute_message")]
     fn compute_prover_message_share(
         &mut self,
         _round: usize,
@@ -153,7 +153,7 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N>
         extend_degree_3_evals(previous_claim, &base, max_degree)
     }
 
-    #[tracing::instrument(skip_all, name = "ProductVirtSumcheck::bind")]
+    #[tracing::instrument(skip_all, level = "trace", name = "ProductVirtSumcheck::bind")]
     fn bind(
         &mut self,
         r_j: F::Challenge,

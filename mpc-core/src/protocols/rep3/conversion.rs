@@ -8,15 +8,13 @@ use super::{
     PartyID, Rep3BigUintShare, Rep3PrimeFieldShare, arithmetic, detail,
     network::{IoContext, Rep3Network},
 };
-use itertools::{Itertools as _, izip};
 use crate::field::PrimeField;
+use itertools::{Itertools as _, izip};
 use num_bigint::BigUint;
 use serde::{Deserialize, Serialize};
 
 /// Selects between online and preprocessed MPC execution modes.
-#[derive(
-    Debug, Clone, Copy, Default, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord, Hash,
-)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Eq, PartialEq, PartialOrd, Ord, Hash)]
 pub enum MPCType {
     /// Online MPC execution (no preprocessing required).
     #[default]
@@ -33,10 +31,7 @@ pub fn a2b<F: PrimeField, N: Rep3Network>(
     let mut x01 = Rep3BigUintShare::zero_share();
     let mut x2 = Rep3BigUintShare::zero_share();
 
-    let (mut r, r2) = io_context
-        .rngs
-        .rand
-        .random_biguint(F::MODULUS_BIT_SIZE as usize);
+    let (mut r, r2) = io_context.rngs.rand.random_biguint(F::MODULUS_BIT_SIZE as usize);
     r ^= r2;
 
     match io_context.id {
@@ -72,10 +67,7 @@ pub fn a2b_many<F: PrimeField, N: Rep3Network>(
 
     let mut r_vec = Vec::with_capacity(x.len());
     for _ in 0..x.len() {
-        let (mut r, r2) = io_context
-            .rngs
-            .rand
-            .random_biguint(F::MODULUS_BIT_SIZE as usize);
+        let (mut r, r2) = io_context.rngs.rand.random_biguint(F::MODULUS_BIT_SIZE as usize);
         r ^= &r2;
         r_vec.push(r);
     }
@@ -104,16 +96,9 @@ pub fn a2b_many<F: PrimeField, N: Rep3Network>(
 
     // reshare x01
     let x01_b = io_context.network.reshare_many(&x01_a)?;
-    let x01 = izip!(x01_a, x01_b)
-        .map(|(a, b)| BinaryShare::new(a, b))
-        .collect_vec();
+    let x01 = izip!(x01_a, x01_b).map(|(a, b)| BinaryShare::new(a, b)).collect_vec();
 
-    detail::low_depth_binary_add_mod_p_many::<F, N>(
-        &x01,
-        &x2,
-        io_context,
-        F::MODULUS_BIT_SIZE as usize,
-    )
+    detail::low_depth_binary_add_mod_p_many::<F, N>(&x01, &x2, io_context, F::MODULUS_BIT_SIZE as usize)
 }
 
 /// Transforms the replicated shared value x from a binary sharing to an arithmetic sharing. I.e., x = x_1 xor x_2 xor x_3 gets transformed into x = x'_1 + x'_2 + x'_3. This implementation currently works only for a binary sharing of a valid field element, i.e., x = x_1 xor x_2 xor x_3 < p.
@@ -127,10 +112,7 @@ pub fn b2a<F: PrimeField, N: Rep3Network>(
     let mut y = Rep3BigUintShare::zero_share();
     let mut res = Rep3PrimeFieldShare::zero_share();
 
-    let (mut r, r2) = io_context
-        .rngs
-        .rand
-        .random_biguint(F::MODULUS_BIT_SIZE as usize);
+    let (mut r, r2) = io_context.rngs.rand.random_biguint(F::MODULUS_BIT_SIZE as usize);
     r ^= r2;
 
     match io_context.id {
@@ -164,12 +146,7 @@ pub fn b2a<F: PrimeField, N: Rep3Network>(
     let local_b = io_context.network.recv_prev()?;
     y.b = local_b;
 
-    let z = detail::low_depth_binary_add_mod_p::<F, N>(
-        x,
-        &y,
-        io_context,
-        F::MODULUS_BIT_SIZE as usize,
-    )?;
+    let z = detail::low_depth_binary_add_mod_p::<F, N>(x, &y, io_context, F::MODULUS_BIT_SIZE as usize)?;
 
     match io_context.id {
         PartyID::ID0 => {
@@ -202,10 +179,7 @@ pub fn b2a_many<'a, F: PrimeField, N: Rep3Network>(
 
     let mut r_vec = Vec::with_capacity(x.len());
     for _ in 0..x.len() {
-        let (mut r, r2) = io_context
-            .rngs
-            .rand
-            .random_biguint(F::MODULUS_BIT_SIZE as usize);
+        let (mut r, r2) = io_context.rngs.rand.random_biguint(F::MODULUS_BIT_SIZE as usize);
         r ^= &r2;
         r_vec.push(r);
     }
@@ -245,16 +219,9 @@ pub fn b2a_many<'a, F: PrimeField, N: Rep3Network>(
 
     // reshare y
     let y_b: Vec<_> = io_context.network.reshare_many(&y_a)?;
-    let y: Vec<_> = izip!(y_a, y_b)
-        .map(|(a, b)| BinaryShare::new(a, b))
-        .collect();
+    let y: Vec<_> = izip!(y_a, y_b).map(|(a, b)| BinaryShare::new(a, b)).collect();
 
-    let z = detail::low_depth_binary_add_mod_p_many::<F, N>(
-        x,
-        &y,
-        io_context,
-        F::MODULUS_BIT_SIZE as usize,
-    )?;
+    let z = detail::low_depth_binary_add_mod_p_many::<F, N>(x, &y, io_context, F::MODULUS_BIT_SIZE as usize)?;
 
     match io_context.id {
         PartyID::ID0 => {
@@ -265,18 +232,14 @@ pub fn b2a_many<'a, F: PrimeField, N: Rep3Network>(
             });
         }
         PartyID::ID1 => {
-            let rcv = io_context
-                .network
-                .recv_many::<BigUint>(io_context.id.prev_id())?;
+            let rcv = io_context.network.recv_many::<BigUint>(io_context.id.prev_id())?;
             izip!(res.iter_mut(), rcv, z).for_each(|(res, rcv, z)| {
                 res.b = (z.a ^ z.b ^ rcv).into();
             });
         }
         PartyID::ID2 => {
             let z_b = z.iter().map(|z| z.b.to_owned()).collect_vec();
-            io_context
-                .network
-                .send_many(io_context.id.next_id(), &z_b)?;
+            io_context.network.send_many(io_context.id.next_id(), &z_b)?;
         }
     }
     Ok(res)

@@ -7,9 +7,9 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 
+use crate::field::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use color_eyre::eyre::{Context, Result, eyre};
-use crate::field::PrimeField;
 
 use mpc_net::topology::{MpcStarNetCoordinator, MpcStarNetWorker};
 
@@ -25,9 +25,7 @@ fn to_io_err(msg: impl Into<String>) -> std::io::Error {
 fn serialize_uncompressed<T: CanonicalSerialize>(data: &T) -> Result<Vec<u8>> {
     let size = data.uncompressed_size();
     let mut ser = Vec::with_capacity(size);
-    data.serialize_uncompressed(&mut ser)
-        .map_err(|e| to_io_err(e.to_string()))
-        .context("serialize_uncompressed")?;
+    data.serialize_uncompressed(&mut ser).map_err(|e| to_io_err(e.to_string())).context("serialize_uncompressed")?;
     Ok(ser)
 }
 
@@ -40,8 +38,7 @@ fn deserialize_uncompressed<T: CanonicalDeserialize>(bytes: &[u8]) -> Result<T> 
 fn serialize_slice_uncompressed<T: CanonicalSerialize>(data: &[T]) -> std::io::Result<Vec<u8>> {
     let size = data.serialized_size(ark_serialize::Compress::No);
     let mut ser = Vec::with_capacity(size);
-    data.serialize_uncompressed(&mut ser)
-        .map_err(|e| to_io_err(e.to_string()))?;
+    data.serialize_uncompressed(&mut ser).map_err(|e| to_io_err(e.to_string()))?;
     Ok(ser)
 }
 
@@ -71,18 +68,12 @@ impl LocalRep3TestWorkerNet {
 
     fn ring_send_bytes(&mut self, target: PartyID, bytes: Vec<u8>) -> std::io::Result<()> {
         let idx = Self::party_index(target);
-        self.ring_txs[idx]
-            .send(bytes)
-            .map_err(|_| to_io_err("ring send failed"))
+        self.ring_txs[idx].send(bytes).map_err(|_| to_io_err("ring send failed"))
     }
 
     fn ring_recv_bytes(&mut self, from: PartyID) -> std::io::Result<Vec<u8>> {
         let idx = Self::party_index(from);
-        self.ring_rxs[idx]
-            .lock()
-            .unwrap()
-            .recv()
-            .map_err(|_| to_io_err("ring recv failed"))
+        self.ring_rxs[idx].lock().unwrap().recv().map_err(|_| to_io_err("ring recv failed"))
     }
 }
 
@@ -91,10 +82,7 @@ impl Rep3Network for LocalRep3TestWorkerNet {
         self.id
     }
 
-    fn reshare_many<F: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-        data: &[F],
-    ) -> std::io::Result<Vec<F>> {
+    fn reshare_many<F: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: &[F]) -> std::io::Result<Vec<F>> {
         self.send_many(self.get_id().next_id(), data)?;
         self.recv_many(self.get_id().prev_id())
     }
@@ -110,11 +98,7 @@ impl Rep3Network for LocalRep3TestWorkerNet {
         Ok((recv_prev, recv_next))
     }
 
-    fn send_many<F: CanonicalSerialize>(
-        &mut self,
-        target: PartyID,
-        data: &[F],
-    ) -> std::io::Result<()> {
+    fn send_many<F: CanonicalSerialize>(&mut self, target: PartyID, data: &[F]) -> std::io::Result<()> {
         let bytes = serialize_slice_uncompressed(data)?;
         self.ring_send_bytes(target, bytes)
     }
@@ -130,24 +114,14 @@ impl Rep3Network for LocalRep3TestWorkerNet {
 }
 
 impl MpcStarNetWorker for LocalRep3TestWorkerNet {
-    fn send_response<T: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-        data: T,
-    ) -> Result<()> {
+    fn send_response<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: T) -> Result<()> {
         let bytes = serialize_uncompressed(&data)?;
-        self.star_resp_tx
-            .send(bytes)
-            .map_err(|_| eyre!("star send_response failed"))?;
+        self.star_resp_tx.send(bytes).map_err(|_| eyre!("star send_response failed"))?;
         Ok(())
     }
 
     fn receive_request<T: CanonicalSerialize + CanonicalDeserialize>(&mut self) -> Result<T> {
-        let bytes = self
-            .star_req_rx
-            .lock()
-            .unwrap()
-            .recv()
-            .map_err(|_| eyre!("star receive_request failed"))?;
+        let bytes = self.star_req_rx.lock().unwrap().recv().map_err(|_| eyre!("star receive_request failed"))?;
         deserialize_uncompressed(&bytes)
     }
 
@@ -198,24 +172,14 @@ impl MpcStarNetWorker for LocalRep3TestWorkerNet {
 impl Rep3NetworkWorker for LocalRep3TestWorkerNet {}
 
 impl Rep3RawFieldTransport for LocalRep3TestWorkerNet {
-    fn send_field_slice_raw<F: PrimeField>(
-        &mut self,
-        target: PartyID,
-        data: &[F],
-    ) -> std::io::Result<()> {
+    fn send_field_slice_raw<F: PrimeField>(&mut self, target: PartyID, data: &[F]) -> std::io::Result<()> {
         use crate::preprocessing::backing_store::assert_field_layout;
         const { assert_field_layout::<F>() };
-        let bytes = unsafe {
-            std::slice::from_raw_parts(data.as_ptr() as *const u8, std::mem::size_of_val(data))
-        };
+        let bytes = unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, std::mem::size_of_val(data)) };
         self.ring_send_bytes(target, bytes.to_vec())
     }
 
-    fn recv_field_bytes_raw<F: PrimeField>(
-        &mut self,
-        from: PartyID,
-        elems: usize,
-    ) -> std::io::Result<Vec<u8>> {
+    fn recv_field_bytes_raw<F: PrimeField>(&mut self, from: PartyID, elems: usize) -> std::io::Result<Vec<u8>> {
         use crate::preprocessing::backing_store::assert_field_layout;
         const { assert_field_layout::<F>() };
         let bytes = self.ring_recv_bytes(from)?;
@@ -248,19 +212,13 @@ pub struct LocalRep3TestCoordinatorNet {
 impl LocalRep3TestCoordinatorNet {
     fn recv_from_party<T: CanonicalDeserialize>(&mut self, party: PartyID) -> Result<T> {
         let idx = usize::from(party);
-        let bytes = self.star_resp_rxs[idx]
-            .lock()
-            .unwrap()
-            .recv()
-            .map_err(|_| eyre!("coordinator recv failed"))?;
+        let bytes = self.star_resp_rxs[idx].lock().unwrap().recv().map_err(|_| eyre!("coordinator recv failed"))?;
         deserialize_uncompressed(&bytes)
     }
 }
 
 impl MpcStarNetCoordinator for LocalRep3TestCoordinatorNet {
-    fn receive_responses<T: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-    ) -> Result<Vec<T>> {
+    fn receive_responses<T: CanonicalSerialize + CanonicalDeserialize>(&mut self) -> Result<Vec<T>> {
         Ok(vec![
             self.recv_from_party(PartyID::ID0)?,
             self.recv_from_party(PartyID::ID1)?,
@@ -268,9 +226,7 @@ impl MpcStarNetCoordinator for LocalRep3TestCoordinatorNet {
         ])
     }
 
-    fn receive_responses_from_subnets<T: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-    ) -> Result<Vec<Vec<T>>> {
+    fn receive_responses_from_subnets<T: CanonicalSerialize + CanonicalDeserialize>(&mut self) -> Result<Vec<Vec<T>>> {
         Ok(vec![self.receive_responses()?])
     }
 
@@ -292,30 +248,21 @@ impl MpcStarNetCoordinator for LocalRep3TestCoordinatorNet {
         Ok(vec![self.receive_response(party_id, 0)?])
     }
 
-    fn broadcast_request<T: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-        data: T,
-    ) -> Result<()> {
+    fn broadcast_request<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: T) -> Result<()> {
         let bytes = serialize_uncompressed(&data)?;
         for tx in self.star_req_txs.iter() {
-            tx.send(bytes.clone())
-                .map_err(|_| eyre!("broadcast_request failed"))?;
+            tx.send(bytes.clone()).map_err(|_| eyre!("broadcast_request failed"))?;
         }
         Ok(())
     }
 
-    fn send_requests<T: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-        data: Vec<T>,
-    ) -> Result<()> {
+    fn send_requests<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: Vec<T>) -> Result<()> {
         if data.len() != 3 {
             return Err(eyre!("send_requests expects 3 items, got {}", data.len()));
         }
         for (i, item) in data.into_iter().enumerate() {
             let bytes = serialize_uncompressed(&item)?;
-            self.star_req_txs[i]
-                .send(bytes)
-                .map_err(|_| eyre!("send_requests failed"))?;
+            self.star_req_txs[i].send(bytes).map_err(|_| eyre!("send_requests failed"))?;
         }
         Ok(())
     }
@@ -328,17 +275,11 @@ impl MpcStarNetCoordinator for LocalRep3TestCoordinatorNet {
         self.send_request(party_id, 0, data)
     }
 
-    fn send_requests_to_workers<T: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-        data: Vec<T>,
-    ) -> Result<()> {
+    fn send_requests_to_workers<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: Vec<T>) -> Result<()> {
         self.send_requests(data)
     }
 
-    fn send_requests_blocking<T: CanonicalSerialize + CanonicalDeserialize>(
-        &mut self,
-        data: Vec<T>,
-    ) -> Result<()> {
+    fn send_requests_blocking<T: CanonicalSerialize + CanonicalDeserialize>(&mut self, data: Vec<T>) -> Result<()> {
         self.send_requests(data)
     }
 
@@ -353,9 +294,7 @@ impl MpcStarNetCoordinator for LocalRep3TestCoordinatorNet {
         }
         let idx = usize::from(party_id);
         let bytes = serialize_uncompressed(&data)?;
-        self.star_req_txs[idx]
-            .send(bytes)
-            .map_err(|_| eyre!("send_request failed"))?;
+        self.star_req_txs[idx].send(bytes).map_err(|_| eyre!("send_request failed"))?;
         Ok(())
     }
 
@@ -427,18 +366,15 @@ where
         star_resp_rxs.push(Arc::new(Mutex::new(resp_rx)));
     }
 
-    let star_req_txs_arr: [mpsc::Sender<Vec<u8>>; 3] =
-        star_req_txs.try_into().unwrap_or_else(|_| unreachable!());
+    let star_req_txs_arr: [mpsc::Sender<Vec<u8>>; 3] = star_req_txs.try_into().unwrap_or_else(|_| unreachable!());
     let star_req_rxs_arr: [Arc<Mutex<mpsc::Receiver<Vec<u8>>>>; 3] =
         star_req_rxs.try_into().unwrap_or_else(|_| unreachable!());
-    let star_resp_txs_arr: [mpsc::Sender<Vec<u8>>; 3] =
-        star_resp_txs.try_into().unwrap_or_else(|_| unreachable!());
+    let star_resp_txs_arr: [mpsc::Sender<Vec<u8>>; 3] = star_resp_txs.try_into().unwrap_or_else(|_| unreachable!());
     let star_resp_rxs_arr: [Arc<Mutex<mpsc::Receiver<Vec<u8>>>>; 3] =
         star_resp_rxs.try_into().unwrap_or_else(|_| unreachable!());
 
     // Ring channels (party <-> party).
-    let mut ring_txs: [[Option<mpsc::Sender<Vec<u8>>>; 3]; 3] =
-        std::array::from_fn(|_| std::array::from_fn(|_| None));
+    let mut ring_txs: [[Option<mpsc::Sender<Vec<u8>>>; 3]; 3] = std::array::from_fn(|_| std::array::from_fn(|_| None));
     let mut ring_rxs: [[Option<Arc<Mutex<mpsc::Receiver<Vec<u8>>>>>; 3]; 3] =
         std::array::from_fn(|_| std::array::from_fn(|_| None));
     for from in 0..3 {
@@ -474,8 +410,7 @@ where
                     receivers.push(ring_rxs[i][j].as_ref().unwrap().clone());
                 }
             }
-            let ring_txs_arr: [mpsc::Sender<Vec<u8>>; 3] =
-                senders.try_into().unwrap_or_else(|_| unreachable!());
+            let ring_txs_arr: [mpsc::Sender<Vec<u8>>; 3] = senders.try_into().unwrap_or_else(|_| unreachable!());
             let ring_rxs_arr: [Arc<Mutex<mpsc::Receiver<Vec<u8>>>>; 3] =
                 receivers.try_into().unwrap_or_else(|_| unreachable!());
 
@@ -498,9 +433,7 @@ where
                     let io_ctx = IoContextPool::init(net, num_io_forks)
                         .with_context(|| format!("party {i} io_ctx init"))
                         .unwrap();
-                    worker_fn(input, io_ctx)
-                        .with_context(|| format!("party {i} work"))
-                        .unwrap()
+                    worker_fn(input, io_ctx).with_context(|| format!("party {i} work")).unwrap()
                 })
             })
         })
@@ -509,10 +442,8 @@ where
     // Spawn coordinator thread.
     let coordinator_input = make_coordinator_input();
     let coordinator_handle = thread::spawn(move || {
-        let pool = rayon::ThreadPoolBuilder::new()
-            .thread_name(|idx| format!("coordinator-rayon-{idx}"))
-            .build()
-            .unwrap();
+        let pool =
+            rayon::ThreadPoolBuilder::new().thread_name(|idx| format!("coordinator-rayon-{idx}")).build().unwrap();
         pool.install(|| {
             let mut net = LocalRep3TestCoordinatorNet {
                 log_num_workers: 0,
@@ -520,19 +451,13 @@ where
                 star_req_txs: star_req_txs_arr,
                 star_resp_rxs: star_resp_rxs_arr,
             };
-            coordinator_fn(coordinator_input, &mut net)
-                .context("coordinator work")
-                .unwrap()
+            coordinator_fn(coordinator_input, &mut net).context("coordinator work").unwrap()
         })
     });
 
-    let worker_results: Vec<WO> = worker_handles
-        .into_iter()
-        .map(|h| h.join().expect("worker thread panicked"))
-        .collect();
-    let coordinator_result = coordinator_handle
-        .join()
-        .expect("coordinator thread panicked");
+    let worker_results: Vec<WO> =
+        worker_handles.into_iter().map(|h| h.join().expect("worker thread panicked")).collect();
+    let coordinator_result = coordinator_handle.join().expect("coordinator thread panicked");
 
     let worker_array = worker_results.try_into().unwrap_or_else(|_| unreachable!());
     (worker_array, coordinator_result)

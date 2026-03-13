@@ -36,7 +36,7 @@ mod pairing_helpers {
 
     /// Sequential multi-pairing
     #[allow(dead_code)]
-    #[tracing::instrument(skip_all, name = "multi_pair_sequential", fields(len = ps.len()))]
+    #[tracing::instrument(skip_all, level = "trace", name = "multi_pair_sequential", fields(len = ps.len()))]
     pub(super) fn multi_pair_sequential(ps: &[ArkG1], qs: &[ArkG2]) -> ArkGT {
         use ark_bn254::{G1Affine, G2Affine};
 
@@ -61,7 +61,7 @@ mod pairing_helpers {
 
     /// Sequential multi-pairing with G2 from setup (uses cache if available)
     #[allow(dead_code)]
-    #[tracing::instrument(skip_all, name = "multi_pair_g2_setup_sequential", fields(len = ps.len()))]
+    #[tracing::instrument(skip_all, level = "trace", name = "multi_pair_g2_setup_sequential", fields(len = ps.len()))]
     pub(super) fn multi_pair_g2_setup_sequential(ps: &[ArkG1], qs: &[ArkG2]) -> ArkGT {
         use ark_bn254::G1Affine;
 
@@ -93,7 +93,7 @@ mod pairing_helpers {
 
     /// Sequential multi-pairing with G1 from setup (uses cache if available)
     #[allow(dead_code)]
-    #[tracing::instrument(skip_all, name = "multi_pair_g1_setup_sequential", fields(len = ps.len()))]
+    #[tracing::instrument(skip_all, level = "trace", name = "multi_pair_g1_setup_sequential", fields(len = ps.len()))]
     pub(super) fn multi_pair_g1_setup_sequential(ps: &[ArkG1], qs: &[ArkG2]) -> ArkGT {
         use ark_bn254::G2Affine;
 
@@ -108,11 +108,7 @@ mod pairing_helpers {
         #[cfg(feature = "cache")]
         {
             if let Some(cache) = crate::backends::arkworks::ark_cache::get_prepared_cache() {
-                let ps_prep: Vec<_> = ps
-                    .iter()
-                    .enumerate()
-                    .map(|(i, _)| cache.g1_prepared[i].clone())
-                    .collect();
+                let ps_prep: Vec<_> = ps.iter().enumerate().map(|(i, _)| cache.g1_prepared[i].clone()).collect();
                 return multi_pair_with_prepared(ps_prep, &qs_prep);
             }
         }
@@ -133,14 +129,13 @@ mod pairing_helpers {
         qs_prep: &[<Bn254 as Pairing>::G2Prepared],
     ) -> ArkGT {
         let miller_output = Bn254::multi_miller_loop(ps_prep, qs_prep.to_vec());
-        let result = Bn254::final_exponentiation(miller_output)
-            .expect("Final exponentiation should not fail");
+        let result = Bn254::final_exponentiation(miller_output).expect("Final exponentiation should not fail");
         ArkGT(result.0)
     }
 
     /// Parallel multi-pairing with chunked Miller loops (no caching assumptions)
     #[cfg(feature = "parallel")]
-    #[tracing::instrument(skip_all, name = "multi_pair_parallel", fields(len = ps.len(), chunk_size = determine_chunk_size(ps.len())))]
+    #[tracing::instrument(skip_all, level = "trace", name = "multi_pair_parallel", fields(len = ps.len(), chunk_size = determine_chunk_size(ps.len())))]
     pub(super) fn multi_pair_parallel(ps: &[ArkG1], qs: &[ArkG2]) -> ArkGT {
         use ark_bn254::{G1Affine, G2Affine};
         use rayon::prelude::*;
@@ -174,14 +169,13 @@ mod pairing_helpers {
                 |a, b| ark_ec::pairing::MillerLoopOutput(a.0 * b.0),
             );
 
-        let result =
-            Bn254::final_exponentiation(combined).expect("Final exponentiation should not fail");
+        let result = Bn254::final_exponentiation(combined).expect("Final exponentiation should not fail");
         ArkGT(result.0)
     }
 
     /// Parallel multi-pairing with G2 from setup (uses cache if available)
     #[cfg(feature = "parallel")]
-    #[tracing::instrument(skip_all, name = "multi_pair_g2_setup_parallel", fields(len = ps.len(), chunk_size = determine_chunk_size(ps.len())))]
+    #[tracing::instrument(skip_all, level = "trace", name = "multi_pair_g2_setup_parallel", fields(len = ps.len(), chunk_size = determine_chunk_size(ps.len())))]
     pub(super) fn multi_pair_g2_setup_parallel(ps: &[ArkG1], qs: &[ArkG2]) -> ArkGT {
         use ark_bn254::G1Affine;
         use rayon::prelude::*;
@@ -238,14 +232,13 @@ mod pairing_helpers {
                 |a, b| ark_ec::pairing::MillerLoopOutput(a.0 * b.0),
             );
 
-        let result =
-            Bn254::final_exponentiation(combined).expect("Final exponentiation should not fail");
+        let result = Bn254::final_exponentiation(combined).expect("Final exponentiation should not fail");
         ArkGT(result.0)
     }
 
     /// Parallel multi-pairing with G1 from setup (uses cache if available)
     #[cfg(feature = "parallel")]
-    #[tracing::instrument(skip_all, name = "multi_pair_g1_setup_parallel", fields(len = ps.len(), chunk_size = determine_chunk_size(ps.len())))]
+    #[tracing::instrument(skip_all, level = "trace", name = "multi_pair_g1_setup_parallel", fields(len = ps.len(), chunk_size = determine_chunk_size(ps.len())))]
     pub(super) fn multi_pair_g1_setup_parallel(ps: &[ArkG1], qs: &[ArkG2]) -> ArkGT {
         use ark_bn254::G2Affine;
         use rayon::prelude::*;
@@ -302,8 +295,7 @@ mod pairing_helpers {
                 |a, b| ark_ec::pairing::MillerLoopOutput(a.0 * b.0),
             );
 
-        let result =
-            Bn254::final_exponentiation(combined).expect("Final exponentiation should not fail");
+        let result = Bn254::final_exponentiation(combined).expect("Final exponentiation should not fail");
         ArkGT(result.0)
     }
 
@@ -353,13 +345,9 @@ impl PairingCurve for BN254 {
         ArkGT(Bn254::pairing(p.0, q.0).0)
     }
 
-    #[tracing::instrument(skip_all, name = "BN254::multi_pair", fields(len = ps.len()))]
+    #[tracing::instrument(skip_all, level = "trace", name = "BN254::multi_pair", fields(len = ps.len()))]
     fn multi_pair(ps: &[Self::G1], qs: &[Self::G2]) -> Self::GT {
-        assert_eq!(
-            ps.len(),
-            qs.len(),
-            "multi_pair requires equal length vectors"
-        );
+        assert_eq!(ps.len(), qs.len(), "multi_pair requires equal length vectors");
 
         if ps.is_empty() {
             return Self::GT::identity();
@@ -368,13 +356,9 @@ impl PairingCurve for BN254 {
         pairing_helpers::multi_pair_optimized(ps, qs)
     }
 
-    #[tracing::instrument(skip_all, name = "BN254::multi_pair_g2_setup", fields(len = ps.len()))]
+    #[tracing::instrument(skip_all, level = "trace", name = "BN254::multi_pair_g2_setup", fields(len = ps.len()))]
     fn multi_pair_g2_setup(ps: &[Self::G1], qs: &[Self::G2]) -> Self::GT {
-        assert_eq!(
-            ps.len(),
-            qs.len(),
-            "multi_pair_g2_setup requires equal length vectors"
-        );
+        assert_eq!(ps.len(), qs.len(), "multi_pair_g2_setup requires equal length vectors");
 
         if ps.is_empty() {
             return Self::GT::identity();
@@ -383,13 +367,9 @@ impl PairingCurve for BN254 {
         pairing_helpers::multi_pair_g2_setup_optimized(ps, qs)
     }
 
-    #[tracing::instrument(skip_all, name = "BN254::multi_pair_g1_setup", fields(len = ps.len()))]
+    #[tracing::instrument(skip_all, level = "trace", name = "BN254::multi_pair_g1_setup", fields(len = ps.len()))]
     fn multi_pair_g1_setup(ps: &[Self::G1], qs: &[Self::G2]) -> Self::GT {
-        assert_eq!(
-            ps.len(),
-            qs.len(),
-            "multi_pair_g1_setup requires equal length vectors"
-        );
+        assert_eq!(ps.len(), qs.len(), "multi_pair_g1_setup requires equal length vectors");
 
         if ps.is_empty() {
             return Self::GT::identity();

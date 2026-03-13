@@ -4,11 +4,11 @@
 
 pub use super::types::binary::Rep3BigUintShare;
 
+use crate::field::PrimeField;
 use ark_ff::BigInteger;
 use ark_ff::One;
 use itertools;
 use itertools::{Itertools as _, izip};
-use crate::field::PrimeField;
 use num_bigint::BigUint;
 use rand::Rng;
 
@@ -34,11 +34,7 @@ pub fn xor<F: PrimeField>(a: &BinaryShare<F>, b: &BinaryShare<F>) -> BinaryShare
 }
 
 /// Performs a bitwise XOR operation on a shared value and a public value.
-pub fn xor_public<F: PrimeField>(
-    shared: &BinaryShare<F>,
-    public: &BigUint,
-    id: PartyID,
-) -> BinaryShare<F> {
+pub fn xor_public<F: PrimeField>(shared: &BinaryShare<F>, public: &BigUint, id: PartyID) -> BinaryShare<F> {
     let mut res = shared.to_owned();
     match id {
         PartyID::ID0 => res.a ^= public,
@@ -92,11 +88,7 @@ pub fn or_vec<F: PrimeField, N: Rep3Network>(
 }
 
 /// Performs a bitwise OR operation on a shared value and a public value.
-pub fn or_public<F: PrimeField>(
-    shared: &BinaryShare<F>,
-    public: &BigUint,
-    id: PartyID,
-) -> BinaryShare<F> {
+pub fn or_public<F: PrimeField>(shared: &BinaryShare<F>, public: &BigUint, id: PartyID) -> BinaryShare<F> {
     let tmp = shared & public;
     let xor = xor_public(shared, public, id);
     xor ^ tmp
@@ -110,10 +102,8 @@ pub fn and<F: PrimeField, N: Rep3Network>(
 ) -> IoResult<BinaryShare<F>> {
     debug_assert!(a.a.bits() <= u64::from(F::MODULUS_BIT_SIZE));
     debug_assert!(b.a.bits() <= u64::from(F::MODULUS_BIT_SIZE));
-    let (mut mask, mask_b) = io_context
-        .rngs
-        .rand
-        .random_biguint(usize::try_from(F::MODULUS_BIT_SIZE).expect("u32 fits into usize"));
+    let (mut mask, mask_b) =
+        io_context.rngs.rand.random_biguint(usize::try_from(F::MODULUS_BIT_SIZE).expect("u32 fits into usize"));
     mask ^= mask_b;
     let local_a = (a & b) ^ mask;
     let local_b = io_context.network.reshare(local_a.clone())?;
@@ -128,19 +118,15 @@ pub fn and_vec<'a, F: PrimeField, N: Rep3Network>(
 ) -> IoResult<Vec<BinaryShare<F>>> {
     let local_a = izip!(a, b)
         .map(|(a, b)| {
-            let (mut mask, mask_b) = io_context
-                .rngs
-                .rand
-                .random_biguint(usize::try_from(F::MODULUS_BIT_SIZE).expect("u32 fits into usize"));
+            let (mut mask, mask_b) =
+                io_context.rngs.rand.random_biguint(usize::try_from(F::MODULUS_BIT_SIZE).expect("u32 fits into usize"));
 
             mask ^= mask_b;
             (a & b) ^ mask
         })
         .collect_vec();
     let local_b = io_context.network.reshare(local_a.clone())?;
-    Ok(izip!(local_a, local_b)
-        .map(|(a, b)| BinaryShare::new(a, b))
-        .collect_vec())
+    Ok(izip!(local_a, local_b).map(|(a, b)| BinaryShare::new(a, b)).collect_vec())
 }
 
 /// Performs a bitwise AND operation on a shared value and a public value.
@@ -201,10 +187,8 @@ pub fn shift_l_public_by_shared<F: PrimeField, N: Rep3Network>(
     let party_id = io_context.id;
     let mut individual_bit_shares = Vec::with_capacity(8);
     for (i, context) in izip!(0..8, contexts.iter_mut()) {
-        let bit = Rep3BigUintShare::new(
-            (shared.a.clone() >> i) & BigUint::one(),
-            (shared.b.clone() >> i) & BigUint::one(),
-        );
+        let bit =
+            Rep3BigUintShare::new((shared.a.clone() >> i) & BigUint::one(), (shared.b.clone() >> i) & BigUint::one());
         individual_bit_shares.push(conversion::b2a(&bit, context)?);
     }
     // v_i = 2^2^i * <b_i> + 1 - <b_i>
@@ -257,10 +241,7 @@ pub fn add_many_mod_p<F: PrimeField, N: Rep3Network>(
 }
 
 /// Performs the opening of a shared value and returns the equivalent public value.
-pub fn open<F: PrimeField, N: Rep3Network>(
-    a: &BinaryShare<F>,
-    io_context: &mut IoContext<N>,
-) -> IoResult<BigUint> {
+pub fn open<F: PrimeField, N: Rep3Network>(a: &BinaryShare<F>, io_context: &mut IoContext<N>) -> IoResult<BigUint> {
     let c = io_context.network.reshare(a.b.clone())?;
     Ok(&a.a ^ &a.b ^ c)
 }
@@ -274,19 +255,15 @@ pub fn open_vec<F: PrimeField, N: Rep3Network, T: TryFrom<BigUint>>(
     let c = io_context.network.reshare_many(&a_b)?;
     izip!(a, c)
         .map(|(a, c)| {
-            (&a.a ^ &a.b ^ c).try_into().or(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Failed to convert BigUint",
-            )))
+            (&a.a ^ &a.b ^ c)
+                .try_into()
+                .or(Err(std::io::Error::new(std::io::ErrorKind::Other, "Failed to convert BigUint")))
         })
         .collect()
 }
 
 /// Transforms a public value into a shared value: \[a\] = a.
-pub fn promote_to_trivial_share<F: PrimeField>(
-    id: PartyID,
-    public_value: &BigUint,
-) -> BinaryShare<F> {
+pub fn promote_to_trivial_share<F: PrimeField>(id: PartyID, public_value: &BigUint) -> BinaryShare<F> {
     match id {
         PartyID::ID0 => BinaryShare::new(public_value.to_owned(), BigUint::ZERO),
         PartyID::ID1 => BinaryShare::new(BigUint::ZERO, public_value.to_owned()),
@@ -439,18 +416,11 @@ pub fn is_zero_many<F: PrimeField, N: Rep3Network>(
 
 /// Converts a vector of bits in little-endian order to a share.
 pub fn from_le_bits<F: PrimeField>(bits: &[BinaryShare<F>]) -> BinaryShare<F> {
-    bits.iter()
-        .rev()
-        .fold(BinaryShare::zero_share(), |int, bit| {
-            shift_l_public(&int, F::one()) ^ bit.clone()
-        })
+    bits.iter().rev().fold(BinaryShare::zero_share(), |int, bit| shift_l_public(&int, F::one()) ^ bit.clone())
 }
 
 /// Shares a binary secret using the Rep3 protocol.
-pub fn share_rep3_binary<F: PrimeField, R: Rng>(
-    secret: BigUint,
-    rng: &mut R,
-) -> [Rep3BigUintShare<F>; 3] {
+pub fn share_rep3_binary<F: PrimeField, R: Rng>(secret: BigUint, rng: &mut R) -> [Rep3BigUintShare<F>; 3] {
     let a1 = BigUint::from(rng.r#gen::<u64>());
     let a2 = BigUint::from(rng.r#gen::<u64>());
 

@@ -74,9 +74,7 @@ impl FromStr for Address {
 impl ToSocketAddrs for Address {
     type Iter = std::vec::IntoIter<SocketAddr>;
     fn to_socket_addrs(&self) -> std::io::Result<Self::Iter> {
-        let mut addrs: Vec<SocketAddr> = format!("{}:{}", self.hostname, self.port)
-            .to_socket_addrs()?
-            .collect();
+        let mut addrs: Vec<SocketAddr> = format!("{}:{}", self.hostname, self.port).to_socket_addrs()?.collect();
         // Sort IPv4 addresses first so that connections to servers bound on
         // 0.0.0.0 succeed even when the OS resolves "localhost" to ::1 first.
         addrs.sort_by_key(|a| matches!(a, SocketAddr::V6(_)));
@@ -112,9 +110,7 @@ pub struct NetworkWorkerConfig {
 }
 
 /// Protocol used for the worker↔coordinator connection.
-#[derive(
-    Debug, Clone, Copy, Serialize, Deserialize, Default, Eq, PartialEq, PartialOrd, Ord, Hash,
-)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, Eq, PartialEq, PartialOrd, Ord, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum CoordinatorProtocol {
     /// QUIC transport (default). Requires `cert_path` for pre-shared coordinator cert.
@@ -157,13 +153,7 @@ pub struct NetworkParty {
 impl NetworkParty {
     /// Construct a new [`NetworkParty`] type.
     pub fn new(id: usize, worker: usize, address: Address, cert: CertificateDer<'static>) -> Self {
-        Self {
-            id,
-            worker,
-            dns_name: address,
-            cert,
-            protocol: CoordinatorProtocol::default(),
-        }
+        Self { id, worker, dns_name: address, cert, protocol: CoordinatorProtocol::default() }
     }
 }
 
@@ -275,9 +265,7 @@ impl NetworkConfig {
     pub fn for_worker(&self, worker: usize) -> NetworkConfig {
         let mut config = self.clone();
         config.worker = worker;
-        config
-            .bind_addr
-            .set_port(config.bind_addr.port() + 10 * worker as u16);
+        config.bind_addr.set_port(config.bind_addr.port() + 10 * worker as u16);
         config.parties.iter_mut().for_each(|party| {
             party.worker = worker;
             party.dns_name.port = party.dns_name.port + 10 * worker as u16;
@@ -305,14 +293,9 @@ impl NetworkConfig {
 impl TryFrom<NetworkConfigFile> for NetworkConfig {
     type Error = std::io::Error;
     fn try_from(value: NetworkConfigFile) -> Result<Self, Self::Error> {
-        let parties = value
-            .parties
-            .into_iter()
-            .map(NetworkParty::try_from)
-            .collect::<Result<Vec<_>, _>>()?;
+        let parties = value.parties.into_iter().map(NetworkParty::try_from).collect::<Result<Vec<_>, _>>()?;
 
-        let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(std::fs::read(value.key_path)?))
-            .clone_key();
+        let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(std::fs::read(value.key_path)?)).clone_key();
         Ok(NetworkConfig {
             parties,
             is_coordinator: value.is_coordinator,
@@ -351,13 +334,7 @@ impl NetworkConfig {
         self.parties
             .iter()
             .find(|p| p.id == self.my_id)
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "my_id {} not found in list of parties: {:?}",
-                    self.my_id,
-                    self.parties
-                )
-            })?;
+            .ok_or_else(|| eyre::eyre!("my_id {} not found in list of parties: {:?}", self.my_id, self.parties))?;
         // 2. check that all parties have a unique id
         let mut ids = self.parties.iter().map(|p| p.id).collect::<Vec<_>>();
         ids.sort_unstable();
@@ -370,20 +347,14 @@ impl NetworkConfig {
 
     pub fn generate_worker_configs(
         num_workers: usize,
-    ) -> (
-        BTreeMap<PartyWorkerID, NetworkConfigFile>,
-        NetworkConfigFile,
-    ) {
+    ) -> (BTreeMap<PartyWorkerID, NetworkConfigFile>, NetworkConfigFile) {
         Self::generate_worker_configs_with_dir(num_workers, "data")
     }
 
     pub fn generate_worker_configs_with_dir(
         num_workers: usize,
         data_dir: &str,
-    ) -> (
-        BTreeMap<PartyWorkerID, NetworkConfigFile>,
-        NetworkConfigFile,
-    ) {
+    ) -> (BTreeMap<PartyWorkerID, NetworkConfigFile>, NetworkConfigFile) {
         let mut parties = vec![
             NetworkWorkerConfig {
                 id: 0,
@@ -448,13 +419,7 @@ impl NetworkConfig {
             bind_addr: SocketAddr::new(IpAddr::from_str("0.0.0.0").unwrap(), 20000),
             key_path: format!("{data_dir}/key_coordinator.der").into(),
             parties: (0..num_workers)
-                .flat_map(|i| {
-                    workers
-                        .get(&PartyWorkerID::new(0, i))
-                        .unwrap()
-                        .parties
-                        .clone()
-                })
+                .flat_map(|i| workers.get(&PartyWorkerID::new(0, i)).unwrap().parties.clone())
                 .collect(),
             coordinator: Some(coordinator),
             timeout_secs: None,

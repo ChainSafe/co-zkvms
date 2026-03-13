@@ -10,11 +10,7 @@ pub struct RangeMaskPolynomial<F: JoltField> {
 
 impl<F: JoltField> RangeMaskPolynomial<F> {
     pub fn new(range_start: u128, range_end: u128) -> Self {
-        Self {
-            range_start,
-            range_end,
-            _field: PhantomData,
-        }
+        Self { range_start, range_end, _field: PhantomData }
     }
 
     /// For r in the Boolean hypercube, this MLE should evaluate to 1

@@ -8,13 +8,7 @@ use super::{PrefixCheckpoint, Prefixes, SparseDensePrefix};
 pub enum NegativeDivisorEqualsRemainderPrefix {}
 
 impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorEqualsRemainderPrefix {
-    fn prefix_mle<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: Option<C>,
-        c: u32,
-        mut b: LookupBits,
-        j: usize,
-    ) -> F
+    fn prefix_mle<C>(checkpoints: &[PrefixCheckpoint<F>], r_x: Option<C>, c: u32, mut b: LookupBits, j: usize) -> F
     where
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
@@ -44,8 +38,7 @@ impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorEqualsRemainderPrefix
             }
         }
 
-        let negative_divisor_equals_remainder =
-            checkpoints[Prefixes::NegativeDivisorEqualsRemainder].unwrap();
+        let negative_divisor_equals_remainder = checkpoints[Prefixes::NegativeDivisorEqualsRemainder].unwrap();
 
         if let Some(r_x) = r_x {
             let (remainder, divisor) = b.uninterleave();
@@ -67,12 +60,7 @@ impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorEqualsRemainderPrefix
         }
     }
 
-    fn update_prefix_checkpoint<C>(
-        checkpoints: &[PrefixCheckpoint<F>],
-        r_x: C,
-        r_y: C,
-        j: usize,
-    ) -> PrefixCheckpoint<F>
+    fn update_prefix_checkpoint<C>(checkpoints: &[PrefixCheckpoint<F>], r_x: C, r_y: C, j: usize) -> PrefixCheckpoint<F>
     where
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
@@ -85,8 +73,7 @@ impl<F: JoltField> SparseDensePrefix<F> for NegativeDivisorEqualsRemainderPrefix
             return Some(r_x * r_y).into();
         }
 
-        let mut negative_divisor_equals_remainder =
-            checkpoints[Prefixes::NegativeDivisorEqualsRemainder].unwrap();
+        let mut negative_divisor_equals_remainder = checkpoints[Prefixes::NegativeDivisorEqualsRemainder].unwrap();
         // checkpoint *= EQ(r_x, r_y)
         negative_divisor_equals_remainder *= r_x * r_y + (F::one() - r_x) * (F::one() - r_y);
         Some(negative_divisor_equals_remainder).into()

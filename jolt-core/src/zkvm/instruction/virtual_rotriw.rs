@@ -16,10 +16,8 @@ impl InstructionFlags for VirtualROTRIW {
         flags[CircuitFlags::LeftOperandIsRs1Value as usize] = true;
         flags[CircuitFlags::RightOperandIsImm as usize] = true;
         flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
-        flags[CircuitFlags::InlineSequenceInstruction as usize] =
-            self.inline_sequence_remaining.is_some();
-        flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
-            self.inline_sequence_remaining.unwrap_or(0) != 0;
+        flags[CircuitFlags::InlineSequenceInstruction as usize] = self.inline_sequence_remaining.is_some();
+        flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] = self.inline_sequence_remaining.unwrap_or(0) != 0;
         flags[CircuitFlags::IsCompressed as usize] = self.is_compressed;
         flags
     }
@@ -27,10 +25,7 @@ impl InstructionFlags for VirtualROTRIW {
 
 impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualROTRIW> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
-        (
-            self.register_state.rs1,
-            self.instruction.operands.imm as i128,
-        )
+        (self.register_state.rs1, self.instruction.operands.imm as i128)
     }
 
     fn to_lookup_output(&self) -> u64 {

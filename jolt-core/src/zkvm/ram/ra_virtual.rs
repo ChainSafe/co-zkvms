@@ -5,14 +5,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
-use crate::poly::opening_proof::{
-    OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN,
-};
+use crate::poly::opening_proof::{OpeningId, OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN};
 use crate::poly::ra_poly::RaPolynomial;
 use crate::zkvm::ram::remap_address;
-use crate::zkvm::witness::{
-    compute_d_parameter, CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K,
-};
+use crate::zkvm::witness::{compute_d_parameter, CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K};
 use crate::{
     field::JoltField,
     poly::{
@@ -20,6 +16,7 @@ use crate::{
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
     },
+    subprotocols::blindfold::InputClaimConstraint,
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
     utils::math::Math,
@@ -78,10 +75,7 @@ impl<F: JoltField> RaSumcheck<F> {
             T,
             r_cycle,
             r_address_chunks,
-            prover_state: Some(RaProverState {
-                ra_i_polys,
-                eq_poly,
-            }),
+            prover_state: Some(RaProverState { ra_i_polys, eq_poly }),
         }
     }
 
@@ -94,15 +88,7 @@ impl<F: JoltField> RaSumcheck<F> {
         r_cycle: [Vec<F::Challenge>; 3],
         r_address_chunks: Vec<Vec<F::Challenge>>,
     ) -> Self {
-        Self {
-            gamma,
-            ra_claim,
-            d,
-            T,
-            r_cycle,
-            r_address_chunks,
-            prover_state: None,
-        }
+        Self { gamma, ra_claim, d, T, r_cycle, r_address_chunks, prover_state: None }
     }
 }
 
@@ -147,25 +133,17 @@ impl<F: JoltField> RaSumcheck<F> {
 
     #[tracing::instrument(skip_all, name = "RamRaVirtualization::bind")]
     pub fn bind(&mut self, r_j: F::Challenge, _: usize) {
-        let prover_state = self
-            .prover_state
-            .as_mut()
-            .expect("Prover state not initialized");
+        let prover_state = self.prover_state.as_mut().expect("Prover state not initialized");
 
         for ra_i in prover_state.ra_i_polys.iter_mut() {
             ra_i.bind_parallel(r_j, BindingOrder::LowToHigh);
         }
-        prover_state
-            .eq_poly
-            .bind_parallel(r_j, BindingOrder::LowToHigh);
+        prover_state.eq_poly.bind_parallel(r_j, BindingOrder::LowToHigh);
     }
 
     #[tracing::instrument(skip_all, name = "RamRaVirtualization::compute_prover_message")]
     pub fn compute_prover_message(&mut self, _round: usize, _previous_claim: F) -> Vec<F> {
-        let ps = self
-            .prover_state
-            .as_ref()
-            .expect("Prover state not initialized");
+        let ps = self.prover_state.as_ref().expect("Prover state not initialized");
         let degree = self.degree();
         let ra_i_polys = &ps.ra_i_polys;
         let eq_poly = &ps.eq_poly;
@@ -205,10 +183,7 @@ impl<F: JoltField> RaSumcheck<F> {
             .collect()
     }
 
-    pub fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    pub fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         OpeningPoint::new(opening_point.iter().copied().rev().collect())
     }
 }
@@ -240,19 +215,14 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RaSumcheck<F> {
         for i in 0..self.d {
             let accumulator = accumulator.as_ref().unwrap();
             let accumulator = accumulator.borrow();
-            let (_, ra_i_claim) = accumulator.get_committed_polynomial_opening(
-                CommittedPolynomial::RamRa(i),
-                SumcheckId::RamRaVirtualization,
-            );
+            let (_, ra_i_claim) = accumulator
+                .get_committed_polynomial_opening(CommittedPolynomial::RamRa(i), SumcheckId::RamRaVirtualization);
             product *= ra_i_claim;
         }
         eq_eval * product
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         self.normalize_opening_point(opening_point)
     }
 
@@ -263,8 +233,7 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RaSumcheck<F> {
         r_cycle: OpeningPoint<BIG_ENDIAN, F>,
     ) {
         for i in 0..self.d {
-            let opening_point =
-                [self.r_address_chunks[i].as_slice(), r_cycle.r.as_slice()].concat();
+            let opening_point = [self.r_address_chunks[i].as_slice(), r_cycle.r.as_slice()].concat();
             accumulator.borrow_mut().append_sparse(
                 transcript,
                 vec![CommittedPolynomial::RamRa(i)],
@@ -272,5 +241,22 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RaSumcheck<F> {
                 opening_point,
             );
         }
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::weighted_openings(&[
+            OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamValFinalEvaluation),
+            OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamReadWriteChecking),
+            OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation),
+        ])
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(
+        &self,
+        _opening_accumulator: Option<Rc<RefCell<VerifierOpeningAccumulator<F>>>>,
+    ) -> Vec<F> {
+        vec![self.gamma[1], self.gamma[2]]
     }
 }

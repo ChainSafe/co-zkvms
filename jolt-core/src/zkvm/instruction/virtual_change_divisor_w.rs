@@ -17,10 +17,8 @@ impl InstructionFlags for VirtualChangeDivisorW {
         flags[CircuitFlags::LeftOperandIsRs1Value as usize] = true;
         flags[CircuitFlags::RightOperandIsRs2Value as usize] = true;
         flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
-        flags[CircuitFlags::InlineSequenceInstruction as usize] =
-            self.inline_sequence_remaining.is_some();
-        flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
-            self.inline_sequence_remaining.unwrap_or(0) != 0;
+        flags[CircuitFlags::InlineSequenceInstruction as usize] = self.inline_sequence_remaining.is_some();
+        flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] = self.inline_sequence_remaining.unwrap_or(0) != 0;
         flags[CircuitFlags::IsCompressed as usize] = self.is_compressed;
         flags
     }
@@ -29,10 +27,7 @@ impl InstructionFlags for VirtualChangeDivisorW {
 impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<VirtualChangeDivisorW> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
         // Always treat as 32-bit values for W instructions
-        (
-            self.register_state.rs1 as u32 as u64,
-            self.register_state.rs2 as i32 as i128,
-        )
+        (self.register_state.rs1 as u32 as u64, self.register_state.rs2 as i32 as i128)
     }
 
     fn to_lookup_output(&self) -> u64 {

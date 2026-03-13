@@ -26,9 +26,8 @@ impl SUBW {
         // but operate on 32-bit values and produce signed 32-bit results. Overflows are ignored,
         // and the low 32-bits of the result is sign-extended to 64-bits and written to the
         // destination register.
-        cpu.x[self.operands.rd as usize] = (cpu.x[self.operands.rs1 as usize]
-            .wrapping_sub(cpu.x[self.operands.rs2 as usize])
-            as i32) as i64;
+        cpu.x[self.operands.rd as usize] =
+            (cpu.x[self.operands.rs1 as usize].wrapping_sub(cpu.x[self.operands.rs2 as usize]) as i32) as i64;
     }
 }
 
@@ -42,11 +41,7 @@ impl RISCVTrace for SUBW {
     }
 
     /// 32-bit subtraction with sign extension on 64-bit systems.    
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);
         asm.emit_r::<SUB>(self.operands.rd, self.operands.rs1, self.operands.rs2);
         asm.emit_i::<VirtualSignExtendWord>(self.operands.rd, self.operands.rd, 0);

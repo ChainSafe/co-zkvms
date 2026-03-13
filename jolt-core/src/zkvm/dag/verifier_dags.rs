@@ -2,10 +2,13 @@ use std::marker::PhantomData;
 
 use strum::{EnumCount, IntoEnumIterator};
 
+use crate::curve::JoltCurve;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::multilinear_polynomial::BindingOrder;
+#[cfg(feature = "zk")]
+use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{OpeningPoint, SumcheckId};
 use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::subprotocols::sumcheck::SumcheckInstance;
@@ -27,35 +30,40 @@ pub struct SpartanDag<F: JoltField> {
     _marker: PhantomData<F>,
 }
 
+#[cfg(feature = "zk")]
+pub struct Stage1BlindfoldData<F: JoltField> {
+    pub tau: Vec<F::Challenge>,
+    pub challenges: Vec<F::Challenge>,
+    pub output_claim_ids: Vec<OpeningId>,
+}
+
+#[cfg(feature = "zk")]
+type Stage1VerifyResult<F> = Stage1BlindfoldData<F>;
+#[cfg(not(feature = "zk"))]
+type Stage1VerifyResult<F> = ();
+
 impl<F: JoltField> SpartanDag<F> {
     pub fn new<ProofTranscript: Transcript>(padded_trace_length: usize) -> Self {
-        Self {
-            padded_trace_length,
-            _marker: PhantomData,
-        }
+        Self { padded_trace_length, _marker: PhantomData }
     }
 
-    pub fn stage1_verify<ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+    pub fn stage1_verify<C: JoltCurve, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         &mut self,
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
-    ) -> Result<(), anyhow::Error> {
+        sm: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
+    ) -> Result<Stage1VerifyResult<F>, anyhow::Error> {
         let key = UniformSpartanKey::<F>::new(self.padded_trace_length);
         let num_rounds_x = key.num_rows_bits();
 
-        let tau: Vec<F::Challenge> = sm
-            .transcript
-            .borrow_mut()
-            .challenge_vector_optimized::<F>(num_rounds_x);
+        let tau: Vec<F::Challenge> = sm.transcript.borrow_mut().challenge_vector_optimized::<F>(num_rounds_x);
 
         // Get stage1 proof
         let proofs = sm.proofs.borrow();
-        let proof_data = proofs
-            .get(&ProofKeys::Stage1Sumcheck)
-            .expect("Stage 1 sumcheck proof not found");
+        let proof_data = proofs.get(&ProofKeys::Stage1Sumcheck).expect("Stage 1 sumcheck proof not found");
         let proof = match proof_data {
             ProofData::SumcheckProof(p) => p,
             _ => return Err(anyhow::anyhow!("Invalid proof type for stage 1")),
         };
+        let is_zk = proof.is_zk();
 
         // Verify the outer sumcheck
         let (final_eval, r) = proof.verify(
@@ -64,6 +72,7 @@ impl<F: JoltField> SpartanDag<F> {
             3, // degree 3: Az(x)*Bz(x)*Cz(x) with eq folded in
             &mut *sm.transcript.borrow_mut(),
         )?;
+        let stage1_challenges = r.clone();
 
         // Reverse r (outer sumcheck binds from top)
         let outer_sumcheck_r: Vec<F::Challenge> = r.into_iter().rev().collect();
@@ -74,34 +83,37 @@ impl<F: JoltField> SpartanDag<F> {
         // Get Az/Bz/Cz claims from accumulator
         let accumulator = sm.get_verifier_accumulator();
         let acc = accumulator.borrow();
-        let claim_az = acc
-            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter)
-            .1;
-        let claim_bz = acc
-            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter)
-            .1;
-        let claim_cz = acc
-            .get_virtual_polynomial_opening(VirtualPolynomial::SpartanCz, SumcheckId::SpartanOuter)
-            .1;
+        let claim_az = acc.get_virtual_polynomial_opening(VirtualPolynomial::SpartanAz, SumcheckId::SpartanOuter).1;
+        let claim_bz = acc.get_virtual_polynomial_opening(VirtualPolynomial::SpartanBz, SumcheckId::SpartanOuter).1;
+        let claim_cz = acc.get_virtual_polynomial_opening(VirtualPolynomial::SpartanCz, SumcheckId::SpartanOuter).1;
         drop(acc);
 
         // Verify: final_eval == eq(tau, r) * (Az * Bz - Cz)
         let expected = eq_eval * (claim_az * claim_bz - claim_cz);
-        if final_eval != expected {
-            return Err(anyhow::anyhow!(
-                "Spartan outer sumcheck final eval mismatch"
-            ));
+        if !is_zk && final_eval != expected {
+            return Err(anyhow::anyhow!("Spartan outer sumcheck final eval mismatch"));
         }
 
-        // Append Az/Bz/Cz to transcript
-        sm.transcript
-            .borrow_mut()
-            .append_scalars(&[claim_az, claim_bz, claim_cz]);
+        if is_zk {
+            if let crate::subprotocols::sumcheck::SumcheckInstanceProof::Zk(zk_proof) = proof {
+                let mut transcript = sm.transcript.borrow_mut();
+                transcript.append_message(b"output_claims_coms");
+                zk_proof
+                    .output_claims_commitments
+                    .iter()
+                    .for_each(|commitment| transcript.append_serializable(commitment));
+            }
+        } else {
+            sm.transcript.borrow_mut().append_scalars(&[claim_az, claim_bz, claim_cz]);
+        }
 
         // Store virtual openings with opening points
         let opening_point = OpeningPoint::new(outer_sumcheck_r.clone());
         {
             let mut acc = accumulator.borrow_mut();
+            if is_zk {
+                acc.set_zk_mode(true);
+            }
             let transcript = &mut *sm.transcript.borrow_mut();
 
             acc.append_virtual(
@@ -116,12 +128,10 @@ impl<F: JoltField> SpartanDag<F> {
                 SumcheckId::SpartanOuter,
                 opening_point.clone(),
             );
-            acc.append_virtual(
-                transcript,
-                VirtualPolynomial::SpartanCz,
-                SumcheckId::SpartanOuter,
-                opening_point,
-            );
+            acc.append_virtual(transcript, VirtualPolynomial::SpartanCz, SumcheckId::SpartanOuter, opening_point);
+            if is_zk {
+                acc.set_zk_mode(false);
+            }
         }
 
         // Compute r_cycle and append committed/virtual openings
@@ -129,18 +139,22 @@ impl<F: JoltField> SpartanDag<F> {
         let (r_cycle, _) = outer_sumcheck_r.split_at(num_steps_bits);
 
         // Append committed openings (PCS)
-        let committed_polys: Vec<CommittedPolynomial> = COMMITTED_R1CS_INPUTS
-            .iter()
-            .map(|input| CommittedPolynomial::try_from(input).ok().unwrap())
-            .collect();
+        let committed_polys: Vec<CommittedPolynomial> =
+            COMMITTED_R1CS_INPUTS.iter().map(|input| CommittedPolynomial::try_from(input).ok().unwrap()).collect();
         {
             let mut acc = accumulator.borrow_mut();
+            if is_zk {
+                acc.set_zk_mode(true);
+            }
             acc.append_dense(
                 &mut *sm.transcript.borrow_mut(),
                 committed_polys,
                 SumcheckId::SpartanOuter,
                 r_cycle.to_vec(),
             );
+            if is_zk {
+                acc.set_zk_mode(false);
+            }
         }
 
         // Append virtual openings for remaining R1CS inputs
@@ -150,36 +164,48 @@ impl<F: JoltField> SpartanDag<F> {
             }
             let poly = VirtualPolynomial::try_from(input).ok().unwrap();
             let mut acc = accumulator.borrow_mut();
+            if is_zk {
+                acc.set_zk_mode(true);
+            }
             acc.append_virtual(
                 &mut *sm.transcript.borrow_mut(),
                 poly,
                 SumcheckId::SpartanOuter,
                 OpeningPoint::new(r_cycle.to_vec()),
             );
+            if is_zk {
+                acc.set_zk_mode(false);
+            }
         }
 
+        #[cfg(feature = "zk")]
+        let output_claim_ids = if is_zk {
+            let mut acc = accumulator.borrow_mut();
+            let _ = acc.take_pending_claims();
+            acc.take_pending_claim_ids()
+        } else {
+            Vec::new()
+        };
+
         drop(proofs);
+        #[cfg(feature = "zk")]
+        return Ok(Stage1BlindfoldData { tau, challenges: stage1_challenges, output_claim_ids });
+        #[cfg(not(feature = "zk"))]
         Ok(())
     }
 
-    pub fn stage2_verifier_instances<
-        ProofTranscript: Transcript,
-        PCS: CommitmentScheme<Field = F>,
-    >(
+    pub fn stage2_verifier_instances<C: JoltCurve, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         &mut self,
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         use crate::zkvm::spartan::inner::InnerSumcheck;
-        let inner = InnerSumcheck::new_verifier::<ProofTranscript, PCS>(sm);
+        let inner = InnerSumcheck::new_verifier::<C, ProofTranscript, PCS>(sm);
         vec![Box::new(inner)]
     }
 
-    pub fn stage3_verifier_instances<
-        ProofTranscript: Transcript,
-        PCS: CommitmentScheme<Field = F>,
-    >(
+    pub fn stage3_verifier_instances<C: JoltCurve, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
         &mut self,
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         use crate::zkvm::spartan::pc::PCSumcheck;
         use crate::zkvm::spartan::product::ProductVirtualizationSumcheck;
@@ -190,25 +216,15 @@ impl<F: JoltField> SpartanDag<F> {
         let gamma_pc: F = sm.transcript.borrow_mut().challenge_scalar();
         let (r_cycle_point, next_pc_eval) =
             acc.get_virtual_polynomial_opening(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter);
-        let (_, next_unexpanded_pc_eval) = acc.get_virtual_polynomial_opening(
-            VirtualPolynomial::NextUnexpandedPC,
-            SumcheckId::SpartanOuter,
-        );
-        let (_, next_is_noop_eval) = acc.get_virtual_polynomial_opening(
-            VirtualPolynomial::NextIsNoop,
-            SumcheckId::SpartanOuter,
-        );
+        let (_, next_unexpanded_pc_eval) =
+            acc.get_virtual_polynomial_opening(VirtualPolynomial::NextUnexpandedPC, SumcheckId::SpartanOuter);
+        let (_, next_is_noop_eval) =
+            acc.get_virtual_polynomial_opening(VirtualPolynomial::NextIsNoop, SumcheckId::SpartanOuter);
         drop(acc);
 
-        let input_claim_pc = next_unexpanded_pc_eval
-            + gamma_pc * next_pc_eval
-            + gamma_pc.square() * next_is_noop_eval;
-        let spartan_pc = PCSumcheck::<F>::new_verifier_from_openings(
-            input_claim_pc,
-            gamma_pc,
-            r_cycle_point.r.len(),
-        );
-        let spartan_product = ProductVirtualizationSumcheck::<F>::new_verifier(sm);
+        let input_claim_pc = next_unexpanded_pc_eval + gamma_pc * next_pc_eval + gamma_pc.square() * next_is_noop_eval;
+        let spartan_pc = PCSumcheck::<F>::new_verifier_from_openings(input_claim_pc, gamma_pc, r_cycle_point.r.len());
+        let spartan_product = ProductVirtualizationSumcheck::<F>::new_verifier::<C, ProofTranscript, PCS>(sm);
 
         vec![Box::new(spartan_pc), Box::new(spartan_product)]
     }
@@ -224,27 +240,29 @@ pub struct RegistersDag;
 impl RegistersDag {
     pub fn stage2_verifier_instances<
         F: JoltField,
+        C: JoltCurve,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
         &mut self,
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         use crate::zkvm::registers::read_write_checking::RegistersReadWriteChecking;
-        let rwc = RegistersReadWriteChecking::new_verifier::<ProofTranscript, PCS>(sm);
+        let rwc = RegistersReadWriteChecking::new_verifier::<C, ProofTranscript, PCS>(sm);
         vec![Box::new(rwc)]
     }
 
     pub fn stage3_verifier_instances<
         F: JoltField,
+        C: JoltCurve,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
         &mut self,
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         use crate::zkvm::registers::val_evaluation::ValEvaluationSumcheck;
-        let val_eval = ValEvaluationSumcheck::new_verifier::<ProofTranscript, PCS>(sm);
+        let val_eval = ValEvaluationSumcheck::new_verifier::<C, ProofTranscript, PCS>(sm);
         vec![Box::new(val_eval)]
     }
 }
@@ -258,28 +276,22 @@ pub struct RamDag {
 }
 
 impl RamDag {
-    pub fn new_verifier<
-        F: JoltField,
-        ProofTranscript: Transcript,
-        PCS: CommitmentScheme<Field = F>,
-    >(
-        sm: &StateManager<'_, F, ProofTranscript, PCS>,
+    pub fn new_verifier<F: JoltField, C: JoltCurve, ProofTranscript: Transcript, PCS: CommitmentScheme<Field = F>>(
+        sm: &StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Self {
-        let initial_ram_state = crate::zkvm::ram::build_initial_memory_state(
-            &sm.preprocessing.shared.ram,
-            &sm.program_io,
-            sm.ram_K,
-        );
+        let initial_ram_state =
+            crate::zkvm::ram::build_initial_memory_state(&sm.preprocessing.shared.ram, &sm.program_io, sm.ram_K);
         Self { initial_ram_state }
     }
 
     pub fn stage2_verifier_instances<
         F: JoltField,
+        C: JoltCurve,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
         &mut self,
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         use crate::zkvm::ram::output_check::OutputSumcheck;
         use crate::zkvm::ram::raf_evaluation::RafEvaluationSumcheck;
@@ -302,47 +314,41 @@ impl RamDag {
             sm.program_io.memory_layout.trusted_advice_start,
             ra_claim,
         );
-        let rwc = RamReadWriteChecking::new_verifier::<ProofTranscript, PCS>(sm);
-        let output = OutputSumcheck::new_verifier::<ProofTranscript, PCS>(sm);
+        let rwc = RamReadWriteChecking::new_verifier::<C, ProofTranscript, PCS>(sm);
+        let output = OutputSumcheck::new_verifier::<C, ProofTranscript, PCS>(sm);
 
         vec![Box::new(raf), Box::new(rwc), Box::new(output)]
     }
 
     pub fn stage3_verifier_instances<
         F: JoltField,
+        C: JoltCurve,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
         &mut self,
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         use crate::zkvm::ram::hamming_booleanity::HammingBooleanitySumcheck;
         use crate::zkvm::ram::output_check::ValFinalSumcheck;
         use crate::zkvm::ram::val_evaluation::ValEvaluationSumcheck;
 
-        let val_eval = ValEvaluationSumcheck::new_verifier::<ProofTranscript, PCS>(
-            &self.initial_ram_state,
-            sm,
-        );
-        let val_final =
-            ValFinalSumcheck::new_verifier::<ProofTranscript, PCS>(&self.initial_ram_state, sm);
+        let val_eval = ValEvaluationSumcheck::new_verifier::<C, ProofTranscript, PCS>(&self.initial_ram_state, sm);
+        let val_final = ValFinalSumcheck::new_verifier::<C, ProofTranscript, PCS>(&self.initial_ram_state, sm);
         let log_T = sm.trace_length.log_2();
         let hamming_bool = HammingBooleanitySumcheck::<F>::new_verifier_from_parts(log_T);
 
-        vec![
-            Box::new(val_eval),
-            Box::new(val_final),
-            Box::new(hamming_bool),
-        ]
+        vec![Box::new(val_eval), Box::new(val_final), Box::new(hamming_bool)]
     }
 
     pub fn stage4_verifier_instances<
         F: JoltField,
+        C: JoltCurve,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
         &mut self,
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         use crate::zkvm::ram::booleanity::BooleanitySumcheck;
         use crate::zkvm::ram::hamming_weight::HammingWeightSumcheck;
@@ -361,52 +367,34 @@ impl RamDag {
             hamming_gamma_powers[i] = hamming_gamma_powers[i - 1] * hamming_gamma;
         }
         let accumulator = sm.get_verifier_accumulator();
-        let (_, hamming_booleanity_claim) = accumulator.borrow().get_virtual_polynomial_opening(
-            VirtualPolynomial::RamHammingWeight,
-            SumcheckId::RamHammingBooleanity,
-        );
+        let (_, hamming_booleanity_claim) = accumulator
+            .borrow()
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamHammingWeight, SumcheckId::RamHammingBooleanity);
         let hamming_input_claim = hamming_booleanity_claim * hamming_gamma_powers.iter().sum::<F>();
-        let hamming_weight = HammingWeightSumcheck::new_verifier_from_parts(
-            hamming_gamma_powers,
-            hamming_input_claim,
-        );
+        let hamming_weight = HammingWeightSumcheck::new_verifier_from_parts(hamming_gamma_powers, hamming_input_claim);
 
         // Booleanity
-        let bool_r_cycle: Vec<F::Challenge> = sm
-            .transcript
-            .borrow_mut()
-            .challenge_vector_optimized::<F>(T.log_2());
-        let bool_r_address: Vec<F::Challenge> = sm
-            .transcript
-            .borrow_mut()
-            .challenge_vector_optimized::<F>(DTH_ROOT_OF_K.log_2());
+        let bool_r_cycle: Vec<F::Challenge> = sm.transcript.borrow_mut().challenge_vector_optimized::<F>(T.log_2());
+        let bool_r_address: Vec<F::Challenge> =
+            sm.transcript.borrow_mut().challenge_vector_optimized::<F>(DTH_ROOT_OF_K.log_2());
         let bool_gamma: F = sm.transcript.borrow_mut().challenge_scalar();
         let mut bool_gamma_powers = vec![F::one(); d];
         for i in 1..d {
             bool_gamma_powers[i] = bool_gamma_powers[i - 1] * bool_gamma;
         }
-        let booleanity = BooleanitySumcheck::new_verifier_from_parts(
-            d,
-            T,
-            bool_r_cycle,
-            bool_r_address,
-            bool_gamma_powers,
-        );
+        let booleanity =
+            BooleanitySumcheck::new_verifier_from_parts(d, T, bool_r_cycle, bool_r_address, bool_gamma_powers);
 
         // RaSumcheck
         let acc = accumulator.borrow();
-        let (r_val, ra_claim_val) = acc.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamRa,
-            SumcheckId::RamValFinalEvaluation,
-        );
+        let (r_val, ra_claim_val) =
+            acc.get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamValFinalEvaluation);
         let (r_address_val, r_cycle_val) = r_val.split_at_r(log_K);
-        let (r_rw, ra_claim_rw) = acc.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamRa,
-            SumcheckId::RamReadWriteChecking,
-        );
+        let (r_rw, ra_claim_rw) =
+            acc.get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamReadWriteChecking);
         let (_, r_cycle_rw) = r_rw.split_at_r(log_K);
-        let (r_raf, ra_claim_raf) = acc
-            .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation);
+        let (r_raf, ra_claim_raf) =
+            acc.get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation);
         let (_, r_cycle_raf) = r_raf.split_at_r(log_K);
         drop(acc);
 
@@ -416,35 +404,24 @@ impl RamDag {
             let pad = DTH_ROOT_OF_K.log_2() - (r_address_val.len() % DTH_ROOT_OF_K.log_2());
             [&vec![F::Challenge::from(0_u128); pad], r_address_val].concat()
         };
-        let r_address_chunks: Vec<Vec<F::Challenge>> = r_address
-            .chunks(DTH_ROOT_OF_K.log_2())
-            .map(|c| c.to_vec())
-            .collect();
+        let r_address_chunks: Vec<Vec<F::Challenge>> =
+            r_address.chunks(DTH_ROOT_OF_K.log_2()).map(|c| c.to_vec()).collect();
 
         let ra_gamma: F = sm.transcript.borrow_mut().challenge_scalar();
         let ra_gamma_arr = [F::one(), ra_gamma, ra_gamma.square()];
-        let combined_ra_claim = ra_gamma_arr[0] * ra_claim_val
-            + ra_gamma_arr[1] * ra_claim_rw
-            + ra_gamma_arr[2] * ra_claim_raf;
+        let combined_ra_claim =
+            ra_gamma_arr[0] * ra_claim_val + ra_gamma_arr[1] * ra_claim_rw + ra_gamma_arr[2] * ra_claim_raf;
 
         let ra_virtual = RaSumcheck::new_verifier_from_parts(
             ra_gamma_arr,
             combined_ra_claim,
             d,
             T,
-            [
-                r_cycle_val.to_vec(),
-                r_cycle_rw.to_vec(),
-                r_cycle_raf.to_vec(),
-            ],
+            [r_cycle_val.to_vec(), r_cycle_rw.to_vec(), r_cycle_raf.to_vec()],
             r_address_chunks,
         );
 
-        vec![
-            Box::new(hamming_weight),
-            Box::new(booleanity),
-            Box::new(ra_virtual),
-        ]
+        vec![Box::new(hamming_weight), Box::new(booleanity), Box::new(ra_virtual)]
     }
 }
 
@@ -458,11 +435,12 @@ pub struct LookupsDag;
 impl LookupsDag {
     pub fn stage2_verifier_instances<
         F: JoltField,
+        C: JoltCurve,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
         &mut self,
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         use crate::zkvm::instruction_lookups::booleanity::BooleanitySumcheck;
         use crate::zkvm::instruction_lookups::{D, LOG_K_CHUNK};
@@ -470,10 +448,7 @@ impl LookupsDag {
         let accumulator = sm.get_verifier_accumulator();
         let log_T = accumulator
             .borrow()
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::LookupOutput,
-                SumcheckId::SpartanOuter,
-            )
+            .get_virtual_polynomial_opening(VirtualPolynomial::LookupOutput, SumcheckId::SpartanOuter)
             .0
             .r
             .len();
@@ -484,24 +459,21 @@ impl LookupsDag {
         for i in 1..D {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
-        let r_address: Vec<F::Challenge> = sm
-            .transcript
-            .borrow_mut()
-            .challenge_vector_optimized::<F>(LOG_K_CHUNK);
+        let r_address: Vec<F::Challenge> = sm.transcript.borrow_mut().challenge_vector_optimized::<F>(LOG_K_CHUNK);
 
-        let booleanity =
-            BooleanitySumcheck::new_verifier_from_parts(gamma_powers, r_address, log_T);
+        let booleanity = BooleanitySumcheck::new_verifier_from_parts(gamma_powers, r_address, log_T);
 
         vec![Box::new(booleanity)]
     }
 
     pub fn stage3_verifier_instances<
         F: JoltField,
+        C: JoltCurve,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
         &mut self,
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         use crate::zkvm::instruction_lookups::hamming_weight::HammingWeightSumcheck;
         use crate::zkvm::instruction_lookups::read_raf_checking::ReadRafSumcheck;
@@ -510,26 +482,14 @@ impl LookupsDag {
         let accumulator = sm.get_verifier_accumulator();
         let acc = accumulator.borrow();
 
-        let (_, rv_claim) = acc.get_virtual_polynomial_opening(
-            VirtualPolynomial::LookupOutput,
-            SumcheckId::SpartanOuter,
-        );
-        let (_, left_operand_claim) = acc.get_virtual_polynomial_opening(
-            VirtualPolynomial::LeftLookupOperand,
-            SumcheckId::SpartanOuter,
-        );
-        let (_, right_operand_claim) = acc.get_virtual_polynomial_opening(
-            VirtualPolynomial::RightLookupOperand,
-            SumcheckId::SpartanOuter,
-        );
-        let log_T = acc
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::LookupOutput,
-                SumcheckId::SpartanOuter,
-            )
-            .0
-            .r
-            .len();
+        let (_, rv_claim) =
+            acc.get_virtual_polynomial_opening(VirtualPolynomial::LookupOutput, SumcheckId::SpartanOuter);
+        let (_, left_operand_claim) =
+            acc.get_virtual_polynomial_opening(VirtualPolynomial::LeftLookupOperand, SumcheckId::SpartanOuter);
+        let (_, right_operand_claim) =
+            acc.get_virtual_polynomial_opening(VirtualPolynomial::RightLookupOperand, SumcheckId::SpartanOuter);
+        let log_T =
+            acc.get_virtual_polynomial_opening(VirtualPolynomial::LookupOutput, SumcheckId::SpartanOuter).0.r.len();
         drop(acc);
 
         let read_raf = ReadRafSumcheck::new_verifier(
@@ -553,11 +513,12 @@ impl LookupsDag {
 
     pub fn stage4_verifier_instances<
         F: JoltField,
+        C: JoltCurve,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
         &mut self,
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         use crate::zkvm::instruction_lookups::ra_virtual::InstructionRaSumcheck;
         use crate::zkvm::instruction_lookups::{D, LOG_K_CHUNK};
@@ -565,13 +526,10 @@ impl LookupsDag {
         let accumulator = sm.get_verifier_accumulator();
         let acc = accumulator.borrow();
 
-        let (ra_point, ra_claim) = acc.get_virtual_polynomial_opening(
-            VirtualPolynomial::InstructionRa,
-            SumcheckId::InstructionReadRaf,
-        );
+        let (ra_point, ra_claim) =
+            acc.get_virtual_polynomial_opening(VirtualPolynomial::InstructionRa, SumcheckId::InstructionReadRaf);
         let (r_address, r_cycle) = ra_point.r.split_at(D * LOG_K_CHUNK);
-        let r_address_chunks: Vec<Vec<F::Challenge>> =
-            r_address.chunks(LOG_K_CHUNK).map(|c| c.to_vec()).collect();
+        let r_address_chunks: Vec<Vec<F::Challenge>> = r_address.chunks(LOG_K_CHUNK).map(|c| c.to_vec()).collect();
         drop(acc);
 
         let ra = InstructionRaSumcheck::new(ra_claim, r_cycle.to_vec(), r_address_chunks);
@@ -589,11 +547,12 @@ pub struct BytecodeDag;
 impl BytecodeDag {
     pub fn stage4_verifier_instances<
         F: JoltField,
+        C: JoltCurve,
         ProofTranscript: Transcript,
         PCS: CommitmentScheme<Field = F>,
     >(
         &mut self,
-        sm: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        sm: &mut StateManager<'_, F, C, ProofTranscript, PCS>,
     ) -> Vec<Box<dyn SumcheckInstance<F, ProofTranscript>>> {
         use crate::zkvm::bytecode::booleanity::BooleanitySumcheck as BytecodeBooleanity;
         use crate::zkvm::bytecode::hamming_weight::HammingWeightSumcheck as BytecodeHammingWeight;
@@ -622,47 +581,32 @@ impl BytecodeDag {
             3 + crate::zkvm::instruction::NUM_CIRCUIT_FLAGS,
         );
         let acc = accumulator.borrow();
-        let (_, unexpanded_pc_claim_1) = acc.get_virtual_polynomial_opening(
-            VirtualPolynomial::UnexpandedPC,
-            SumcheckId::SpartanOuter,
-        );
-        let (_, imm_claim_1) =
-            acc.get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
-        let (_, rd_claim_1) =
-            acc.get_virtual_polynomial_opening(VirtualPolynomial::Rd, SumcheckId::SpartanOuter);
+        let (_, unexpanded_pc_claim_1) =
+            acc.get_virtual_polynomial_opening(VirtualPolynomial::UnexpandedPC, SumcheckId::SpartanOuter);
+        let (_, imm_claim_1) = acc.get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter);
+        let (_, rd_claim_1) = acc.get_virtual_polynomial_opening(VirtualPolynomial::Rd, SumcheckId::SpartanOuter);
         let mut rv_claim_1 = gamma_powers_1[0] * unexpanded_pc_claim_1
             + gamma_powers_1[1] * imm_claim_1
             + gamma_powers_1[2] * rd_claim_1;
         for (i, flag) in CircuitFlags::iter().enumerate() {
-            let (_, flag_claim) = acc.get_virtual_polynomial_opening(
-                VirtualPolynomial::OpFlags(flag),
-                SumcheckId::SpartanOuter,
-            );
+            let (_, flag_claim) =
+                acc.get_virtual_polynomial_opening(VirtualPolynomial::OpFlags(flag), SumcheckId::SpartanOuter);
             rv_claim_1 += gamma_powers_1[3 + i] * flag_claim;
         }
         drop(acc);
 
         // Stage2 gamma_powers
-        let gamma_powers_2 = crate::zkvm::bytecode::read_raf_checking::get_gamma_powers::<F>(
-            &mut *sm.transcript.borrow_mut(),
-            3,
-        );
+        let gamma_powers_2 =
+            crate::zkvm::bytecode::read_raf_checking::get_gamma_powers::<F>(&mut *sm.transcript.borrow_mut(), 3);
         let acc = accumulator.borrow();
-        let (_, rdwa_claim_2) = acc.get_virtual_polynomial_opening(
-            VirtualPolynomial::RdWa,
-            SumcheckId::RegistersReadWriteChecking,
-        );
-        let (_, rs1ra_claim_2) = acc.get_virtual_polynomial_opening(
-            VirtualPolynomial::Rs1Ra,
-            SumcheckId::RegistersReadWriteChecking,
-        );
-        let (_, rs2ra_claim_2) = acc.get_virtual_polynomial_opening(
-            VirtualPolynomial::Rs2Ra,
-            SumcheckId::RegistersReadWriteChecking,
-        );
-        let rv_claim_2 = gamma_powers_2[0] * rdwa_claim_2
-            + gamma_powers_2[1] * rs1ra_claim_2
-            + gamma_powers_2[2] * rs2ra_claim_2;
+        let (_, rdwa_claim_2) =
+            acc.get_virtual_polynomial_opening(VirtualPolynomial::RdWa, SumcheckId::RegistersReadWriteChecking);
+        let (_, rs1ra_claim_2) =
+            acc.get_virtual_polynomial_opening(VirtualPolynomial::Rs1Ra, SumcheckId::RegistersReadWriteChecking);
+        let (_, rs2ra_claim_2) =
+            acc.get_virtual_polynomial_opening(VirtualPolynomial::Rs2Ra, SumcheckId::RegistersReadWriteChecking);
+        let rv_claim_2 =
+            gamma_powers_2[0] * rdwa_claim_2 + gamma_powers_2[1] * rs1ra_claim_2 + gamma_powers_2[2] * rs2ra_claim_2;
 
         // Stage3 gamma_powers
         drop(acc);
@@ -671,38 +615,26 @@ impl BytecodeDag {
             4 + LookupTables::<XLEN>::COUNT,
         );
         let acc = accumulator.borrow();
-        let (_, rd_wa_claim_3) = acc.get_virtual_polynomial_opening(
-            VirtualPolynomial::RdWa,
-            SumcheckId::RegistersValEvaluation,
-        );
-        let (_, unexpanded_pc_claim_3) = acc.get_virtual_polynomial_opening(
-            VirtualPolynomial::UnexpandedPC,
-            SumcheckId::SpartanShift,
-        );
-        let (_, is_noop_claim_3) = acc.get_virtual_polynomial_opening(
-            VirtualPolynomial::OpFlags(CircuitFlags::IsNoop),
-            SumcheckId::SpartanShift,
-        );
-        let (_, raf_flag_claim_3) = acc.get_virtual_polynomial_opening(
-            VirtualPolynomial::InstructionRafFlag,
-            SumcheckId::InstructionReadRaf,
-        );
+        let (_, rd_wa_claim_3) =
+            acc.get_virtual_polynomial_opening(VirtualPolynomial::RdWa, SumcheckId::RegistersValEvaluation);
+        let (_, unexpanded_pc_claim_3) =
+            acc.get_virtual_polynomial_opening(VirtualPolynomial::UnexpandedPC, SumcheckId::SpartanShift);
+        let (_, is_noop_claim_3) = acc
+            .get_virtual_polynomial_opening(VirtualPolynomial::OpFlags(CircuitFlags::IsNoop), SumcheckId::SpartanShift);
+        let (_, raf_flag_claim_3) =
+            acc.get_virtual_polynomial_opening(VirtualPolynomial::InstructionRafFlag, SumcheckId::InstructionReadRaf);
         let mut rv_claim_3 = gamma_powers_3[0] * rd_wa_claim_3
             + gamma_powers_3[1] * unexpanded_pc_claim_3
             + gamma_powers_3[2] * is_noop_claim_3
             + gamma_powers_3[3] * raf_flag_claim_3;
         for i in 0..LookupTables::<XLEN>::COUNT {
-            let (_, lt_claim) = acc.get_virtual_polynomial_opening(
-                VirtualPolynomial::LookupTableFlag(i),
-                SumcheckId::InstructionReadRaf,
-            );
+            let (_, lt_claim) = acc
+                .get_virtual_polynomial_opening(VirtualPolynomial::LookupTableFlag(i), SumcheckId::InstructionReadRaf);
             rv_claim_3 += gamma_powers_3[4 + i] * lt_claim;
         }
 
-        let (_, raf_claim) =
-            acc.get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanOuter);
-        let (_, raf_shift_claim) =
-            acc.get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanShift);
+        let (_, raf_claim) = acc.get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanOuter);
+        let (_, raf_shift_claim) = acc.get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanShift);
         drop(acc);
 
         let rv_claim = rv_claim_1
@@ -717,61 +649,29 @@ impl BytecodeDag {
 
         // Val2 needs eq_r_register
         let acc = accumulator.borrow();
-        let r_register_2 = acc
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RdWa,
-                SumcheckId::RegistersReadWriteChecking,
-            )
-            .0
-            .r;
+        let r_register_2 =
+            acc.get_virtual_polynomial_opening(VirtualPolynomial::RdWa, SumcheckId::RegistersReadWriteChecking).0.r;
         drop(acc);
-        let eq_r_register_2 = EqPolynomial::<F>::evals(
-            &r_register_2[..(common::constants::REGISTER_COUNT as usize).log_2()],
-        );
-        let val_2 = BytecodeReadRaf::<F>::compute_val_2_from_bytecode(
-            bytecode,
-            &gamma_powers_2,
-            &eq_r_register_2,
-        );
+        let eq_r_register_2 =
+            EqPolynomial::<F>::evals(&r_register_2[..(common::constants::REGISTER_COUNT as usize).log_2()]);
+        let val_2 = BytecodeReadRaf::<F>::compute_val_2_from_bytecode(bytecode, &gamma_powers_2, &eq_r_register_2);
 
         // Val3 needs eq_r_register from val evaluation
         let acc = accumulator.borrow();
-        let r_register_3 = acc
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RdWa,
-                SumcheckId::RegistersValEvaluation,
-            )
-            .0
-            .r;
+        let r_register_3 =
+            acc.get_virtual_polynomial_opening(VirtualPolynomial::RdWa, SumcheckId::RegistersValEvaluation).0.r;
         drop(acc);
-        let eq_r_register_3 = EqPolynomial::<F>::evals(
-            &r_register_3[..(common::constants::REGISTER_COUNT as usize).log_2()],
-        );
-        let val_3 = BytecodeReadRaf::<F>::compute_val_3_from_bytecode(
-            bytecode,
-            &gamma_powers_3,
-            &eq_r_register_3,
-        );
+        let eq_r_register_3 =
+            EqPolynomial::<F>::evals(&r_register_3[..(common::constants::REGISTER_COUNT as usize).log_2()]);
+        let val_3 = BytecodeReadRaf::<F>::compute_val_3_from_bytecode(bytecode, &gamma_powers_3, &eq_r_register_3);
 
         // r_cycles from accumulator
         let acc = accumulator.borrow();
-        let r_cycle_1 = acc
-            .get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter)
-            .0
-            .r;
-        let r_2 = acc
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::Rs1Ra,
-                SumcheckId::RegistersReadWriteChecking,
-            )
-            .0;
+        let r_cycle_1 = acc.get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter).0.r;
+        let r_2 =
+            acc.get_virtual_polynomial_opening(VirtualPolynomial::Rs1Ra, SumcheckId::RegistersReadWriteChecking).0;
         let (_, r_cycle_2) = r_2.split_at_r((common::constants::REGISTER_COUNT as usize).log_2());
-        let r_3 = acc
-            .get_virtual_polynomial_opening(
-                VirtualPolynomial::RdWa,
-                SumcheckId::RegistersValEvaluation,
-            )
-            .0;
+        let r_3 = acc.get_virtual_polynomial_opening(VirtualPolynomial::RdWa, SumcheckId::RegistersValEvaluation).0;
         let (_, r_cycle_3) = r_3.split_at_r((common::constants::REGISTER_COUNT as usize).log_2());
         drop(acc);
 
@@ -782,6 +682,7 @@ impl BytecodeDag {
             log_K,
             log_T,
             d,
+            [gamma_powers_1.clone(), gamma_powers_2.clone(), gamma_powers_3.clone()],
             val_polys,
         );
 
@@ -791,16 +692,9 @@ impl BytecodeDag {
         for i in 1..d {
             bool_gamma_powers[i] = bool_gamma_powers[i - 1] * bool_gamma;
         }
-        let bool_r_address: Vec<F::Challenge> = sm
-            .transcript
-            .borrow_mut()
-            .challenge_vector_optimized::<F>(log_K_chunk);
-        let booleanity = BytecodeBooleanity::new_verifier_from_parts(
-            bool_gamma_powers,
-            bool_r_address,
-            log_T,
-            log_K_chunk,
-        );
+        let bool_r_address: Vec<F::Challenge> = sm.transcript.borrow_mut().challenge_vector_optimized::<F>(log_K_chunk);
+        let booleanity =
+            BytecodeBooleanity::new_verifier_from_parts(bool_gamma_powers, bool_r_address, log_T, log_K_chunk);
 
         // HammingWeight
         let hw_gamma: F = sm.transcript.borrow_mut().challenge_scalar();
@@ -808,13 +702,8 @@ impl BytecodeDag {
         for i in 1..d {
             hw_gamma_powers[i] = hw_gamma_powers[i - 1] * hw_gamma;
         }
-        let hamming_weight =
-            BytecodeHammingWeight::new_verifier_from_parts(hw_gamma_powers, log_K_chunk);
+        let hamming_weight = BytecodeHammingWeight::new_verifier_from_parts(hw_gamma_powers, log_K_chunk);
 
-        vec![
-            Box::new(read_raf),
-            Box::new(booleanity),
-            Box::new(hamming_weight),
-        ]
+        vec![Box::new(read_raf), Box::new(booleanity), Box::new(hamming_weight)]
     }
 }

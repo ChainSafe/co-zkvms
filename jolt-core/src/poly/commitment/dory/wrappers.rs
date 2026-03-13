@@ -31,41 +31,18 @@ pub use dory::backends::arkworks::{
 
 #[repr(transparent)]
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Default,
-    ark_serialize::CanonicalSerialize,
-    ark_serialize::CanonicalDeserialize,
+    Debug, Clone, Copy, PartialEq, Eq, Default, ark_serialize::CanonicalSerialize, ark_serialize::CanonicalDeserialize,
 )]
 pub struct JoltFieldWrapper<F: JoltField>(pub F);
 
 #[repr(transparent)]
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Default,
-    ark_serialize::CanonicalSerialize,
-    ark_serialize::CanonicalDeserialize,
+    Debug, Clone, Copy, PartialEq, Eq, Default, ark_serialize::CanonicalSerialize, ark_serialize::CanonicalDeserialize,
 )]
 pub struct JoltGroupWrapper<G: CurveGroup>(pub G);
 
 #[repr(transparent)]
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Default,
-    CanonicalSerialize,
-    CanonicalDeserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, CanonicalSerialize, CanonicalDeserialize)]
 pub struct JoltGTWrapper<P: ArkPairing>(pub P::TargetField);
 
 pub type JoltG1Wrapper = JoltGroupWrapper<G1Projective>;
@@ -140,23 +117,17 @@ impl MultilinearLagrange<ArkFr> for MultilinearPolynomial<Fr> {
             ($coeffs:expr, $mul:expr) => {{
                 let coeffs = $coeffs;
                 let mut result = vec![Fr::zero(); num_cols];
-                result
-                    .par_iter_mut()
-                    .enumerate()
-                    .for_each(|(col_idx, dest)| {
-                        let mut sum = Fr::zero();
-                        for row_idx in 0..num_rows.min(wrapped_left_side.len()) {
-                            let coeff_idx = row_idx * num_cols + col_idx;
-                            if coeff_idx < coeffs.len() {
-                                sum += $mul(&coeffs[coeff_idx], wrapped_left_side[row_idx]);
-                            }
+                result.par_iter_mut().enumerate().for_each(|(col_idx, dest)| {
+                    let mut sum = Fr::zero();
+                    for row_idx in 0..num_rows.min(wrapped_left_side.len()) {
+                        let coeff_idx = row_idx * num_cols + col_idx;
+                        if coeff_idx < coeffs.len() {
+                            sum += $mul(&coeffs[coeff_idx], wrapped_left_side[row_idx]);
                         }
-                        *dest = sum;
-                    });
-                result
-                    .into_iter()
-                    .map(|v| jolt_to_ark(&v))
-                    .collect::<Vec<_>>()
+                    }
+                    *dest = sum;
+                });
+                result.into_iter().map(|v| jolt_to_ark(&v)).collect::<Vec<_>>()
             }};
         }
 
@@ -164,19 +135,16 @@ impl MultilinearLagrange<ArkFr> for MultilinearPolynomial<Fr> {
             MultilinearPolynomial::LargeScalars(poly) => {
                 let coeffs = &poly.Z;
                 let mut result = vec![Fr::zero(); num_cols];
-                result
-                    .par_iter_mut()
-                    .enumerate()
-                    .for_each(|(col_idx, dest)| {
-                        let mut sum = Fr::zero();
-                        for row_idx in 0..num_rows.min(wrapped_left_side.len()) {
-                            let coeff_idx = row_idx * num_cols + col_idx;
-                            if coeff_idx < coeffs.len() {
-                                sum += coeffs[coeff_idx] * wrapped_left_side[row_idx];
-                            }
+                result.par_iter_mut().enumerate().for_each(|(col_idx, dest)| {
+                    let mut sum = Fr::zero();
+                    for row_idx in 0..num_rows.min(wrapped_left_side.len()) {
+                        let coeff_idx = row_idx * num_cols + col_idx;
+                        if coeff_idx < coeffs.len() {
+                            sum += coeffs[coeff_idx] * wrapped_left_side[row_idx];
                         }
-                        *dest = sum;
-                    });
+                    }
+                    *dest = sum;
+                });
                 result.into_iter().map(|v| jolt_to_ark(&v)).collect()
             }
             MultilinearPolynomial::U8Scalars(poly) => {
@@ -201,8 +169,7 @@ impl MultilinearLagrange<ArkFr> for MultilinearPolynomial<Fr> {
                 vmp_row_major!(&poly.coeffs, |s: &i128, l: Fr| s.field_mul(l))
             }
             MultilinearPolynomial::S128Scalars(poly) => {
-                vmp_row_major!(&poly.coeffs, |s: &ark_ff::biginteger::S128, l: Fr| s
-                    .field_mul(l))
+                vmp_row_major!(&poly.coeffs, |s: &ark_ff::biginteger::S128, l: Fr| s.field_mul(l))
             }
             MultilinearPolynomial::OneHot(poly) => {
                 let mut result = vec![Fr::zero(); num_cols];
@@ -211,12 +178,7 @@ impl MultilinearLagrange<ArkFr> for MultilinearPolynomial<Fr> {
             }
             // In Jolt, we always perform the Dory opening proof using an RLCPolynomial
             MultilinearPolynomial::RLC(poly) => poly
-                .vector_matrix_product(
-                    &wrapped_left_side
-                        .into_iter()
-                        .map(JoltFieldWrapper)
-                        .collect::<Vec<_>>(),
-                )
+                .vector_matrix_product(&wrapped_left_side.into_iter().map(JoltFieldWrapper).collect::<Vec<_>>())
                 .into_iter()
                 .map(|v| jolt_to_ark(&v.0))
                 .collect(),
@@ -234,9 +196,7 @@ where
     E::G1: DoryGroup<Scalar = ArkFr>,
 {
     // SAFETY: E::G1 and ArkG1 have the same memory layout when E = BN254.
-    let g1_slice = unsafe {
-        std::slice::from_raw_parts(g1_generators.as_ptr() as *const ArkG1, g1_generators.len())
-    };
+    let g1_slice = unsafe { std::slice::from_raw_parts(g1_generators.as_ptr() as *const ArkG1, g1_generators.len()) };
 
     let dory_context = DoryGlobals::current_context();
     let dory_layout = DoryGlobals::get_layout();
@@ -244,8 +204,7 @@ where
     // Dense polynomials (all scalar variants except OneHot/RLC) are committed row-wise.
     // Under AddressMajor, dense coefficients occupy evenly-spaced columns, so each row
     // commitment uses `cycles_per_row` bases (one per occupied column).
-    let (dense_affine_bases, dense_chunk_size): (Vec<_>, usize) = match (dory_context, dory_layout)
-    {
+    let (dense_affine_bases, dense_chunk_size): (Vec<_>, usize) = match (dory_context, dory_layout) {
         (DoryContext::Main, DoryLayout::AddressMajor) => {
             let cycles_per_row = DoryGlobals::address_major_cycles_per_row();
             let bases: Vec<_> = g1_slice
@@ -256,95 +215,60 @@ where
                 .collect();
             (bases, cycles_per_row)
         }
-        _ => (
-            g1_slice
-                .par_iter()
-                .take(row_len)
-                .map(|g| g.0.into_affine())
-                .collect(),
-            row_len,
-        ),
+        _ => (g1_slice.par_iter().take(row_len).map(|g| g.0.into_affine()).collect(), row_len),
     };
 
     let result: Vec<ArkG1> = match poly {
         MultilinearPolynomial::LargeScalars(poly) => poly
             .Z
             .par_chunks(dense_chunk_size)
-            .map(|row| {
-                ArkG1(
-                    VariableBaseMSM::msm_field_elements(&dense_affine_bases[..row.len()], row)
-                        .unwrap(),
-                )
-            })
+            .map(|row| ArkG1(VariableBaseMSM::msm_field_elements(&dense_affine_bases[..row.len()], row).unwrap()))
             .collect(),
         MultilinearPolynomial::U8Scalars(poly) => poly
             .coeffs
             .par_chunks(dense_chunk_size)
-            .map(|row| {
-                ArkG1(VariableBaseMSM::msm_u8(&dense_affine_bases[..row.len()], row).unwrap())
-            })
+            .map(|row| ArkG1(VariableBaseMSM::msm_u8(&dense_affine_bases[..row.len()], row).unwrap()))
             .collect(),
         MultilinearPolynomial::U16Scalars(poly) => poly
             .coeffs
             .par_chunks(dense_chunk_size)
-            .map(|row| {
-                ArkG1(VariableBaseMSM::msm_u16(&dense_affine_bases[..row.len()], row).unwrap())
-            })
+            .map(|row| ArkG1(VariableBaseMSM::msm_u16(&dense_affine_bases[..row.len()], row).unwrap()))
             .collect(),
         MultilinearPolynomial::U32Scalars(poly) => poly
             .coeffs
             .par_chunks(dense_chunk_size)
-            .map(|row| {
-                ArkG1(VariableBaseMSM::msm_u32(&dense_affine_bases[..row.len()], row).unwrap())
-            })
+            .map(|row| ArkG1(VariableBaseMSM::msm_u32(&dense_affine_bases[..row.len()], row).unwrap()))
             .collect(),
         MultilinearPolynomial::U64Scalars(poly) => poly
             .coeffs
             .par_chunks(dense_chunk_size)
-            .map(|row| {
-                ArkG1(VariableBaseMSM::msm_u64(&dense_affine_bases[..row.len()], row).unwrap())
-            })
+            .map(|row| ArkG1(VariableBaseMSM::msm_u64(&dense_affine_bases[..row.len()], row).unwrap()))
             .collect(),
         MultilinearPolynomial::U128Scalars(poly) => poly
             .coeffs
             .par_chunks(dense_chunk_size)
-            .map(|row| {
-                ArkG1(VariableBaseMSM::msm_u128(&dense_affine_bases[..row.len()], row).unwrap())
-            })
+            .map(|row| ArkG1(VariableBaseMSM::msm_u128(&dense_affine_bases[..row.len()], row).unwrap()))
             .collect(),
         MultilinearPolynomial::I64Scalars(poly) => poly
             .coeffs
             .par_chunks(dense_chunk_size)
-            .map(|row| {
-                ArkG1(VariableBaseMSM::msm_i64(&dense_affine_bases[..row.len()], row).unwrap())
-            })
+            .map(|row| ArkG1(VariableBaseMSM::msm_i64(&dense_affine_bases[..row.len()], row).unwrap()))
             .collect(),
         MultilinearPolynomial::I128Scalars(poly) => poly
             .coeffs
             .par_chunks(dense_chunk_size)
-            .map(|row| {
-                ArkG1(VariableBaseMSM::msm_i128(&dense_affine_bases[..row.len()], row).unwrap())
-            })
+            .map(|row| ArkG1(VariableBaseMSM::msm_i128(&dense_affine_bases[..row.len()], row).unwrap()))
             .collect(),
         MultilinearPolynomial::S128Scalars(poly) => poly
             .coeffs
             .par_chunks(dense_chunk_size)
-            .map(|row| {
-                ArkG1(VariableBaseMSM::msm_s128(&dense_affine_bases[..row.len()], row).unwrap())
-            })
+            .map(|row| ArkG1(VariableBaseMSM::msm_s128(&dense_affine_bases[..row.len()], row).unwrap()))
             .collect(),
         // OneHot polynomials have their own commit_rows implementations
         // that respect the DoryLayout setting (CycleMajor vs AddressMajor)
         MultilinearPolynomial::OneHot(poly) => {
-            let affine_bases: Vec<_> = g1_slice
-                .par_iter()
-                .take(row_len)
-                .map(|g| g.0.into_affine())
-                .collect();
-            poly.commit_rows(&affine_bases)
-                .into_iter()
-                .map(|g| ArkG1(g.0))
-                .collect()
+            let affine_bases: Vec<_> = g1_slice.par_iter().take(row_len).map(|g| g.0.into_affine()).collect();
+            poly.commit_rows(&affine_bases).into_iter().map(|g| ArkG1(g.0)).collect()
         }
         MultilinearPolynomial::RLC(_) => {
             panic!("RLC polynomials should not be committed directly via commit_tier_1")
@@ -366,9 +290,7 @@ pub struct JoltToDoryTranscript<'a, T: Transcript> {
 
 impl<'a, T: Transcript> JoltToDoryTranscript<'a, T> {
     pub fn new(transcript: &'a mut T) -> Self {
-        Self {
-            transcript: Some(transcript),
-        }
+        Self { transcript: Some(transcript) }
     }
 }
 
@@ -376,51 +298,34 @@ impl<'a, T: Transcript> DoryTranscript for JoltToDoryTranscript<'a, T> {
     type Curve = BN254;
 
     fn append_bytes(&mut self, _label: &[u8], bytes: &[u8]) {
-        let transcript = self
-            .transcript
-            .as_mut()
-            .expect("Transcript not initialized");
+        let transcript = self.transcript.as_mut().expect("Transcript not initialized");
         transcript.append_bytes(bytes);
     }
 
     fn append_field(&mut self, _label: &[u8], x: &ArkFr) {
-        let transcript = self
-            .transcript
-            .as_mut()
-            .expect("Transcript not initialized");
+        let transcript = self.transcript.as_mut().expect("Transcript not initialized");
         let jolt_scalar: Fr = ark_to_jolt(x);
         transcript.append_scalar(&jolt_scalar);
     }
 
     fn append_group<G: DoryGroup>(&mut self, _label: &[u8], g: &G) {
-        let transcript = self
-            .transcript
-            .as_mut()
-            .expect("Transcript not initialized");
+        let transcript = self.transcript.as_mut().expect("Transcript not initialized");
 
         let mut buffer = Vec::new();
-        g.serialize_compressed(&mut buffer)
-            .expect("DorySerialize serialization should not fail");
+        g.serialize_compressed(&mut buffer).expect("DorySerialize serialization should not fail");
         transcript.append_bytes(&buffer);
     }
 
     fn append_serde<S: DorySerialize>(&mut self, _label: &[u8], s: &S) {
-        let transcript = self
-            .transcript
-            .as_mut()
-            .expect("Transcript not initialized");
+        let transcript = self.transcript.as_mut().expect("Transcript not initialized");
 
         let mut buffer = Vec::new();
-        s.serialize_compressed(&mut buffer)
-            .expect("DorySerialize serialization should not fail");
+        s.serialize_compressed(&mut buffer).expect("DorySerialize serialization should not fail");
         transcript.append_bytes(&buffer);
     }
 
     fn challenge_scalar(&mut self, _label: &[u8]) -> ArkFr {
-        let transcript = self
-            .transcript
-            .as_mut()
-            .expect("Transcript not initialized");
+        let transcript = self.transcript.as_mut().expect("Transcript not initialized");
         jolt_to_ark(&transcript.challenge_scalar::<Fr>())
     }
 

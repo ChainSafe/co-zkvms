@@ -3,7 +3,6 @@ use mpc_core::protocols::rep3_ring::{self, Rep3RingShare};
 use serde::{Deserialize, Serialize};
 use tracer::JoltDevice;
 
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Rep3ProgramIOInput {
     pub trusted_advice: Vec<Rep3RingShare<u8>>,

@@ -8,9 +8,7 @@
 //! ```
 
 use ark_serialize::CanonicalSerialize;
-use dory_pcs::backends::arkworks::{
-    ArkFr, ArkworksPolynomial, Blake2bTranscript, G1Routines, G2Routines, BN254,
-};
+use dory_pcs::backends::arkworks::{ArkFr, ArkworksPolynomial, Blake2bTranscript, G1Routines, G2Routines, BN254};
 use dory_pcs::primitives::arithmetic::Field;
 use dory_pcs::primitives::poly::Polynomial;
 use dory_pcs::{create_evaluation_proof, setup, verify, DoryProof, ZK};
@@ -41,15 +39,11 @@ struct BucketTracker {
 
 impl BucketTracker {
     fn new() -> Self {
-        Self {
-            buckets: HashMap::new(),
-        }
+        Self { buckets: HashMap::new() }
     }
 
     fn record(&mut self, name: &str, bucket: usize) {
-        self.buckets
-            .entry(name.to_string())
-            .or_insert_with(|| vec![0; NUM_BUCKETS])[bucket] += 1;
+        self.buckets.entry(name.to_string()).or_insert_with(|| vec![0; NUM_BUCKETS])[bucket] += 1;
     }
 
     fn chi_squared(&self, name: &str, expected: f64) -> Option<f64> {
@@ -97,60 +91,24 @@ fn collect_full_zk_proof_stats(proof: &ArkDoryProof, tracker: &mut BucketTracker
 
     for (i, msg) in proof.first_messages.iter().enumerate() {
         let prefix = format!("zk_first_{i}");
-        tracker.record(
-            &format!("{prefix}_d1_left"),
-            bucket_from_serializable(&msg.d1_left),
-        );
-        tracker.record(
-            &format!("{prefix}_d1_right"),
-            bucket_from_serializable(&msg.d1_right),
-        );
-        tracker.record(
-            &format!("{prefix}_d2_left"),
-            bucket_from_serializable(&msg.d2_left),
-        );
-        tracker.record(
-            &format!("{prefix}_d2_right"),
-            bucket_from_serializable(&msg.d2_right),
-        );
+        tracker.record(&format!("{prefix}_d1_left"), bucket_from_serializable(&msg.d1_left));
+        tracker.record(&format!("{prefix}_d1_right"), bucket_from_serializable(&msg.d1_right));
+        tracker.record(&format!("{prefix}_d2_left"), bucket_from_serializable(&msg.d2_left));
+        tracker.record(&format!("{prefix}_d2_right"), bucket_from_serializable(&msg.d2_right));
     }
 
     for (i, msg) in proof.second_messages.iter().enumerate() {
         let prefix = format!("zk_second_{i}");
-        tracker.record(
-            &format!("{prefix}_c_plus"),
-            bucket_from_serializable(&msg.c_plus),
-        );
-        tracker.record(
-            &format!("{prefix}_c_minus"),
-            bucket_from_serializable(&msg.c_minus),
-        );
-        tracker.record(
-            &format!("{prefix}_e1_plus"),
-            bucket_from_serializable(&msg.e1_plus),
-        );
-        tracker.record(
-            &format!("{prefix}_e1_minus"),
-            bucket_from_serializable(&msg.e1_minus),
-        );
-        tracker.record(
-            &format!("{prefix}_e2_plus"),
-            bucket_from_serializable(&msg.e2_plus),
-        );
-        tracker.record(
-            &format!("{prefix}_e2_minus"),
-            bucket_from_serializable(&msg.e2_minus),
-        );
+        tracker.record(&format!("{prefix}_c_plus"), bucket_from_serializable(&msg.c_plus));
+        tracker.record(&format!("{prefix}_c_minus"), bucket_from_serializable(&msg.c_minus));
+        tracker.record(&format!("{prefix}_e1_plus"), bucket_from_serializable(&msg.e1_plus));
+        tracker.record(&format!("{prefix}_e1_minus"), bucket_from_serializable(&msg.e1_minus));
+        tracker.record(&format!("{prefix}_e2_plus"), bucket_from_serializable(&msg.e2_plus));
+        tracker.record(&format!("{prefix}_e2_minus"), bucket_from_serializable(&msg.e2_minus));
     }
 
-    tracker.record(
-        "zk_final_e1",
-        bucket_from_serializable(&proof.final_message.e1),
-    );
-    tracker.record(
-        "zk_final_e2",
-        bucket_from_serializable(&proof.final_message.e2),
-    );
+    tracker.record("zk_final_e1", bucket_from_serializable(&proof.final_message.e1));
+    tracker.record("zk_final_e2", bucket_from_serializable(&proof.final_message.e2));
 
     if let Some(ref sigma1) = proof.sigma1_proof {
         tracker.record("sigma1_a1", bucket_from_serializable(&sigma1.a1));
@@ -188,9 +146,7 @@ fn prove_verify_collect(
     verifier_setup: &dory_pcs::VerifierSetup<BN254>,
     tracker: &mut BucketTracker,
 ) {
-    let (tier_2, tier_1, commit_blind) = poly
-        .commit::<BN254, ZK, G1Routines>(nu, sigma, prover_setup)
-        .unwrap();
+    let (tier_2, tier_1, commit_blind) = poly.commit::<BN254, ZK, G1Routines>(nu, sigma, prover_setup).unwrap();
 
     let evaluation = poly.evaluate(point);
     let mut transcript = fresh_transcript();
@@ -234,16 +190,8 @@ fn two_sample_chi_squared(a: &[usize], b: &[usize]) -> f64 {
             }
             let expected_a = pooled * n_a / n_total;
             let expected_b = pooled * n_b / n_total;
-            let term_a = if expected_a > 0.0 {
-                (obs_a as f64 - expected_a).powi(2) / expected_a
-            } else {
-                0.0
-            };
-            let term_b = if expected_b > 0.0 {
-                (obs_b as f64 - expected_b).powi(2) / expected_b
-            } else {
-                0.0
-            };
+            let term_a = if expected_a > 0.0 { (obs_a as f64 - expected_a).powi(2) / expected_a } else { 0.0 };
+            let term_b = if expected_b > 0.0 { (obs_b as f64 - expected_b).powi(2) / expected_b } else { 0.0 };
             term_a + term_b
         })
         .sum()
@@ -256,9 +204,7 @@ fn assert_uniformity(trackers: &[(&str, &BucketTracker)], expected: f64) {
         for name in tracker.all_names() {
             if let Some(chi2) = tracker.chi_squared(&name, expected) {
                 if chi2 >= CHI2_CRITICAL {
-                    failures.push(format!(
-                        "{label}/{name}: chi2={chi2:.2} >= {CHI2_CRITICAL:.2}"
-                    ));
+                    failures.push(format!("{label}/{name}: chi2={chi2:.2} >= {CHI2_CRITICAL:.2}"));
                 }
             }
         }
@@ -290,9 +236,7 @@ fn assert_witness_independence(trackers: &[(&str, &BucketTracker)]) {
 
                 let chi2 = two_sample_chi_squared(buckets_a, buckets_b);
                 if chi2 >= CHI2_CRITICAL {
-                    failures.push(format!(
-                        "{label_a} vs {label_b}/{name}: chi2={chi2:.2} >= {CHI2_CRITICAL:.2}"
-                    ));
+                    failures.push(format!("{label_a} vs {label_b}/{name}: chi2={chi2:.2} >= {CHI2_CRITICAL:.2}"));
                 }
             }
         }
@@ -321,48 +265,17 @@ fn test_statistical_indistinguishability(
 
     for _ in 0..NUM_TRIALS {
         let zeros = ArkworksPolynomial::new(vec![ArkFr::zero(); poly_size]);
-        prove_verify_collect(
-            &zeros,
-            &point,
-            nu,
-            sigma,
-            prover_setup,
-            verifier_setup,
-            &mut tracker_zeros,
-        );
+        prove_verify_collect(&zeros, &point, nu, sigma, prover_setup, verifier_setup, &mut tracker_zeros);
 
         let ones = ArkworksPolynomial::new(vec![ArkFr::one(); poly_size]);
-        prove_verify_collect(
-            &ones,
-            &point,
-            nu,
-            sigma,
-            prover_setup,
-            verifier_setup,
-            &mut tracker_ones,
-        );
+        prove_verify_collect(&ones, &point, nu, sigma, prover_setup, verifier_setup, &mut tracker_ones);
 
         let random = random_polynomial(poly_size);
-        prove_verify_collect(
-            &random,
-            &point,
-            nu,
-            sigma,
-            prover_setup,
-            verifier_setup,
-            &mut tracker_random,
-        );
+        prove_verify_collect(&random, &point, nu, sigma, prover_setup, verifier_setup, &mut tracker_random);
     }
 
     let expected = NUM_TRIALS as f64 / NUM_BUCKETS as f64;
-    assert_uniformity(
-        &[
-            ("zeros", &tracker_zeros),
-            ("ones", &tracker_ones),
-            ("random", &tracker_random),
-        ],
-        expected,
-    );
+    assert_uniformity(&[("zeros", &tracker_zeros), ("ones", &tracker_ones), ("random", &tracker_random)], expected);
 }
 
 fn test_statistical_indistinguishability_non_square(
@@ -380,48 +293,17 @@ fn test_statistical_indistinguishability_non_square(
 
     for _ in 0..NUM_TRIALS {
         let zeros = ArkworksPolynomial::new(vec![ArkFr::zero(); poly_size]);
-        prove_verify_collect(
-            &zeros,
-            &point,
-            nu,
-            sigma,
-            prover_setup,
-            verifier_setup,
-            &mut tracker_zeros,
-        );
+        prove_verify_collect(&zeros, &point, nu, sigma, prover_setup, verifier_setup, &mut tracker_zeros);
 
         let ones = ArkworksPolynomial::new(vec![ArkFr::one(); poly_size]);
-        prove_verify_collect(
-            &ones,
-            &point,
-            nu,
-            sigma,
-            prover_setup,
-            verifier_setup,
-            &mut tracker_ones,
-        );
+        prove_verify_collect(&ones, &point, nu, sigma, prover_setup, verifier_setup, &mut tracker_ones);
 
         let random = random_polynomial(poly_size);
-        prove_verify_collect(
-            &random,
-            &point,
-            nu,
-            sigma,
-            prover_setup,
-            verifier_setup,
-            &mut tracker_random,
-        );
+        prove_verify_collect(&random, &point, nu, sigma, prover_setup, verifier_setup, &mut tracker_random);
     }
 
     let expected = NUM_TRIALS as f64 / NUM_BUCKETS as f64;
-    assert_uniformity(
-        &[
-            ("zeros", &tracker_zeros),
-            ("ones", &tracker_ones),
-            ("random", &tracker_random),
-        ],
-        expected,
-    );
+    assert_uniformity(&[("zeros", &tracker_zeros), ("ones", &tracker_ones), ("random", &tracker_random)], expected);
 }
 
 fn test_witness_independence(
@@ -440,50 +322,18 @@ fn test_witness_independence(
 
     for _ in 0..NUM_TRIALS {
         let zeros = ArkworksPolynomial::new(vec![ArkFr::zero(); poly_size]);
-        prove_verify_collect(
-            &zeros,
-            &point,
-            nu,
-            sigma,
-            prover_setup,
-            verifier_setup,
-            &mut tracker_zeros,
-        );
+        prove_verify_collect(&zeros, &point, nu, sigma, prover_setup, verifier_setup, &mut tracker_zeros);
 
         let ones = ArkworksPolynomial::new(vec![ArkFr::one(); poly_size]);
-        prove_verify_collect(
-            &ones,
-            &point,
-            nu,
-            sigma,
-            prover_setup,
-            verifier_setup,
-            &mut tracker_ones,
-        );
+        prove_verify_collect(&ones, &point, nu, sigma, prover_setup, verifier_setup, &mut tracker_ones);
 
         let mut skewed_coeffs = vec![ArkFr::zero(); poly_size];
         skewed_coeffs[0] = ArkFr::from_u64(42);
         let skewed = ArkworksPolynomial::new(skewed_coeffs);
-        prove_verify_collect(
-            &skewed,
-            &point,
-            nu,
-            sigma,
-            prover_setup,
-            verifier_setup,
-            &mut tracker_skewed,
-        );
+        prove_verify_collect(&skewed, &point, nu, sigma, prover_setup, verifier_setup, &mut tracker_skewed);
 
         let uniform = random_polynomial(poly_size);
-        prove_verify_collect(
-            &uniform,
-            &point,
-            nu,
-            sigma,
-            prover_setup,
-            verifier_setup,
-            &mut tracker_uniform,
-        );
+        prove_verify_collect(&uniform, &point, nu, sigma, prover_setup, verifier_setup, &mut tracker_uniform);
     }
 
     assert_witness_independence(&[

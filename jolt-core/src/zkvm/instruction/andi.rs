@@ -16,10 +16,8 @@ impl InstructionFlags for ANDI {
         flags[CircuitFlags::LeftOperandIsRs1Value as usize] = true;
         flags[CircuitFlags::RightOperandIsImm as usize] = true;
         flags[CircuitFlags::WriteLookupOutputToRD as usize] = true;
-        flags[CircuitFlags::InlineSequenceInstruction as usize] =
-            self.inline_sequence_remaining.is_some();
-        flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] =
-            self.inline_sequence_remaining.unwrap_or(0) != 0;
+        flags[CircuitFlags::InlineSequenceInstruction as usize] = self.inline_sequence_remaining.is_some();
+        flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize] = self.inline_sequence_remaining.unwrap_or(0) != 0;
         flags[CircuitFlags::IsCompressed as usize] = self.is_compressed;
         flags
     }
@@ -29,18 +27,9 @@ impl<const XLEN: usize> LookupQuery<XLEN> for RISCVCycle<ANDI> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
         match XLEN {
             #[cfg(test)]
-            8 => (
-                self.register_state.rs1 as u8 as u64,
-                self.instruction.operands.imm as u8 as i128,
-            ),
-            32 => (
-                self.register_state.rs1 as u32 as u64,
-                self.instruction.operands.imm as u32 as i128,
-            ),
-            64 => (
-                self.register_state.rs1,
-                self.instruction.operands.imm as i128,
-            ),
+            8 => (self.register_state.rs1 as u8 as u64, self.instruction.operands.imm as u8 as i128),
+            32 => (self.register_state.rs1 as u32 as u64, self.instruction.operands.imm as u32 as i128),
+            64 => (self.register_state.rs1, self.instruction.operands.imm as i128),
             _ => panic!("{XLEN}-bit word size is unsupported"),
         }
     }

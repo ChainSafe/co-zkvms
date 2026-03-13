@@ -1,8 +1,12 @@
 use jolt_core::poly::eq_poly::EqPolynomial;
+#[cfg(feature = "zk")]
+use jolt_core::poly::opening_proof::OpeningId;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
+#[cfg(feature = "zk")]
+use jolt_core::subprotocols::blindfold::InputClaimConstraint;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::ram::ra_virtual::RaSumcheck;
-use jolt_core::zkvm::witness::CommittedPolynomial;
+use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 
 use crate::poly::opening_proof::Rep3OpeningAccumulator;
 use crate::subprotocols::sumcheck::PublicSumcheckInstance;
@@ -21,11 +25,7 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for RaSumcheck<F>
         self.input_claim()
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &Rep3OpeningAccumulator<F>,
-        r: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &Rep3OpeningAccumulator<F>, r: &[F::Challenge]) -> F {
         // RaSumcheck binds LowToHigh; normalize_opening_point reverses r.
         // expected_output_claim in vanilla uses r.iter().rev(), so we match that.
         let r_rev: Vec<F::Challenge> = r.iter().cloned().rev().collect();
@@ -39,10 +39,7 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for RaSumcheck<F>
         let product: F = (0..self.d())
             .map(|i| {
                 accumulator
-                    .get_committed_polynomial_opening(
-                        CommittedPolynomial::RamRa(i),
-                        SumcheckId::RamRaVirtualization,
-                    )
+                    .get_committed_polynomial_opening(CommittedPolynomial::RamRa(i), SumcheckId::RamRaVirtualization)
                     .1
             })
             .product();
@@ -50,10 +47,7 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for RaSumcheck<F>
         eq_eval * product
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         self.normalize_opening_point(opening_point)
     }
 
@@ -75,5 +69,19 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for RaSumcheck<F>
                 vec![claims[i]],
             );
         }
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::weighted_openings(&[
+            OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamValFinalEvaluation),
+            OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamReadWriteChecking),
+            OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation),
+        ])
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(&self, _accumulator: &Rep3OpeningAccumulator<F>) -> Vec<F> {
+        vec![self.gamma()[1], self.gamma()[2]]
     }
 }

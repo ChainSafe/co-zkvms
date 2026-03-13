@@ -10,11 +10,9 @@ use rayon::prelude::*;
 /// left[i] = left[i] * scalar + right[i]
 fn fold_field_vectors(left: &mut [ArkFr], right: &[ArkFr], scalar: &ArkFr) {
     assert_eq!(left.len(), right.len(), "Lengths must match");
-    left.par_iter_mut()
-        .zip(right.par_iter())
-        .for_each(|(l, r)| {
-            *l = *l * *scalar + *r;
-        });
+    left.par_iter_mut().zip(right.par_iter()).for_each(|(l, r)| {
+        *l = *l * *scalar + *r;
+    });
 }
 
 pub struct JoltG1Routines;
@@ -22,14 +20,12 @@ pub struct JoltG1Routines;
 impl DoryRoutines<ArkG1> for JoltG1Routines {
     fn msm(bases: &[ArkG1], scalars: &[ArkFr]) -> ArkG1 {
         // SAFETY: ArkG1 has same memory layout as G1Projective
-        let projective_points: &[G1Projective] = unsafe {
-            std::slice::from_raw_parts(bases.as_ptr() as *const G1Projective, bases.len())
-        };
+        let projective_points: &[G1Projective] =
+            unsafe { std::slice::from_raw_parts(bases.as_ptr() as *const G1Projective, bases.len()) };
         let affines = G1Projective::normalize_batch(projective_points);
 
         // SAFETY: ArkFr has same memory layout as Fr
-        let raw_scalars: &[Fr] =
-            unsafe { std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len()) };
+        let raw_scalars: &[Fr] = unsafe { std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len()) };
 
         // Only use the first scalars.len() bases to match the scalar count
         let result = VariableBaseMSM::msm_field_elements(&affines[..scalars.len()], raw_scalars)
@@ -44,8 +40,7 @@ impl DoryRoutines<ArkG1> for JoltG1Routines {
         }
 
         // SAFETY: ArkFr has same memory layout as Fr
-        let raw_scalars: &[Fr] =
-            unsafe { std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len()) };
+        let raw_scalars: &[Fr] = unsafe { std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len()) };
 
         let results_proj = jolt_optimizations::fixed_base_vector_msm_g1(&base.0, raw_scalars);
 
@@ -56,12 +51,10 @@ impl DoryRoutines<ArkG1> for JoltG1Routines {
         assert_eq!(bases.len(), vs.len(), "bases and vs must have same length");
 
         // SAFETY: ArkG1 is repr(transparent) so has same memory layout as G1Projective
-        let vs_proj: &mut [G1Projective] = unsafe {
-            std::slice::from_raw_parts_mut(vs.as_mut_ptr() as *mut G1Projective, vs.len())
-        };
-        let bases_proj: &[G1Projective] = unsafe {
-            std::slice::from_raw_parts(bases.as_ptr() as *const G1Projective, bases.len())
-        };
+        let vs_proj: &mut [G1Projective] =
+            unsafe { std::slice::from_raw_parts_mut(vs.as_mut_ptr() as *mut G1Projective, vs.len()) };
+        let bases_proj: &[G1Projective] =
+            unsafe { std::slice::from_raw_parts(bases.as_ptr() as *const G1Projective, bases.len()) };
 
         // SAFETY: ArkFr has same memory layout as Fr
         let raw_scalar = unsafe { std::mem::transmute_copy::<ArkFr, Fr>(scalar) };
@@ -71,29 +64,19 @@ impl DoryRoutines<ArkG1> for JoltG1Routines {
     }
 
     fn fixed_scalar_mul_vs_then_add(vs: &mut [ArkG1], addends: &[ArkG1], scalar: &ArkFr) {
-        assert_eq!(
-            vs.len(),
-            addends.len(),
-            "vs and addends must have same length"
-        );
+        assert_eq!(vs.len(), addends.len(), "vs and addends must have same length");
 
         // SAFETY: ArkG1 is repr(transparent) so has same memory layout as G1Projective
-        let vs_proj: &mut [G1Projective] = unsafe {
-            std::slice::from_raw_parts_mut(vs.as_mut_ptr() as *mut G1Projective, vs.len())
-        };
-        let addends_proj: &[G1Projective] = unsafe {
-            std::slice::from_raw_parts(addends.as_ptr() as *const G1Projective, addends.len())
-        };
+        let vs_proj: &mut [G1Projective] =
+            unsafe { std::slice::from_raw_parts_mut(vs.as_mut_ptr() as *mut G1Projective, vs.len()) };
+        let addends_proj: &[G1Projective] =
+            unsafe { std::slice::from_raw_parts(addends.as_ptr() as *const G1Projective, addends.len()) };
 
         // SAFETY: ArkFr has same memory layout as Fr
         let raw_scalar = unsafe { std::mem::transmute_copy::<ArkFr, Fr>(scalar) };
 
         // v[i] = scalar * v[i] + addends[i]
-        jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(
-            vs_proj,
-            raw_scalar,
-            addends_proj,
-        );
+        jolt_optimizations::vector_scalar_mul_add_gamma_g1_online(vs_proj, raw_scalar, addends_proj);
     }
 
     fn fold_field_vectors(left: &mut [ArkFr], right: &[ArkFr], scalar: &ArkFr) {
@@ -109,8 +92,7 @@ impl DoryRoutines<ArkG2> for JoltG2Routines {
         let affines = G2Projective::normalize_batch(&projective_points);
 
         // SAFETY: ArkFr has same memory layout as Fr
-        let raw_scalars: &[Fr] =
-            unsafe { std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len()) };
+        let raw_scalars: &[Fr] = unsafe { std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len()) };
 
         // Only use the first scalars.len() bases to match the scalar count
         let result = VariableBaseMSM::msm_field_elements(&affines[..scalars.len()], raw_scalars)
@@ -125,8 +107,7 @@ impl DoryRoutines<ArkG2> for JoltG2Routines {
         }
 
         // SAFETY: ArkFr has same memory layout as Fr
-        let raw_scalars: &[Fr] =
-            unsafe { std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len()) };
+        let raw_scalars: &[Fr] = unsafe { std::slice::from_raw_parts(scalars.as_ptr() as *const Fr, scalars.len()) };
 
         // Use GLV-based optimization for G2
         let base_proj = base.0;
@@ -144,12 +125,10 @@ impl DoryRoutines<ArkG2> for JoltG2Routines {
         assert_eq!(bases.len(), vs.len(), "bases and vs must have same length");
 
         // SAFETY: ArkG2 is repr(transparent) so has same memory layout as G2Projective
-        let vs_proj: &mut [G2Projective] = unsafe {
-            std::slice::from_raw_parts_mut(vs.as_mut_ptr() as *mut G2Projective, vs.len())
-        };
-        let bases_proj: &[G2Projective] = unsafe {
-            std::slice::from_raw_parts(bases.as_ptr() as *const G2Projective, bases.len())
-        };
+        let vs_proj: &mut [G2Projective] =
+            unsafe { std::slice::from_raw_parts_mut(vs.as_mut_ptr() as *mut G2Projective, vs.len()) };
+        let bases_proj: &[G2Projective] =
+            unsafe { std::slice::from_raw_parts(bases.as_ptr() as *const G2Projective, bases.len()) };
 
         // SAFETY: ArkFr has same memory layout as Fr
         let raw_scalar = unsafe { std::mem::transmute_copy::<ArkFr, Fr>(scalar) };
@@ -159,29 +138,19 @@ impl DoryRoutines<ArkG2> for JoltG2Routines {
     }
 
     fn fixed_scalar_mul_vs_then_add(vs: &mut [ArkG2], addends: &[ArkG2], scalar: &ArkFr) {
-        assert_eq!(
-            vs.len(),
-            addends.len(),
-            "vs and addends must have same length"
-        );
+        assert_eq!(vs.len(), addends.len(), "vs and addends must have same length");
 
         // SAFETY: ArkG2 is repr(transparent) so has same memory layout as G2Projective
-        let vs_proj: &mut [G2Projective] = unsafe {
-            std::slice::from_raw_parts_mut(vs.as_mut_ptr() as *mut G2Projective, vs.len())
-        };
-        let addends_proj: &[G2Projective] = unsafe {
-            std::slice::from_raw_parts(addends.as_ptr() as *const G2Projective, addends.len())
-        };
+        let vs_proj: &mut [G2Projective] =
+            unsafe { std::slice::from_raw_parts_mut(vs.as_mut_ptr() as *mut G2Projective, vs.len()) };
+        let addends_proj: &[G2Projective] =
+            unsafe { std::slice::from_raw_parts(addends.as_ptr() as *const G2Projective, addends.len()) };
 
         // SAFETY: ArkFr has same memory layout as Fr
         let raw_scalar = unsafe { std::mem::transmute_copy::<ArkFr, Fr>(scalar) };
 
         // v[i] = scalar * v[i] + addends[i]
-        jolt_optimizations::vector_scalar_mul_add_gamma_g2_online(
-            vs_proj,
-            raw_scalar,
-            addends_proj,
-        );
+        jolt_optimizations::vector_scalar_mul_add_gamma_g2_online(vs_proj, raw_scalar, addends_proj);
     }
 
     fn fold_field_vectors(left: &mut [ArkFr], right: &[ArkFr], scalar: &ArkFr) {

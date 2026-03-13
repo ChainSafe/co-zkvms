@@ -1,24 +1,20 @@
 pub mod types;
 pub use types::*;
 
+use crate::field::PrimeField;
 use crate::protocols::rep3::{
     PartyID,
     network::{IoContext, Rep3Network},
 };
 use ark_linear_sumcheck::rng::FeedableRNG;
 use eyre::Context;
-use crate::field::PrimeField;
 use rand::RngCore;
 
 use crate::protocols::rep3::rngs::SSRandom;
 
 pub type AdditiveShare<F> = AdditivePrimeFieldShare<F>;
 
-pub fn add_public<F: PrimeField>(
-    shared: AdditiveShare<F>,
-    public: F,
-    id: PartyID,
-) -> AdditiveShare<F> {
+pub fn add_public<F: PrimeField>(shared: AdditiveShare<F>, public: F, id: PartyID) -> AdditiveShare<F> {
     match id {
         PartyID::ID0 => AdditiveShare::from_fe(shared.into_fe() + public),
         PartyID::ID1 => shared,
@@ -26,39 +22,23 @@ pub fn add_public<F: PrimeField>(
     }
 }
 
-pub fn sub_shared_by_public<F: PrimeField>(
-    shared: AdditiveShare<F>,
-    public: F,
-    id: PartyID,
-) -> AdditiveShare<F> {
+pub fn sub_shared_by_public<F: PrimeField>(shared: AdditiveShare<F>, public: F, id: PartyID) -> AdditiveShare<F> {
     add_public(shared, -public, id)
 }
 
 /// Performs subtraction between a shared value and a public value, returning public - shared.
-pub fn sub_public_by_shared<F: PrimeField>(
-    public: F,
-    shared: AdditiveShare<F>,
-    id: PartyID,
-) -> AdditiveShare<F> {
+pub fn sub_public_by_shared<F: PrimeField>(public: F, shared: AdditiveShare<F>, id: PartyID) -> AdditiveShare<F> {
     add_public(-shared, public, id)
 }
 
-pub fn get_mask_scalar_additive<F: PrimeField, R: RngCore + FeedableRNG>(
-    rng: &mut SSRandom<R>,
-) -> F {
+pub fn get_mask_scalar_additive<F: PrimeField, R: RngCore + FeedableRNG>(rng: &mut SSRandom<R>) -> F {
     let zero_share = F::rand(&mut rng.rng_1) - F::rand(&mut rng.rng_0);
     rng.update();
     zero_share
 }
 
-pub fn promote_to_trivial_shares<F: PrimeField>(
-    public_values: Vec<F>,
-    id: PartyID,
-) -> Vec<AdditiveShare<F>> {
-    public_values
-        .into_iter()
-        .map(|value| promote_to_trivial_share(value, id))
-        .collect()
+pub fn promote_to_trivial_shares<F: PrimeField>(public_values: Vec<F>, id: PartyID) -> Vec<AdditiveShare<F>> {
+    public_values.into_iter().map(|value| promote_to_trivial_share(value, id)).collect()
 }
 
 pub fn promote_to_trivial_share<F: PrimeField>(public_value: F, id: PartyID) -> AdditiveShare<F> {
@@ -106,10 +86,7 @@ fn combine_field_element<F: PrimeField>(share1: &F, share2: &F, share3: &F) -> F
     *share1 + *share2 + *share3
 }
 
-pub fn open<F: PrimeField, Network: Rep3Network>(
-    a: F,
-    io_ctx: &mut IoContext<Network>,
-) -> eyre::Result<F> {
+pub fn open<F: PrimeField, Network: Rep3Network>(a: F, io_ctx: &mut IoContext<Network>) -> eyre::Result<F> {
     Ok(open_vec(vec![a], io_ctx)?[0])
 }
 
@@ -119,14 +96,8 @@ pub fn open_vec<F: PrimeField, Network: Rep3Network>(
 ) -> eyre::Result<Vec<F>> {
     io_ctx.network.send_many(io_ctx.id.prev_id(), &a)?;
     io_ctx.network.send_many(io_ctx.id.next_id(), &a)?;
-    let prev = io_ctx
-        .network
-        .recv_many(io_ctx.id.prev_id())
-        .context("while receiving previous shares")?;
-    let next = io_ctx
-        .network
-        .recv_many(io_ctx.id.next_id())
-        .context("while sending shares")?;
+    let prev = io_ctx.network.recv_many(io_ctx.id.prev_id()).context("while receiving previous shares")?;
+    let next = io_ctx.network.recv_many(io_ctx.id.next_id()).context("while sending shares")?;
 
     let res = combine_field_elements(&a, &prev, &next);
 

@@ -27,9 +27,7 @@ impl<const XLEN: usize> JoltLookupTable for ValidSignedRemainderTable<XLEN> {
                 } else {
                     let remainder_sign = remainder >> (XLEN - 1);
                     let divisor_sign = divisor >> (XLEN - 1);
-                    (remainder.unsigned_abs() < divisor.unsigned_abs()
-                        && remainder_sign == divisor_sign)
-                        .into()
+                    (remainder.unsigned_abs() < divisor.unsigned_abs() && remainder_sign == divisor_sign).into()
                 }
             }
             32 => {
@@ -42,9 +40,7 @@ impl<const XLEN: usize> JoltLookupTable for ValidSignedRemainderTable<XLEN> {
                 } else {
                     let remainder_sign = remainder >> (XLEN - 1);
                     let divisor_sign = divisor >> (XLEN - 1);
-                    (remainder.unsigned_abs() < divisor.unsigned_abs()
-                        && remainder_sign == divisor_sign)
-                        .into()
+                    (remainder.unsigned_abs() < divisor.unsigned_abs() && remainder_sign == divisor_sign).into()
                 }
             }
             64 => {
@@ -57,9 +53,7 @@ impl<const XLEN: usize> JoltLookupTable for ValidSignedRemainderTable<XLEN> {
                 } else {
                     let remainder_sign = remainder >> (XLEN - 1);
                     let divisor_sign = divisor >> (XLEN - 1);
-                    (remainder.unsigned_abs() < divisor.unsigned_abs()
-                        && remainder_sign == divisor_sign)
-                        .into()
+                    (remainder.unsigned_abs() < divisor.unsigned_abs() && remainder_sign == divisor_sign).into()
                 }
             }
             _ => panic!("{XLEN}-bit word size is unsupported"),
@@ -87,10 +81,8 @@ impl<const XLEN: usize> JoltLookupTable for ValidSignedRemainderTable<XLEN> {
                 positive_remainder_less_than_divisor *= (F::one() - x_i) * y_i;
                 negative_divisor_greater_than_remainder *= x_i * (F::one() - y_i);
             } else {
-                positive_remainder_less_than_divisor +=
-                    positive_remainder_equals_divisor * (F::one() - x_i) * y_i;
-                negative_divisor_greater_than_remainder +=
-                    negative_divisor_equals_remainder * x_i * (F::one() - y_i);
+                positive_remainder_less_than_divisor += positive_remainder_equals_divisor * (F::one() - x_i) * y_i;
+                negative_divisor_greater_than_remainder += negative_divisor_equals_remainder * x_i * (F::one() - y_i);
             }
             positive_remainder_equals_divisor *= x_i * y_i + (F::one() - x_i) * (F::one() - y_i);
             negative_divisor_equals_remainder *= x_i * y_i + (F::one() - x_i) * (F::one() - y_i);
@@ -118,8 +110,7 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for ValidSignedRemainder
 
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
-        let [one, less_than, greater_than, left_operand_is_zero, right_operand_is_zero] =
-            suffixes.try_into().unwrap();
+        let [one, less_than, greater_than, left_operand_is_zero, right_operand_is_zero] = suffixes.try_into().unwrap();
         // divisor == 0 || (isPositive(remainder) && remainder <= diviisor) || (isNegative(divisor) && divisor >= remainder)
         prefixes[Prefixes::RightOperandIsZero] * right_operand_is_zero
             + prefixes[Prefixes::PositiveRemainderEqualsDivisor] * less_than

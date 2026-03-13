@@ -299,7 +299,7 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
     // --- always-available methods ---
 
     /// Drain `n` daBit tuples (Cheng23 Π₁) from the lazy source.
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self), level = "trace")]
     pub fn take_dabits(&mut self, n: usize) -> eyre::Result<DaBitBatch<F>> {
         self.dabits.take_batch(n)
     }
@@ -800,33 +800,21 @@ fn preproc_max_elems_per_msg<F: PrimeField>() -> usize {
     let mb = preproc_max_msg_mb();
     let bytes = mb.saturating_mul(1024 * 1024);
     let elem = std::mem::size_of::<F>();
-    if elem == 0 {
-        1
-    } else {
-        bytes.div_ceil(elem).max(1)
-    }
+    if elem == 0 { 1 } else { bytes.div_ceil(elem).max(1) }
 }
 
 fn preproc_store_batch_elems<F: PrimeField>() -> usize {
     let mb = preproc_store_batch_mb();
     let bytes = mb.saturating_mul(1024 * 1024);
     let elem = std::mem::size_of::<F>();
-    if elem == 0 {
-        1
-    } else {
-        bytes.div_ceil(elem).max(1)
-    }
+    if elem == 0 { 1 } else { bytes.div_ceil(elem).max(1) }
 }
 
 fn preproc_segment_elems<F: PrimeField>() -> usize {
     let mb = preproc_segment_mb();
     let bytes = mb.saturating_mul(1024 * 1024);
     let elem = std::mem::size_of::<F>();
-    if elem == 0 {
-        1
-    } else {
-        bytes.div_ceil(elem).max(1)
-    }
+    if elem == 0 { 1 } else { bytes.div_ceil(elem).max(1) }
 }
 
 #[derive(Clone, Copy)]
@@ -2415,6 +2403,7 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTra
 ) -> eyre::Result<()> {
     extend_pool_batched_base(pool, deficit_counts, deficit_dabits, io)?;
     // set_* replaces the entire source, so generate deficit + remaining = budget.
+    // set_* replaces the entire source, so generate deficit + remaining = budget.
     if deficit_ring_edabits_u64 > 0 {
         let total = deficit_ring_edabits_u64 + pool.remaining_ring_edabits_u64();
         pool.set_ring_edabits_u64(super::edabits::random_edabits_ring_lazy::<u64, _>(total, io)?);
@@ -2446,6 +2435,7 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTra
     io: &mut IoContextPool<N>,
 ) -> eyre::Result<()> {
     extend_pool_batched_base(pool, deficit_counts, deficit_dabits, io)?;
+    // All set_* calls below REPLACE the source, so generate deficit + remaining = budget.
     // All set_* calls below REPLACE the source, so generate deficit + remaining = budget.
     if deficit_wrap_masks > 0 {
         let total = deficit_wrap_masks + pool.remaining_wrap_masks();

@@ -41,8 +41,7 @@ mod flags {
             let instr = cycle.instruction();
             if let Some(flags) = instr.try_circuit_flags() {
                 assert!(
-                    !(flags[CircuitFlags::LeftOperandIsPC]
-                        && flags[CircuitFlags::LeftOperandIsRs1Value]),
+                    !(flags[CircuitFlags::LeftOperandIsPC] && flags[CircuitFlags::LeftOperandIsRs1Value]),
                     "Left operand flags not exclusive for {instr:?}",
                 );
             }
@@ -58,8 +57,7 @@ mod flags {
             let instr = cycle.instruction();
             if let Some(flags) = instr.try_circuit_flags() {
                 assert!(
-                    !(flags[CircuitFlags::RightOperandIsRs2Value]
-                        && flags[CircuitFlags::RightOperandIsImm]),
+                    !(flags[CircuitFlags::RightOperandIsRs2Value] && flags[CircuitFlags::RightOperandIsImm]),
                     "Right operand flags not exclusive for {instr:?}",
                 );
             }
@@ -83,10 +81,7 @@ mod flags {
                 .iter()
                 .filter(|&&b| b)
                 .count();
-                assert!(
-                    num_true <= 1,
-                    "Lookup shaping flags not exclusive for {instr:?}",
-                );
+                assert!(num_true <= 1, "Lookup shaping flags not exclusive for {instr:?}",);
             }
         }
     }

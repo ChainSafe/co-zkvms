@@ -52,9 +52,7 @@ pub trait JoltLookupTable: Clone + Debug + Send + Sync + Serialize {
     /// Materializes the entire lookup table for this instruction (assuming an 8-bit word size).
     #[cfg(test)]
     fn materialize(&self) -> Vec<u64> {
-        (0..1 << 16)
-            .map(|i| self.materialize_entry(i as u128))
-            .collect()
+        (0..1 << 16).map(|i| self.materialize_entry(i as u128)).collect()
     }
 
     /// Materialize the entry at the given `index` in the lookup table for this instruction.
@@ -402,11 +400,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
         }
     }
 
-    pub fn combine<F: JoltField>(
-        &self,
-        prefixes: &[PrefixEval<F>],
-        suffixes: &[SuffixEval<F>],
-    ) -> F {
+    pub fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         match self {
             LookupTables::RangeCheck(table) => table.combine(prefixes, suffixes),
             LookupTables::And(table) => table.combine(prefixes, suffixes),

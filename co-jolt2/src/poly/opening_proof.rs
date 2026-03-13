@@ -200,7 +200,7 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
         // a. Receive gammas from coordinator
         let all_gammas: Vec<F> = io_ctx.network().receive_request()?;
 
-        let _span = tracing::info_span!("prepare_sumchecks").entered();
+        let _span = tracing::trace_span!("prepare_sumchecks").entered();
         // b. Prepare sumchecks
         let mut gamma_offsets = vec![0usize];
         for sumcheck in self.sumchecks.iter() {
@@ -233,7 +233,7 @@ impl<F: JoltField> Rep3OpeningAccumulatorWorker<F> {
             &mut preproc,
         )?;
 
-        let _span = tracing::info_span!("rlc_and_hints").entered();
+        let _span = tracing::trace_span!("rlc_and_hints").entered();
 
         // f. Receive gamma for joint poly RLC from coordinator
         let gamma: F = io_ctx.network().receive_request()?;

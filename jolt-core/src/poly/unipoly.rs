@@ -32,9 +32,7 @@ impl<F: JoltField> UniPoly<F> {
 
     /// Interpolate a polynomial from its evaluations at the points 0, 1, 2, ..., n-1.
     pub fn from_evals(evals: &[F]) -> Self {
-        UniPoly {
-            coeffs: Self::vandermonde_interpolation(evals),
-        }
+        UniPoly { coeffs: Self::vandermonde_interpolation(evals) }
     }
 
     /// Interpolates a polynomial from its evaluations on `[0, 1, ..., degree - 1, inf]`.
@@ -65,9 +63,7 @@ impl<F: JoltField> UniPoly<F> {
         row.push(evals[n - 1]);
         interpol_mat.push(row);
 
-        UniPoly {
-            coeffs: gaussian_elimination(&mut interpol_mat),
-        }
+        UniPoly { coeffs: gaussian_elimination(&mut interpol_mat) }
     }
 
     fn vandermonde_interpolation(evals: &[F]) -> Vec<F> {
@@ -151,7 +147,7 @@ impl<F: JoltField> UniPoly<F> {
         (0..self.coeffs.len()).map(|i| self.coeffs[i]).sum()
     }
 
-    #[tracing::instrument(skip_all, name = "UniPoly::evaluate")]
+    #[tracing::instrument(skip_all, level = "trace", name = "UniPoly::evaluate")]
     pub fn evaluate<C>(&self, r: &C) -> F
     where
         C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
@@ -160,7 +156,7 @@ impl<F: JoltField> UniPoly<F> {
         Self::eval_with_coeffs(&self.coeffs, r)
     }
 
-    #[tracing::instrument(skip_all, name = "UniPoly::eval_with_coeffs")]
+    #[tracing::instrument(skip_all, level = "trace", name = "UniPoly::eval_with_coeffs")]
     pub fn eval_with_coeffs<C>(coeffs: &[F], r: &C) -> F
     where
         C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
@@ -243,17 +239,11 @@ impl<F: JoltField> UniPoly<F> {
     pub fn compress(&self) -> CompressedUniPoly<F> {
         let coeffs_except_linear_term = [&self.coeffs[..1], &self.coeffs[2..]].concat();
         debug_assert_eq!(coeffs_except_linear_term.len() + 1, self.coeffs.len());
-        CompressedUniPoly {
-            coeffs_except_linear_term,
-        }
+        CompressedUniPoly { coeffs_except_linear_term }
     }
 
     pub fn random<R: RngCore + CryptoRng>(num_vars: usize, mut rng: &mut R) -> Self {
-        Self::from_coeff(
-            std::iter::from_fn(|| Some(F::random(&mut rng)))
-                .take(num_vars)
-                .collect(),
-        )
+        Self::from_coeff(std::iter::from_fn(|| Some(F::random(&mut rng))).take(num_vars).collect())
     }
 
     pub fn shift_coefficients(&mut self, rhs: &F) {
@@ -281,8 +271,7 @@ impl<F: JoltField> UniPoly<F> {
         // Given that s(0) + s(1) = hint, we can rewrite this as:
         // a * c + (a + b) * (c + d + e) = hint, which means we can solve for d as:
         // d = (hint - a * c) / (a + b) - c - e
-        let quadratic_coeff_1 =
-            (hint - cubic_coeff_0) / linear_eval_one - quadratic_coeff_0 - quadratic_coeff_2;
+        let quadratic_coeff_1 = (hint - cubic_coeff_0) / linear_eval_one - quadratic_coeff_0 - quadratic_coeff_2;
 
         // Now derive the coefficients of the cubic polynomial from the evaluations
         // We have s(X) = (a + bX) * (c + dX + eX^2) = ac + (ad + bc)X + (ae + bd)X^2 + beX^3
@@ -304,8 +293,7 @@ impl<F: JoltField> AddAssign<&Self> for UniPoly<F> {
             *lhs += *rhs;
         }
         if matches!(ordering, Ordering::Less) {
-            self.coeffs
-                .extend(rhs.coeffs[self.coeffs.len()..].iter().cloned());
+            self.coeffs.extend(rhs.coeffs[self.coeffs.len()..].iter().cloned());
         }
     }
 }
@@ -320,8 +308,7 @@ impl<F: JoltField> Sub for UniPoly<F> {
             *lhs -= *rhs;
         }
         if matches!(ordering, Ordering::Less) {
-            self.coeffs
-                .extend(rhs.coeffs[self.coeffs.len()..].iter().map(|v| v.neg()));
+            self.coeffs.extend(rhs.coeffs[self.coeffs.len()..].iter().map(|v| v.neg()));
         }
         self
     }
@@ -377,8 +364,7 @@ impl<F: JoltField> CompressedUniPoly<F> {
     // we require eval(0) + eval(1) = hint, so we can solve for the linear term as:
     // linear_term = hint - 2 * constant_term - deg2 term - deg3 term
     pub fn decompress(&self, hint: &F) -> UniPoly<F> {
-        let mut linear_term =
-            *hint - self.coeffs_except_linear_term[0] - self.coeffs_except_linear_term[0];
+        let mut linear_term = *hint - self.coeffs_except_linear_term[0] - self.coeffs_except_linear_term[0];
         for i in 1..self.coeffs_except_linear_term.len() {
             linear_term -= self.coeffs_except_linear_term[i];
         }
@@ -392,8 +378,7 @@ impl<F: JoltField> CompressedUniPoly<F> {
     // In the verifier we do not have to check that f(0) + f(1) = hint as we can just
     // recover the linear term assuming the prover did it right, then eval the poly
     pub fn eval_from_hint(&self, hint: &F, x: &F::Challenge) -> F {
-        let mut linear_term =
-            *hint - self.coeffs_except_linear_term[0] - self.coeffs_except_linear_term[0];
+        let mut linear_term = *hint - self.coeffs_except_linear_term[0] - self.coeffs_except_linear_term[0];
         for i in 1..self.coeffs_except_linear_term.len() {
             linear_term -= self.coeffs_except_linear_term[i];
         }
@@ -434,9 +419,7 @@ mod tests {
         // Our degree 3 polynomial is: 5 + x + 3x^2 + 9x^3.
         let gt_poly = UniPoly::<Fr>::from_coeff(vec![5.into(), 1.into(), 3.into(), 9.into()]);
         let degree = 3;
-        let finite_evals = (0..degree)
-            .map(|x| gt_poly.evaluate::<Fr>(&x.into()))
-            .collect();
+        let finite_evals = (0..degree).map(|x| gt_poly.evaluate::<Fr>(&x.into())).collect();
         let eval_at_infinity = *gt_poly.coeffs.last().unwrap();
         let toom_evals = [finite_evals, vec![eval_at_infinity]].concat();
 
@@ -531,9 +514,7 @@ mod tests {
                 let dividend = UniPoly::<Fr>::random(a_degree, rng);
                 let divisor = UniPoly::<Fr>::random(b_degree, rng);
 
-                if let Some((quotient, remainder)) =
-                    UniPoly::divide_with_remainder(&dividend, &divisor)
-                {
+                if let Some((quotient, remainder)) = UniPoly::divide_with_remainder(&dividend, &divisor) {
                     let mut prod = naive_mul(&divisor, &quotient);
                     prod += &remainder;
                     assert_eq!(dividend, prod)
@@ -549,19 +530,11 @@ mod tests {
         let linear_coeffs = [Fr::from_u64(1u64), Fr::from_u64(1u64)];
         let quadratic_coeff_0 = Fr::from_u64(3u64);
         let quadratic_coeff_2 = Fr::from_u64(1u64);
-        let true_poly = UniPoly::from_coeff(vec![
-            Fr::from_u64(3u64),
-            Fr::from_u64(5u64),
-            Fr::from_u64(3u64),
-            Fr::from_u64(1u64),
-        ]);
+        let true_poly =
+            UniPoly::from_coeff(vec![Fr::from_u64(3u64), Fr::from_u64(5u64), Fr::from_u64(3u64), Fr::from_u64(1u64)]);
         let hint = Fr::from_u64(15u64);
-        let poly = UniPoly::from_linear_times_quadratic_with_hint(
-            linear_coeffs,
-            quadratic_coeff_0,
-            quadratic_coeff_2,
-            hint,
-        );
+        let poly =
+            UniPoly::from_linear_times_quadratic_with_hint(linear_coeffs, quadratic_coeff_0, quadratic_coeff_2, hint);
         assert_eq!(poly.coeffs, true_poly.coeffs);
     }
 }

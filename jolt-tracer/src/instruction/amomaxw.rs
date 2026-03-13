@@ -41,14 +41,8 @@ impl AMOMAXW {
         };
 
         // Find the maximum and store back to memory
-        let new_value = if original_value as i32 >= compare_value {
-            original_value as i32
-        } else {
-            compare_value
-        };
-        cpu.mmu
-            .store_word(address, new_value as u32)
-            .expect("MMU store error");
+        let new_value = if original_value as i32 >= compare_value { original_value as i32 } else { compare_value };
+        cpu.mmu.store_word(address, new_value as u32).expect("MMU store error");
 
         // Return the original value
         cpu.x[self.operands.rd as usize] = original_value;
@@ -79,11 +73,7 @@ impl RISCVTrace for AMOMAXW {
     ///
     /// On RV64, requires sign-extending both operands to 64 bits before
     /// comparison to ensure correct signed comparison semantics.
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let v_rd = allocator.allocate();
         let v_rs2 = allocator.allocate();
         let v_sel_rs2 = allocator.allocate();
@@ -112,14 +102,7 @@ impl RISCVTrace for AMOMAXW {
                 let v_word = allocator.allocate();
                 let v_shift = allocator.allocate();
 
-                amo_pre64(
-                    &mut asm,
-                    self.operands.rs1,
-                    *v_rd,
-                    *v_dword_address,
-                    *v_dword,
-                    *v_shift,
-                );
+                amo_pre64(&mut asm, self.operands.rs1, *v_rd, *v_dword_address, *v_dword, *v_shift);
                 asm.emit_i::<VirtualSignExtendWord>(*v_rs2, self.operands.rs2, 0);
                 asm.emit_i::<VirtualSignExtendWord>(*v_tmp, *v_rd, 0);
                 asm.emit_r::<SLT>(*v_sel_rs2, *v_tmp, *v_rs2);

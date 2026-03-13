@@ -206,8 +206,7 @@ impl Emulator {
             // @TODO: What if symbol can be in the second or later string table sections?
             let map = analyzer.create_symbol_map(&entries, string_table_section_headers[0]);
             for key in map.keys() {
-                self.symbol_map
-                    .insert(key.to_string(), *map.get(key).unwrap());
+                self.symbol_map.insert(key.to_string(), *map.get(key).unwrap());
             }
         }
 
@@ -240,9 +239,7 @@ impl Emulator {
             let sh_size = header.sh_size as usize;
             if sh_addr >= RAM_START_ADDRESS && sh_offset > 0 && sh_size > 0 {
                 for j in 0..sh_size {
-                    self.cpu
-                        .get_mut_mmu()
-                        .setup_bytecode(sh_addr + j as u64, analyzer.read_byte(sh_offset + j));
+                    self.cpu.get_mut_mmu().setup_bytecode(sh_addr + j as u64, analyzer.read_byte(sh_offset + j));
                 }
             }
         }
@@ -285,11 +282,7 @@ impl Emulator {
     ///
     /// # Returns
     /// * `Result<(), std::io::Error>` - Ok if successful, Err if write operations fail
-    pub fn write_signature<W: Write>(
-        &mut self,
-        writer: &mut W,
-        granularity: usize,
-    ) -> std::io::Result<()> {
+    pub fn write_signature<W: Write>(&mut self, writer: &mut W, granularity: usize) -> std::io::Result<()> {
         if self.begin_signature_addr == 0 || self.end_signature_addr == 0 {
             return Ok(());
         }
@@ -300,9 +293,7 @@ impl Emulator {
             // Write bytes in big-endian order
             for j in (0..granularity).rev() {
                 let byte = if i + j < sig_len {
-                    self.cpu
-                        .get_mut_mmu()
-                        .load_raw(self.begin_signature_addr + (i + j) as u64)
+                    self.cpu.get_mut_mmu().load_raw(self.begin_signature_addr + (i + j) as u64)
                 } else {
                     0
                 };

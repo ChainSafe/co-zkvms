@@ -80,9 +80,7 @@ impl ElfAnalyzer {
     /// # Arguments
     /// * `data` ELF file content binary
     pub fn new(data: &[u8]) -> Self {
-        ElfAnalyzer {
-            data: data.to_vec(),
-        }
+        ElfAnalyzer { data: data.to_vec() }
     }
 
     /// Checks if ELF file content is valid
@@ -585,14 +583,7 @@ impl ElfAnalyzer {
                 println!("");
                 */
 
-                entries.push(SymbolEntry {
-                    st_name,
-                    st_info,
-                    _st_other,
-                    _st_shndx,
-                    st_value,
-                    _st_size,
-                });
+                entries.push(SymbolEntry { st_name, st_info, _st_other, _st_shndx, st_value, _st_size });
             }
         }
         entries

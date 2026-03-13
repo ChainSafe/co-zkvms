@@ -68,11 +68,7 @@ impl RISCVTrace for SH {
     /// The implementation uses the XOR technique: (word ^ halfword) & mask ^ word
     /// This clears the original halfword bits and sets the new halfword value
     /// in a single sequence without branches.
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         match xlen {
             Xlen::Bit32 => self.inline_sequence_32(allocator),
             #[cfg(feature = "rv64")]

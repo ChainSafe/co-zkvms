@@ -1,10 +1,10 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use ark_bn254::Fr;
 use rand::SeedableRng;
 use rand_chacha::ChaCha12Rng;
 
-use co_jolt2::host::program::Rep3Program;
+use co_jolt2::host::program::generate_trace_shares;
 use co_jolt2::utils::compute_ram_k;
 use co_jolt2::utils::test_utils::run_rep3_local_test_with_coordinator;
 use co_jolt2::utils::tracing::init_tracing;
@@ -15,31 +15,79 @@ use co_jolt2::zkvm::{JoltArch, Rep3JoltWorker};
 use co_jolt_coordinator::zkvm::dag::coordinator::Rep3JoltDag;
 use co_jolt_coordinator::zkvm::dag::state_manager::StateManager;
 
+use jolt_core::curve::Bn254Curve;
+use jolt_core::field::JoltField;
 use jolt_core::host::Program;
 use jolt_core::poly::commitment::dory::{DoryCommitmentScheme, DoryGlobals};
 use jolt_core::transcripts::Blake2bTranscript;
 use jolt_core::zkvm::dag::jolt_dag::JoltDAG;
+use jolt_core::zkvm::dag::proof_serialization::JoltProof;
 use jolt_core::zkvm::dag::state_manager::StateManager as VanillaStateManager;
+use jolt_core::zkvm::dag::state_manager::{ProofData, ProofKeys};
 use jolt_core::zkvm::witness::DTH_ROOT_OF_K;
 use jolt_core::zkvm::{JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing, JoltVerifierPreprocessing};
 use tracer::instruction::Cycle;
+use tracer::JoltDevice;
 
 type F = Fr;
 type PCS = DoryCommitmentScheme;
 type FS = Blake2bTranscript;
 
-#[test]
-fn dag_correct() {
-    let _tracing_guard = init_tracing("dag_correct.json", std::path::Path::new("traces"));
+struct DagFixture {
+    proof: JoltProof<F, Bn254Curve, PCS, FS>,
+    verifier_preprocessing: JoltVerifierPreprocessing<F, PCS>,
+    io_device: tracer::JoltDevice,
+    ram_k: usize,
+}
 
-    // 1) Build and trace the fibonacci program.
-    let mut program = Program::new("fibonacci-guest");
-    program.set_memory_size(10240);
-    let inputs = postcard::to_stdvec(&9u32).unwrap();
+fn dag_test_lock() -> MutexGuard<'static, ()> {
+    static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    TEST_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+}
+
+fn use_sha2_fixture() -> bool {
+    matches!(std::env::var("TEST_SHA2").ok().as_deref().or(std::env::var("SHA2_CHAIN").ok().as_deref()), Some("1"))
+}
+
+fn build_program() -> Program {
+    if use_sha2_fixture() {
+        let mut program = Program::new("sha2-chain-guest");
+        program.set_stack_size(65536);
+        program.set_memory_size(10240);
+        program
+    } else {
+        let mut program = Program::new("fibonacci-guest");
+        program.set_memory_size(10240);
+        program
+    }
+}
+
+fn build_inputs() -> Vec<u8> {
+    if use_sha2_fixture() {
+        let mut inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
+        inputs.append(&mut postcard::to_stdvec(&1u32).unwrap());
+        inputs
+    } else {
+        postcard::to_stdvec(&9u32).unwrap()
+    }
+}
+
+fn build_public_fixture(
+    trace_file: &str,
+) -> (
+    [(Vec<Rep3Cycle>, co_jolt2::host::memory::Rep3Memory, co_jolt2::host::jolt_device::Rep3ProgramIOInput); 3],
+    JoltProverPreprocessing<F, PCS>,
+    JoltVerifierPreprocessing<F, PCS>,
+    tracer::JoltDevice,
+    usize,
+    usize,
+) {
+    let mut program = build_program();
+    let inputs = build_inputs();
     let (bytecode, memory_init, _) = program.decode();
 
     let mut rng = ChaCha12Rng::seed_from_u64(0);
-    let mut shares = program.generate_trace_shares(&inputs, &[], &[], &mut rng);
+    let mut shares = generate_trace_shares(&mut program, &inputs, &[], &[], &mut rng);
     let (mut vanilla_trace, _vanilla_memory, mut io_device) = program.trace(&inputs, &[], &[]);
 
     // Truncate trailing zeros on device outputs, matching what Jolt::prove does.
@@ -69,6 +117,16 @@ fn dag_correct() {
 
     // 3) Compute ram_K from vanilla trace (must match both sides).
     let ram_K = compute_ram_k(&vanilla_trace, &shared);
+
+    (shares, preprocessing, verifier_preprocessing, io_device, ram_K, padded_len)
+}
+
+fn build_dag_fixture(trace_file: &str) -> DagFixture {
+    let _test_guard = dag_test_lock();
+    let _tracing_guard = init_tracing(trace_file, std::path::Path::new("traces"));
+
+    let (shares, preprocessing, verifier_preprocessing, io_device, ram_K, padded_len) =
+        build_public_fixture(trace_file);
 
     // 4) Rep3 MPC proof.
     let _dory_guard = DoryGlobals::initialize(DTH_ROOT_OF_K, padded_len);
@@ -188,15 +246,88 @@ fn dag_correct() {
     let verifier_preprocessing = Arc::try_unwrap(verifier_preprocessing_arc).unwrap_or_else(|arc| (*arc).clone());
     let io_device = Arc::try_unwrap(io_device_arc).unwrap_or_else(|arc| (*arc).clone());
 
+    DagFixture { proof: rep3_proof, verifier_preprocessing, io_device, ram_k: ram_K }
+}
+
+fn verify_dag_fixture(fixture: DagFixture) -> Result<(), Box<dyn std::error::Error>> {
+    let DagFixture { proof, verifier_preprocessing, io_device, ram_k } = fixture;
+    let twist_sumcheck_switch_index = proof.twist_sumcheck_switch_index;
+    let verifier_program_io = JoltDevice {
+        inputs: io_device.inputs.clone(),
+        outputs: io_device.outputs.clone(),
+        panic: io_device.panic,
+        memory_layout: io_device.memory_layout.clone(),
+        trusted_advice: vec![],
+        untrusted_advice: vec![],
+    };
     let verifier_sm = VanillaStateManager::from_proof(
-        rep3_proof,
-        // We need a reference that outlives the verify call; use a leaked box for simplicity.
+        proof,
         Box::leak(Box::new(verifier_preprocessing)),
-        io_device,
-        ram_K,
-        rep3_proof_twist_switch_index(padded_len),
+        verifier_program_io,
+        ram_k,
+        twist_sumcheck_switch_index,
     );
-    JoltDAG::verify::<F, FS, PCS>(verifier_sm).expect("Vanilla verification of MPC proof failed");
+    JoltDAG::verify::<F, FS, PCS>(verifier_sm).map_err(Into::into)
+}
+
+#[test]
+fn dag_correct() {
+    let fixture = build_dag_fixture("dag_correct.json");
+    verify_dag_fixture(fixture).expect("Vanilla verification of MPC proof failed");
+}
+
+#[cfg(feature = "zk")]
+#[test]
+fn dag_zk_tampered_y_com_fails() {
+    let mut fixture = build_dag_fixture("dag_zk_tampered_y_com.json");
+    assert!(fixture.proof.blindfold_proof.is_some(), "DAG ZK proof must include BlindFold");
+
+    let reduced_opening_proof =
+        fixture.proof.proofs.get_mut(&ProofKeys::ReducedOpeningProof).expect("reduced opening proof missing");
+    let reduced_opening_proof = match reduced_opening_proof {
+        ProofData::ReducedOpeningProof(proof) => proof,
+        _ => panic!("unexpected proof type for reduced opening proof"),
+    };
+    if let Some(ref mut y_com) = reduced_opening_proof.joint_opening_proof.dory_proof_data.y_com {
+        *y_com = *y_com + fixture.verifier_preprocessing.generators.g1_0;
+    } else if let Some(ref mut e2) = reduced_opening_proof.joint_opening_proof.dory_proof_data.e2 {
+        *e2 = *e2 + fixture.verifier_preprocessing.generators.g2_0;
+    } else {
+        panic!("ZK reduced opening proof missing committed evaluation fields");
+    }
+
+    let err = verify_dag_fixture(fixture).expect_err("tampered y_com must fail verification");
+    let err_text = format!("{err:?}");
+    assert!(
+        err_text.contains("Stage 5") || err_text.contains("BlindFold"),
+        "unexpected verification error after tampering y_com: {err_text}"
+    );
+}
+
+#[cfg(feature = "zk")]
+#[test]
+fn dag_zk_tampered_stage5_hidden_claim_fails() {
+    let mut fixture = build_dag_fixture("dag_zk_tampered_stage5_hidden_claim.json");
+    assert!(fixture.proof.blindfold_proof.is_some(), "DAG ZK proof must include BlindFold");
+
+    let reduced_opening_proof =
+        fixture.proof.proofs.get_mut(&ProofKeys::ReducedOpeningProof).expect("reduced opening proof missing");
+    let reduced_opening_proof = match reduced_opening_proof {
+        ProofData::ReducedOpeningProof(proof) => proof,
+        _ => panic!("unexpected proof type for reduced opening proof"),
+    };
+    let first_claim = reduced_opening_proof
+        .sumcheck_claims
+        .first_mut()
+        .expect("reduced opening proof must contain at least one hidden claim");
+    *first_claim += F::from_u64(1);
+
+    let err = verify_dag_fixture(fixture).expect_err("tampered stage5 hidden claim must fail verification");
+    let err_text = format!("{err:?}");
+    assert!(
+        err_text.contains("Stage 5") || err_text.contains("BlindFold"),
+        "unexpected verification error after tampering stage5 hidden claim: {err_text}"
+    );
 }
 
 fn rep3_proof_twist_switch_index(padded_len: usize) -> usize {

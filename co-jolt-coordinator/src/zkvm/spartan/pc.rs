@@ -1,5 +1,8 @@
 use jolt_core::poly::eq_poly::EqPlusOnePolynomial;
+use jolt_core::poly::opening_proof::OpeningId;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
+#[cfg(feature = "zk")]
+use jolt_core::subprotocols::blindfold::InputClaimConstraint;
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::instruction::CircuitFlags;
 use jolt_core::zkvm::spartan::pc::PCSumcheck;
@@ -22,43 +25,31 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for PCSumcheck<F>
         self.input_claim()
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &Rep3OpeningAccumulator<F>,
-        r: &[F::Challenge],
-    ) -> F {
+    fn expected_output_claim(&self, accumulator: &Rep3OpeningAccumulator<F>, r: &[F::Challenge]) -> F {
         // Get r_cycle from the SpartanOuter sumcheck opening point.
-        let (outer_sumcheck_opening, _) = accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter);
+        let (outer_sumcheck_opening, _) =
+            accumulator.get_virtual_polynomial_opening(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter);
         let outer_sumcheck_r = &outer_sumcheck_opening.r;
         let num_cycles_bits = self.num_rounds();
         let (r_cycle, _) = outer_sumcheck_r.split_at(num_cycles_bits);
 
         // Shift openings from accumulator.
-        let (_, unexpanded_pc_eval_at_shift_r) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::UnexpandedPC,
-            SumcheckId::SpartanShift,
-        );
-        let (_, pc_eval_at_shift_r) = accumulator
-            .get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanShift);
-        let (_, is_noop_eval_at_shift_r) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::OpFlags(CircuitFlags::IsNoop),
-            SumcheckId::SpartanShift,
-        );
+        let (_, unexpanded_pc_eval_at_shift_r) =
+            accumulator.get_virtual_polynomial_opening(VirtualPolynomial::UnexpandedPC, SumcheckId::SpartanShift);
+        let (_, pc_eval_at_shift_r) =
+            accumulator.get_virtual_polynomial_opening(VirtualPolynomial::PC, SumcheckId::SpartanShift);
+        let (_, is_noop_eval_at_shift_r) = accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::OpFlags(CircuitFlags::IsNoop), SumcheckId::SpartanShift);
 
         let batched_eval_at_shift_r = unexpanded_pc_eval_at_shift_r
             + self.gamma() * pc_eval_at_shift_r
             + self.gamma_squared() * is_noop_eval_at_shift_r;
 
-        let eq_plus_one_shift_sumcheck =
-            EqPlusOnePolynomial::<F>::new(r_cycle.to_vec()).evaluate(r);
+        let eq_plus_one_shift_sumcheck = EqPlusOnePolynomial::<F>::new(r_cycle.to_vec()).evaluate(r);
         batched_eval_at_shift_r * eq_plus_one_shift_sumcheck
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         self.normalize_opening_point(opening_point)
     }
 
@@ -70,9 +61,8 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for PCSumcheck<F>
         claims: Vec<F>,
     ) {
         // claims order: [UnexpandedPC, PC, IsNoopFlag]
-        let [unexpanded_pc_eval, pc_eval, is_noop_eval]: [F; 3] = claims
-            .try_into()
-            .expect("PCSumcheck expects 3 opening claims");
+        let [unexpanded_pc_eval, pc_eval, is_noop_eval]: [F; 3] =
+            claims.try_into().expect("PCSumcheck expects 3 opening claims");
 
         accumulator.append_virtual(
             transcript,
@@ -95,5 +85,19 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for PCSumcheck<F>
             opening_point,
             is_noop_eval,
         );
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_claim_constraint(&self) -> InputClaimConstraint {
+        InputClaimConstraint::weighted_openings(&[
+            OpeningId::Virtual(VirtualPolynomial::NextUnexpandedPC, SumcheckId::SpartanOuter),
+            OpeningId::Virtual(VirtualPolynomial::NextPC, SumcheckId::SpartanOuter),
+            OpeningId::Virtual(VirtualPolynomial::NextIsNoop, SumcheckId::SpartanOuter),
+        ])
+    }
+
+    #[cfg(feature = "zk")]
+    fn input_constraint_challenge_values(&self, _accumulator: &Rep3OpeningAccumulator<F>) -> Vec<F> {
+        vec![self.gamma(), self.gamma_squared()]
     }
 }

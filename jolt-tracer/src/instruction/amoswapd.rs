@@ -35,9 +35,7 @@ impl AMOSWAPD {
         };
 
         // Store the new value to memory
-        cpu.mmu
-            .store_doubleword(address, new_value)
-            .expect("MMU store error");
+        cpu.mmu.store_doubleword(address, new_value).expect("MMU store error");
 
         // Return the original value
         cpu.x[self.operands.rd as usize] = original_value;
@@ -79,11 +77,7 @@ impl RISCVTrace for AMOSWAPD {
     /// This is the simplest AMO operation as it requires no computation,
     /// just an atomic exchange. The returned value can be examined to
     /// determine the previous state (e.g., was a lock already held).
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let v_rd = allocator.allocate();
 
         let mut asm = InstrAssembler::new(self.address, self.is_compressed, xlen, allocator);

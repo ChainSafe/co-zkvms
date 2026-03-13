@@ -9,12 +9,11 @@ use crate::{
 };
 
 use super::{
-    add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice,
-    virtual_assert_eq::VirtualAssertEQ, virtual_assert_valid_div0::VirtualAssertValidDiv0,
+    add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice, virtual_assert_eq::VirtualAssertEQ,
+    virtual_assert_valid_div0::VirtualAssertValidDiv0,
     virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
-    virtual_sign_extend_word::VirtualSignExtendWord,
-    virtual_zero_extend_word::VirtualZeroExtendWord, Cycle, Instruction, RISCVInstruction,
-    RISCVTrace,
+    virtual_sign_extend_word::VirtualSignExtendWord, virtual_zero_extend_word::VirtualZeroExtendWord, Cycle,
+    Instruction, RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -32,11 +31,8 @@ impl DIVUW {
         // quotient in rd, sign-extended to 64 bits.
         let dividend = cpu.x[self.operands.rs1 as usize] as u32;
         let divisor = cpu.x[self.operands.rs2 as usize] as u32;
-        cpu.x[self.operands.rd as usize] = (if divisor == 0 {
-            u32::MAX
-        } else {
-            dividend.wrapping_div(divisor)
-        }) as i32 as i64;
+        cpu.x[self.operands.rd as usize] =
+            (if divisor == 0 { u32::MAX } else { dividend.wrapping_div(divisor) }) as i32 as i64;
     }
 }
 
@@ -93,11 +89,7 @@ impl RISCVTrace for DIVUW {
     /// 5. Verify: remainder < divisor
     ///
     /// Special case: Division by zero returns u32::MAX (0xFFFFFFFF), checked by VirtualAssertValidDiv0
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let a0 = self.operands.rs1; // dividend (contains 32-bit value)
         let a1 = self.operands.rs2; // divisor (contains 32-bit value)
         let a2 = allocator.allocate(); // quotient from oracle

@@ -86,23 +86,14 @@ impl InlineTestHarness {
     }
 
     pub fn load_input32(&mut self, data: &[u32]) {
-        assert!(
-            data.len() * 4 <= self.layout.input_size,
-            "Input data exceeds allocated size"
-        );
+        assert!(data.len() * 4 <= self.layout.input_size, "Input data exceeds allocated size");
         for (i, &word) in data.iter().enumerate() {
-            self.cpu
-                .mmu
-                .store_word(self.layout.input_base + (i * 4) as u64, word)
-                .expect("Failed to store input word");
+            self.cpu.mmu.store_word(self.layout.input_base + (i * 4) as u64, word).expect("Failed to store input word");
         }
     }
 
     pub fn load_input64(&mut self, data: &[u64]) {
-        assert!(
-            data.len() * 8 <= self.layout.input_size,
-            "Input data exceeds allocated size"
-        );
+        assert!(data.len() * 8 <= self.layout.input_size, "Input data exceeds allocated size");
         for (i, &word) in data.iter().enumerate() {
             self.cpu
                 .mmu
@@ -112,10 +103,7 @@ impl InlineTestHarness {
     }
 
     pub fn load_state32(&mut self, data: &[u32]) {
-        assert!(
-            data.len() * 4 <= self.layout.output_size,
-            "State data exceeds allocated size"
-        );
+        assert!(data.len() * 4 <= self.layout.output_size, "State data exceeds allocated size");
         for (i, &word) in data.iter().enumerate() {
             self.cpu
                 .mmu
@@ -125,10 +113,7 @@ impl InlineTestHarness {
     }
 
     pub fn load_state64(&mut self, data: &[u64]) {
-        assert!(
-            data.len() * 8 <= self.layout.output_size,
-            "State data exceeds allocated size"
-        );
+        assert!(data.len() * 8 <= self.layout.output_size, "State data exceeds allocated size");
         for (i, &word) in data.iter().enumerate() {
             self.cpu
                 .mmu
@@ -138,40 +123,19 @@ impl InlineTestHarness {
     }
 
     pub fn load_input2_32(&mut self, data: &[u32]) {
-        let base = self
-            .layout
-            .input2_base
-            .expect("No second input memory region defined");
-        let size = self
-            .layout
-            .input2_size
-            .expect("No second input size defined");
-        assert!(
-            data.len() * 4 <= size,
-            "Second input data exceeds allocated size"
-        );
+        let base = self.layout.input2_base.expect("No second input memory region defined");
+        let size = self.layout.input2_size.expect("No second input size defined");
+        assert!(data.len() * 4 <= size, "Second input data exceeds allocated size");
 
         for (i, &word) in data.iter().enumerate() {
-            self.cpu
-                .mmu
-                .store_word(base + (i * 4) as u64, word)
-                .expect("Failed to store second input word");
+            self.cpu.mmu.store_word(base + (i * 4) as u64, word).expect("Failed to store second input word");
         }
     }
 
     pub fn load_input2_64(&mut self, data: &[u64]) {
-        let base = self
-            .layout
-            .input2_base
-            .expect("No second input memory region defined");
-        let size = self
-            .layout
-            .input2_size
-            .expect("No second input size defined");
-        assert!(
-            data.len() * 8 <= size,
-            "Second input data exceeds allocated size"
-        );
+        let base = self.layout.input2_base.expect("No second input memory region defined");
+        let size = self.layout.input2_size.expect("No second input size defined");
+        assert!(data.len() * 8 <= size, "Second input data exceeds allocated size");
 
         for (i, &word) in data.iter().enumerate() {
             self.cpu
@@ -182,28 +146,18 @@ impl InlineTestHarness {
     }
 
     pub fn read_output32(&mut self, count: usize) -> Vec<u32> {
-        assert!(
-            count * 4 <= self.layout.output_size,
-            "Read exceeds output size"
-        );
+        assert!(count * 4 <= self.layout.output_size, "Read exceeds output size");
         let mut result = Vec::with_capacity(count);
         for i in 0..count {
-            let word = self
-                .cpu
-                .mmu
-                .load_word(self.layout.output_base + (i * 4) as u64)
-                .expect("Failed to load output word")
-                .0;
+            let word =
+                self.cpu.mmu.load_word(self.layout.output_base + (i * 4) as u64).expect("Failed to load output word").0;
             result.push(word);
         }
         result
     }
 
     pub fn read_output64(&mut self, count: usize) -> Vec<u64> {
-        assert!(
-            count * 8 <= self.layout.output_size,
-            "Read exceeds output size"
-        );
+        assert!(count * 8 <= self.layout.output_size, "Read exceeds output size");
         let mut result = Vec::with_capacity(count);
         for i in 0..count {
             let word = self
@@ -220,20 +174,15 @@ impl InlineTestHarness {
     fn get_address_for_mapping(&self, mapping: RegisterMapping) -> u64 {
         match mapping {
             RegisterMapping::Input => self.layout.input_base,
-            RegisterMapping::Input2 => self
-                .layout
-                .input2_base
-                .expect("Input2 mapping requires input2_base"),
+            RegisterMapping::Input2 => self.layout.input2_base.expect("Input2 mapping requires input2_base"),
             RegisterMapping::Output => self.layout.output_base,
         }
     }
 
     pub fn setup_registers(&mut self) {
         // Set up registers based on the layout's mappings
-        self.cpu.x[INLINE_RS1 as usize] =
-            self.get_address_for_mapping(self.layout.rs1_mapping) as i64;
-        self.cpu.x[INLINE_RS2 as usize] =
-            self.get_address_for_mapping(self.layout.rs2_mapping) as i64;
+        self.cpu.x[INLINE_RS1 as usize] = self.get_address_for_mapping(self.layout.rs1_mapping) as i64;
+        self.cpu.x[INLINE_RS2 as usize] = self.get_address_for_mapping(self.layout.rs2_mapping) as i64;
 
         if let Some(rs3_mapping) = self.layout.rs3_mapping {
             self.cpu.x[INLINE_RS3 as usize] = self.get_address_for_mapping(rs3_mapping) as i64;
@@ -250,14 +199,7 @@ impl InlineTestHarness {
         }
     }
 
-    pub fn create_instruction(
-        opcode: u32,
-        funct3: u32,
-        funct7: u32,
-        rs1: u8,
-        rs2: u8,
-        rs3: u8,
-    ) -> INLINE {
+    pub fn create_instruction(opcode: u32, funct3: u32, funct7: u32, rs1: u8, rs2: u8, rs3: u8) -> INLINE {
         INLINE {
             address: 0,
             operands: FormatInline { rs1, rs2, rs3 },

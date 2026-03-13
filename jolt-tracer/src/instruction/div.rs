@@ -13,10 +13,9 @@ use crate::{
 };
 
 use super::{
-    add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice,
-    virtual_assert_eq::VirtualAssertEQ, virtual_assert_valid_div0::VirtualAssertValidDiv0,
-    virtual_change_divisor::VirtualChangeDivisor, virtual_move::VirtualMove, Cycle, Instruction,
-    RISCVInstruction, RISCVTrace,
+    add::ADD, format::format_r::FormatR, mul::MUL, virtual_advice::VirtualAdvice, virtual_assert_eq::VirtualAssertEQ,
+    virtual_assert_valid_div0::VirtualAssertValidDiv0, virtual_change_divisor::VirtualChangeDivisor,
+    virtual_move::VirtualMove, Cycle, Instruction, RISCVInstruction, RISCVTrace,
 };
 
 declare_riscv_instr!(
@@ -102,11 +101,7 @@ impl RISCVTrace for DIV {
     /// Special cases per RISC-V spec:
     /// - Division by zero: returns -1
     /// - Overflow (most_negative / -1): returns most_negative
-    fn inline_sequence(
-        &self,
-        allocator: &VirtualRegisterAllocator,
-        xlen: Xlen,
-    ) -> Vec<Instruction> {
+    fn inline_sequence(&self, allocator: &VirtualRegisterAllocator, xlen: Xlen) -> Vec<Instruction> {
         let a0 = self.operands.rs1; // dividend
         let a1 = self.operands.rs2; // divisor
         let a2 = allocator.allocate(); // quotient (from oracle)

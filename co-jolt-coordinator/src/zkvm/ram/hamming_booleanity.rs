@@ -21,20 +21,12 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for HammingBoolea
         self.input_claim()
     }
 
-    fn expected_output_claim(
-        &self,
-        accumulator: &Rep3OpeningAccumulator<F>,
-        r: &[F::Challenge],
-    ) -> F {
-        let (_, h_claim) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::RamHammingWeight,
-            SumcheckId::RamHammingBooleanity,
-        );
+    fn expected_output_claim(&self, accumulator: &Rep3OpeningAccumulator<F>, r: &[F::Challenge]) -> F {
+        let (_, h_claim) = accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamHammingWeight, SumcheckId::RamHammingBooleanity);
 
-        let (r_cycle, _) = accumulator.get_virtual_polynomial_opening(
-            VirtualPolynomial::LookupOutput,
-            SumcheckId::SpartanOuter,
-        );
+        let (r_cycle, _) =
+            accumulator.get_virtual_polynomial_opening(VirtualPolynomial::LookupOutput, SumcheckId::SpartanOuter);
 
         let r_cycle_rev: Vec<F::Challenge> = r_cycle.r.iter().cloned().rev().collect();
         let eq = EqPolynomial::<F>::mle(r, &r_cycle_rev);
@@ -42,10 +34,7 @@ impl<F: JoltField, T: Transcript> PublicSumcheckInstance<F, T> for HammingBoolea
         (h_claim.square() - h_claim) * eq
     }
 
-    fn normalize_opening_point(
-        &self,
-        opening_point: &[F::Challenge],
-    ) -> OpeningPoint<BIG_ENDIAN, F> {
+    fn normalize_opening_point(&self, opening_point: &[F::Challenge]) -> OpeningPoint<BIG_ENDIAN, F> {
         self.normalize_opening_point(opening_point)
     }
 

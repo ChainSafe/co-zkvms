@@ -1,13 +1,13 @@
 use super::{binary, conversion};
+use crate::protocols::rep3_ring::{
+    Rep3RingShare,
+    ring::{bit::Bit, int_ring::IntRing2k, ring_impl::RingElement},
+};
 use crate::{
     IoResult,
     protocols::rep3::network::{IoContext, Rep3Network},
 };
 use itertools::izip;
-use crate::protocols::rep3_ring::{
-    Rep3RingShare,
-    ring::{bit::Bit, int_ring::IntRing2k, ring_impl::RingElement},
-};
 use num_traits::{One, Zero};
 use rand::{distributions::Standard, prelude::Distribution};
 
@@ -34,9 +34,7 @@ where
     Standard: Distribution<T>,
 {
     // Add x1 + x2 via a packed Kogge-Stone adder
-    let mut p = izip!(x1.iter(), x2.iter())
-        .map(|(x1, x2)| x1 ^ x2)
-        .collect::<Vec<_>>();
+    let mut p = izip!(x1.iter(), x2.iter()).map(|(x1, x2)| x1 ^ x2).collect::<Vec<_>>();
     let mut g = binary::and_many(x1, x2, io_context)?;
     kogge_stone_inner_many(&mut p, &mut g, io_context)?;
     Ok(g)
@@ -173,19 +171,11 @@ where
 
     let local_a1 = (b1 & a) ^ mask1;
     let local_a2 = (a & b2) ^ mask2;
-    io_context
-        .network
-        .send_next([local_a1.to_owned(), local_a2.to_owned()])?;
+    io_context.network.send_next([local_a1.to_owned(), local_a2.to_owned()])?;
     let [local_b1, local_b2] = io_context.network.recv_prev()?;
 
-    let r1 = Rep3RingShare {
-        a: local_a1,
-        b: local_b1,
-    };
-    let r2 = Rep3RingShare {
-        a: local_a2,
-        b: local_b2,
-    };
+    let r1 = Rep3RingShare { a: local_a1, b: local_b1 };
+    let r2 = Rep3RingShare { a: local_a2, b: local_b2 };
 
     Ok((r1, r2))
 }
@@ -213,21 +203,13 @@ where
         })
         .unzip();
 
-    io_context
-        .network
-        .send_next([local_a1.to_owned(), local_a2.to_owned()])?;
+    io_context.network.send_next([local_a1.to_owned(), local_a2.to_owned()])?;
     let [local_b1, local_b2] = io_context.network.recv_prev::<[Vec<RingElement<T>>; 2]>()?;
 
     let (r1, r2) = izip!(local_a1, local_a2, local_b1, local_b2)
         .map(|(local_a1, local_a2, local_b1, local_b2)| {
-            let r1 = Rep3RingShare {
-                a: local_a1,
-                b: local_b1,
-            };
-            let r2 = Rep3RingShare {
-                a: local_a2,
-                b: local_b2,
-            };
+            let r1 = Rep3RingShare { a: local_a1, b: local_b1 };
+            let r2 = Rep3RingShare { a: local_a2, b: local_b2 };
             (r1, r2)
         })
         .unzip();
@@ -285,8 +267,7 @@ where
 
     let (mut res, c) = kogge_stone_inner_with_carry_many(p, g, io_context)?;
     // let res =
-    res.iter_mut()
-        .for_each(|r| *r = binary::xor_public(&r, &RingElement::one(), io_context.id)); // cin=1
+    res.iter_mut().for_each(|r| *r = binary::xor_public(&r, &RingElement::one(), io_context.id)); // cin=1
     Ok((res, c))
 }
 
@@ -427,14 +408,11 @@ where
     // Generate: g = x & neg_y — AND with constant is LOCAL
     let g: Vec<Rep3RingShare<T>> = izip!(x_bits, &neg_ys).map(|(x, ny)| x & ny).collect();
     // Propagate: p = x XOR neg_y — XOR with constant is LOCAL
-    let p: Vec<Rep3RingShare<T>> = izip!(x_bits, &neg_ys)
-        .map(|(x, ny)| binary::xor_public(x, ny, io_context.id))
-        .collect();
+    let p: Vec<Rep3RingShare<T>> =
+        izip!(x_bits, &neg_ys).map(|(x, ny)| binary::xor_public(x, ny, io_context.id)).collect();
     let (_, carries) = kogge_stone_inner_with_carry_many(p, g, io_context)?;
     // When y is zero, two's complement overflows: flip carry
-    let result = izip!(carries, y_consts)
-        .map(|(c, y)| if y.is_zero() { !c } else { c })
-        .collect();
+    let result = izip!(carries, y_consts).map(|(c, y)| if y.is_zero() { !c } else { c }).collect();
     Ok(result)
 }
 
@@ -451,9 +429,8 @@ where
     debug_assert_eq!(x_consts.len(), y_bits.len());
     // x_const - y_shared = x_const + ~y + 1 (carry_in = 1)
     let y_neg: Vec<Rep3RingShare<T>> = y_bits.iter().map(|y| !y).collect();
-    let p: Vec<Rep3RingShare<T>> = izip!(&y_neg, x_consts)
-        .map(|(yn, xc)| binary::xor_public(yn, xc, io_context.id))
-        .collect();
+    let p: Vec<Rep3RingShare<T>> =
+        izip!(&y_neg, x_consts).map(|(yn, xc)| binary::xor_public(yn, xc, io_context.id)).collect();
     let mut g: Vec<Rep3RingShare<T>> = izip!(&y_neg, x_consts).map(|(yn, xc)| yn & xc).collect();
     // carry_in = 1: XOR LSB of p into g
     izip!(g.iter_mut(), p.iter()).for_each(|(g, p)| *g ^= *p & RingElement::one());
