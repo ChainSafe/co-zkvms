@@ -310,7 +310,7 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         let mut client = connect_client_with_retry(worker_addrs)?;
         let mut program = build_program();
         let inputs = build_inputs(num_iters);
-        client.delegate(&mut program, &inputs, &[], &[])
+        client.delegate(&mut program, &[], &inputs, &[])
     });
 
     let coordinator_protocol = config.coordinator.as_ref().map(|coordinator| coordinator.protocol).unwrap_or_default();
@@ -337,6 +337,7 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
 
     info!("tracing guest program");
     let (mut vanilla_trace, _memory, mut io_device) = program.trace(&[], &inputs, &[]);
+    // Truncate trailing zeros from outputs, matching what Jolt::prove does.
     io_device.outputs.truncate(io_device.outputs.iter().rposition(|&b| b != 0).map_or(0, |pos| pos + 1));
 
     let padded_len = (vanilla_trace.len() + 1).next_power_of_two();

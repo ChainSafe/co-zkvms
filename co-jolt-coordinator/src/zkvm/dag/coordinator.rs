@@ -199,6 +199,13 @@ impl Rep3JoltDag {
         drop(_stage4);
 
         // -------------------------------------------------------------------
+        // Untrusted advice opening proof (if advice commitment is present)
+        // -------------------------------------------------------------------
+        if state.untrusted_advice_commitment.is_some() {
+            Self::prove_untrusted_advice_opening::<F, ProofTranscript, PCS, N>(&mut state, network)?;
+        }
+
+        // -------------------------------------------------------------------
         // Stage 5: opening proof reduction
         // -------------------------------------------------------------------
 
@@ -652,6 +659,75 @@ impl Rep3JoltDag {
             state.transcript.append_serializable(commitment);
         }
 
+        Ok(())
+    }
+
+    /// Produce the untrusted advice opening proof.
+    ///
+    /// 1. Compute the advice opening point from the stage2 accumulator.
+    /// 2. Broadcast the point to workers.
+    /// 3. Receive additive evaluation shares from workers and sum.
+    /// 4. Initialize UntrustedAdvice DoryContext and coordinate the PCS prove.
+    /// 5. Store the opening and proof in the accumulator/proofs.
+    fn prove_untrusted_advice_opening<F, ProofTranscript, PCS, N>(
+        state: &mut StateManager<'_, F, ProofTranscript, PCS>,
+        network: &mut N,
+    ) -> eyre::Result<()>
+    where
+        F: JoltField,
+        ProofTranscript: Transcript,
+        PCS: CommitmentScheme<Field = F> + Rep3CommitmentScheme<F, ProofTranscript>,
+        N: Rep3NetworkCoordinator,
+    {
+        use jolt_core::poly::commitment::dory::DoryContext;
+        use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
+        use jolt_core::utils::math::Math;
+        use jolt_core::zkvm::witness::VirtualPolynomial;
+
+        let ws = jolt_common::constants::RAM_WORD_SIZE as usize;
+        let max_size = state.program_io.memory_layout.max_untrusted_advice_size as usize / ws;
+        let log_advice_size = max_size.next_power_of_two().log_2();
+        let total_memory_vars = state.ram_K.log_2();
+
+        // The advice opening point is the low `log_advice_size` challenge elements of r_address.
+        let (r_val_point, _) = state
+            .accumulator
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamVal, SumcheckId::RamReadWriteChecking);
+        let r_address = &r_val_point.r[..total_memory_vars];
+        let high_bits = total_memory_vars - log_advice_size;
+        let advice_opening_point: Vec<F::Challenge> = r_address[high_bits..].to_vec();
+
+        // Broadcast the opening point to workers.
+        network.broadcast_request(advice_opening_point.clone())?;
+
+        // Receive additive evaluation shares from workers and reconstruct.
+        let eval_shares: Vec<F> = network.receive_responses()?;
+        let advice_eval: F = eval_shares.into_iter().sum();
+
+        // Store the opening in the accumulator so it appears in opening_claims.
+        let opening_point = OpeningPoint::<BIG_ENDIAN, F>::new(advice_opening_point.clone());
+        state.accumulator.openings.insert(OpeningId::UntrustedAdvice, (opening_point, advice_eval));
+
+        // Initialize UntrustedAdvice DoryContext and coordinate the PCS prove.
+        // Use set_context (not with_context) to avoid guard-based restore races
+        // with worker threads sharing the same process-global CURRENT_CONTEXT.
+        DoryGlobals::initialize_context(1, max_size.next_power_of_two(), DoryContext::UntrustedAdvice, None);
+        DoryGlobals::set_context(DoryContext::UntrustedAdvice);
+
+        let commitment = state.untrusted_advice_commitment.as_ref().unwrap();
+        let pcs_setup = state.pcs_setup.expect("pcs_setup must be set for advice opening proof");
+        let (proof, _blinding) = <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::coordinate_prove(
+            pcs_setup,
+            &mut state.transcript,
+            network,
+            &advice_opening_point,
+            &advice_eval,
+            commitment,
+            None,
+        )?;
+        state.proofs.insert(ProofKeys::UntrustedAdviceProof, ProofData::OpeningProof(proof));
+
+        DoryGlobals::set_context(DoryContext::Main);
         Ok(())
     }
 

@@ -18,7 +18,7 @@ use crate::zkvm::spartan::Rep3SpartanDagWorker;
 use crate::zkvm::witness::{generate_witness_batch_rep3, populate_cycle_witness_rep3};
 use jolt_core::field::JoltField;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
-use jolt_core::poly::commitment::dory::DoryGlobals;
+use jolt_core::poly::commitment::dory::{DoryContext, DoryGlobals};
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::instruction_lookups::D;
 use jolt_core::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, DTH_ROOT_OF_K};
@@ -71,6 +71,12 @@ impl Rep3JoltDagWorker {
             &mut io_ctx,
             preproc,
         )?;
+
+        // In-process tests share DoryGlobals across all 3 worker threads.
+        // Barrier ensures all workers finish the advice commit (which uses
+        // advice-sized DoryGlobals) before any worker initializes Main globals.
+        #[cfg(feature = "test-utils")]
+        io_ctx.sync_with_parties()?;
 
         let _guard = (
             DoryGlobals::initialize(DTH_ROOT_OF_K, padded_trace_length),
@@ -134,6 +140,23 @@ impl Rep3JoltDagWorker {
         drop(stages);
         drop(_drop_stages);
         maybe_purge_jemalloc();
+
+        // -------------------------------------------------------------------
+        // Untrusted advice opening proof (if advice is non-empty)
+        // -------------------------------------------------------------------
+        if state.prover_state.untrusted_advice_polynomial.is_some() {
+            Self::prove_untrusted_advice_opening::<F, PCS, ProofTranscript, N>(
+                &mut state,
+                &mut io_ctx,
+            )?;
+        }
+
+        // In-process tests share DoryGlobals across all 3 worker threads.
+        // Barrier ensures all workers finish the advice opening proof (which uses
+        // UntrustedAdvice DoryContext) before any worker enters stage5 (Main context).
+        #[cfg(feature = "test-utils")]
+        io_ctx.sync_with_parties()?;
+
         // -------------------------------------------------------------------
         // Stage 5: opening proof reduction
         // -------------------------------------------------------------------
@@ -270,8 +293,8 @@ impl Rep3JoltDagWorker {
 
     /// Commit the untrusted advice polynomial (if non-empty) using Rep3 shares.
     ///
-    /// Initializes its own DoryGlobals (K=1, T=max_size) for the smaller advice
-    /// dimensions. Must be called BEFORE the Main DoryGlobals init.
+    /// Initializes `DoryContext::UntrustedAdvice` with advice dimensions (K=1, T=max_size).
+    /// The hint is kept for the separate advice opening proof produced after stage4.
     fn commit_untrusted_advice<F, PCS, ProofTranscript, N>(
         state: &mut StateManagerWorker<'_, F, PCS>,
         padded_trace_length: usize,
@@ -288,18 +311,22 @@ impl Rep3JoltDagWorker {
             return Ok(());
         }
 
-        let max_size = state.program_io.memory_layout.max_untrusted_advice_size as usize / 8;
+        let ws = jolt_common::constants::RAM_WORD_SIZE as usize;
+        let max_size = state.program_io.memory_layout.max_untrusted_advice_size as usize / ws;
         eyre::ensure!(
             max_size <= padded_trace_length,
-            "max_untrusted_advice_size/8 ({max_size}) exceeds padded_trace_length ({padded_trace_length}); \
+            "max_untrusted_advice_size/{ws} ({max_size}) exceeds padded_trace_length ({padded_trace_length}); \
              current PCS generators/DoryGlobals are built for padded_trace_length"
         );
 
-        // Initialize DoryGlobals with advice dimensions (K=1, T=max_size).
-        // Overwritten by the Main init after this function returns.
-        let _advice_guard = DoryGlobals::initialize(1, max_size);
+        // Initialize UntrustedAdvice DoryContext (persists alongside Main context).
+        // Use set_context (not with_context) — guard-based restore races with
+        // other worker threads sharing the same process-global CURRENT_CONTEXT.
+        DoryGlobals::initialize_context(1, max_size, DoryContext::UntrustedAdvice, None);
+        DoryGlobals::set_context(DoryContext::UntrustedAdvice);
+
         let poly = Self::shared_advice_polynomial::<F, PCS, N>(&state.program_io.untrusted_advice, max_size, io_ctx)?;
-        let (commitment, _hint) = <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::commit_rep3(
+        let (commitment, hint) = <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::commit_rep3(
             &poly,
             &state.prover_state.preprocessing.generators,
             false,
@@ -309,6 +336,63 @@ impl Rep3JoltDagWorker {
 
         state.untrusted_advice_commitment = Some(commitment);
         state.prover_state.untrusted_advice_polynomial = Some(poly);
+        state.prover_state.untrusted_advice_hint = Some(hint);
+
+        DoryGlobals::set_context(DoryContext::Main);
+        Ok(())
+    }
+
+    /// Produce the untrusted advice opening proof.
+    ///
+    /// The coordinator sends the opening point (derived from the stage2 accumulator).
+    /// Workers evaluate the advice polynomial at that point, send an additive share
+    /// of the evaluation, then participate in a coordinated Dory prove under
+    /// `DoryContext::UntrustedAdvice`.
+    fn prove_untrusted_advice_opening<F, PCS, ProofTranscript, N>(
+        state: &mut StateManagerWorker<'_, F, PCS>,
+        io_ctx: &mut IoContextPool<N>,
+    ) -> eyre::Result<()>
+    where
+        F: JoltField,
+        PCS: CommitmentScheme<Field = F> + Rep3CommitmentScheme<F, ProofTranscript>,
+        ProofTranscript: Transcript,
+        N: Rep3NetworkWorker,
+    {
+        // Receive the advice opening point from the coordinator.
+        let opening_point: Vec<F::Challenge> = io_ctx.network().receive_request()?;
+
+        // Evaluate the shared advice polynomial at the opening point.
+        let poly = state.prover_state.untrusted_advice_polynomial.as_ref().unwrap();
+        let point_f: Vec<F> = opening_point.iter().map(|c| (*c).into()).collect();
+        let eval = poly.evaluate(&point_f);
+        let eval_f: F = match eval {
+            crate::utils::types::Rep3Value::Additive(additive) => additive.into_fe(),
+            crate::utils::types::Rep3Value::Public(v) => v,
+            crate::utils::types::Rep3Value::Shared(_) => {
+                unreachable!("advice polynomial should produce Additive eval")
+            }
+        };
+        io_ctx.network().send_response(eval_f)?;
+
+        // Switch to UntrustedAdvice DoryContext for the prove.
+        // NOTE: We use set_context instead of with_context because the guard
+        // pattern is not safe when multiple threads share the same global
+        // CURRENT_CONTEXT (the last guard to drop restores the wrong context).
+        DoryGlobals::set_context(DoryContext::UntrustedAdvice);
+        let hint = state.prover_state.untrusted_advice_hint.take().map(|h| match h {
+            MaybeShared::Shared(v) => v,
+            MaybeShared::Public(Some(v)) => v,
+            MaybeShared::Public(None) => unreachable!("advice hint should not be None"),
+        });
+        let result = <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::prove_rep3(
+            poly,
+            &state.prover_state.preprocessing.generators,
+            &opening_point,
+            hint,
+            io_ctx.network(),
+        );
+        DoryGlobals::set_context(DoryContext::Main);
+        result?;
 
         Ok(())
     }
