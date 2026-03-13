@@ -1,5 +1,5 @@
 #[cfg(feature = "host")]
-pub use co_jolt2::host::program::{generate_trace_shares, generate_trace_shares_from_execution, trace_for_rep3};
+pub use co_jolt2::host::program::generate_trace_shares;
 #[cfg(feature = "host")]
 pub use jolt_core::host;
 #[cfg(feature = "host")]
@@ -13,7 +13,7 @@ pub use jolt_core::guest;
 pub use jolt_core::poly::commitment::dory::DoryCommitmentScheme as PCS;
 pub use jolt_core::transcripts::Blake2bTranscript;
 pub use jolt_core::zkvm::{
-    dag::proof_serialization::JoltProof, Jolt, JoltProverPreprocessing, JoltRV32IM, JoltRV64IMAC,
+    dag::proof_serialization::JoltProof, Jolt, JoltProverPreprocessing, JoltRV32IM, JoltRV64IMAC, JoltRVArch,
     JoltVerifierPreprocessing, RV64IMACJoltProof, Serializable,
 };
 

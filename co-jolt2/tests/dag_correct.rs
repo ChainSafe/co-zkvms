@@ -5,7 +5,6 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha12Rng;
 
 use co_jolt2::host::program::generate_trace_shares;
-use co_jolt2::utils::compute_ram_k;
 use co_jolt2::utils::test_utils::run_rep3_local_test_with_coordinator;
 use co_jolt2::utils::tracing::init_tracing;
 use co_jolt2::zkvm::dag::state_manager::StateManagerWorker;
@@ -25,8 +24,7 @@ use jolt_core::zkvm::dag::proof_serialization::JoltProof;
 use jolt_core::zkvm::dag::state_manager::StateManager as VanillaStateManager;
 use jolt_core::zkvm::dag::state_manager::{ProofData, ProofKeys};
 use jolt_core::zkvm::witness::DTH_ROOT_OF_K;
-use jolt_core::zkvm::{JoltProverPreprocessing, JoltRV64IMAC, JoltSharedPreprocessing, JoltVerifierPreprocessing};
-use tracer::instruction::Cycle;
+use jolt_core::zkvm::{JoltProverPreprocessing, JoltRV64IMAC, JoltVerifierPreprocessing};
 use tracer::JoltDevice;
 
 type F = Fr;
@@ -84,39 +82,26 @@ fn build_public_fixture(
 ) {
     let mut program = build_program();
     let inputs = build_inputs();
-    let (bytecode, memory_init, _) = program.decode();
 
     let mut rng = ChaCha12Rng::seed_from_u64(0);
-    let mut shares = generate_trace_shares(&mut program, &inputs, &[], &[], &mut rng);
-    let (mut vanilla_trace, _vanilla_memory, mut io_device) = program.trace(&inputs, &[], &[]);
+    let (bytecode, memory_init, io_device, shares) =
+        generate_trace_shares(&mut program, &inputs, &[], &[], &mut rng);
 
-    // Truncate trailing zeros on device outputs, matching what Jolt::prove does.
-    io_device.outputs.truncate(io_device.outputs.iter().rposition(|&b| b != 0).map_or(0, |pos| pos + 1));
-
-    tracing::info!("Trace len: {}", vanilla_trace.len());
-    // Pad traces to next power of 2 (+1 termination cycle).
-    let padded_len = (vanilla_trace.len() + 1).next_power_of_two();
-    vanilla_trace.resize(padded_len, Cycle::NoOp);
-    for (trace, _, _) in shares.iter_mut() {
-        trace.resize(padded_len, Rep3Cycle::NoOp);
-    }
+    // Shares are already padded to next power of 2 by generate_trace_shares.
+    let padded_len = shares[0].0.len();
+    tracing::info!("Padded trace len: {padded_len}");
 
     // 2) Preprocessing.
-    let shared = JoltSharedPreprocessing {
-        memory_layout: io_device.memory_layout.clone(),
-        bytecode: jolt_core::zkvm::bytecode::BytecodePreprocessing::preprocess(bytecode.clone()),
-        ram: jolt_core::zkvm::ram::RAMPreprocessing::preprocess(memory_init.clone()),
-    };
     let preprocessing: JoltProverPreprocessing<F, PCS> = <JoltArch as Rep3JoltWorker<F, PCS, FS>>::preprocess(
-        bytecode,
+        bytecode.clone(),
         io_device.memory_layout.clone(),
-        memory_init,
+        memory_init.clone(),
         padded_len,
     );
     let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
 
-    // 3) Compute ram_K from vanilla trace (must match both sides).
-    let ram_K = compute_ram_k(&vanilla_trace, &shared);
+    // 3) Compute ram_K from shared trace (RAM addresses are public).
+    let ram_K = co_jolt2::utils::compute_ram_k(&shares[0].0, &preprocessing.shared);
 
     (shares, preprocessing, verifier_preprocessing, io_device, ram_K, padded_len)
 }

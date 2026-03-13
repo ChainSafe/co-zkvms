@@ -2,8 +2,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use ::guest::{
-    build_delegate_sha2_chain, build_verifier_sha2_chain, compile_sha2_chain, preprocess_prover_sha2_chain,
-    sha2_chain, verifier_preprocessing_from_prover_sha2_chain,
+    build_delegate_sha2_chain, build_verifier_sha2_chain, compile_sha2_chain, memory_config_sha2_chain, sha2_chain,
 };
 use ark_bn254::Fr;
 use clap::Parser;
@@ -75,10 +74,7 @@ fn main() -> eyre::Result<()> {
     // Compile guest program
     let target_dir = "/tmp/jolt-guest-targets";
     let mut preprocessing_program = compile_sha2_chain(target_dir);
-    let prover_preprocessing = preprocess_prover_sha2_chain(&mut preprocessing_program);
-    let verifier_preprocessing = verifier_preprocessing_from_prover_sha2_chain(&prover_preprocessing);
     let delegate = build_delegate_sha2_chain(compile_sha2_chain(target_dir));
-    let verifier = build_verifier_sha2_chain(verifier_preprocessing);
     let input = [5u8; 32];
     let native_output = sha2_chain(input, args.num_iters);
 
@@ -88,6 +84,13 @@ fn main() -> eyre::Result<()> {
     let (output, proof, program_io) = delegate(&mut client, input, args.num_iters, &program_id)?;
 
     // Verify the proof
+    let (bytecode, memory_init, program_size) = preprocessing_program.decode();
+    let mut memory_config = memory_config_sha2_chain();
+    memory_config.program_size = Some(program_size);
+    let memory_layout = MemoryLayout::new(&memory_config);
+    let prover_preprocessing: JoltProverPreprocessing<F, PCS> =
+        JoltRVArch::prover_preprocess(bytecode, memory_layout, memory_init, proof.trace_length);
+    let verifier = build_verifier_sha2_chain(JoltVerifierPreprocessing::from(&prover_preprocessing));
     info!("verifying proof...");
     let is_valid = verifier(input, args.num_iters, output, program_io.panic, proof);
 

@@ -308,6 +308,10 @@ impl Jolt<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV32IM {}
 
 pub struct JoltRV64IMAC;
 impl Jolt<Fr, DoryCommitmentScheme, Blake2bTranscript> for JoltRV64IMAC {}
+#[cfg(not(feature = "rv64"))]
+pub type JoltRVArch = JoltRV32IM;
+#[cfg(feature = "rv64")]
+pub type JoltRVArch = JoltRV64IMAC;
 pub type RV64IMACJoltProof = JoltProof<Fr, Bn254Curve, DoryCommitmentScheme, Blake2bTranscript>;
 
 use crate::poly::commitment::dory::DoryCommitmentScheme;

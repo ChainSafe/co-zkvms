@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
-use ::guest::{build_delegate_fib, build_verifier_fib, compile_fib, fib, preprocess_prover_fib, verifier_preprocessing_from_prover_fib};
+use ::guest::{build_delegate_fib, build_verifier_fib, compile_fib, fib, memory_config_fib};
 use clap::Parser;
 use eyre::Context;
 use serde::Deserialize;
@@ -12,7 +12,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::Registry;
 use tracing_subscriber::{EnvFilter, Layer};
 
-use jolt_sdk::client::Client;
+use jolt_sdk::*;
 
 #[derive(Deserialize)]
 struct DelegatorConfig {
@@ -64,10 +64,7 @@ fn main() -> eyre::Result<()> {
     // Compile guest program
     let target_dir = "/tmp/jolt-guest-targets";
     let mut preprocessing_program = compile_fib(target_dir);
-    let prover_preprocessing = preprocess_prover_fib(&mut preprocessing_program);
-    let verifier_preprocessing = verifier_preprocessing_from_prover_fib(&prover_preprocessing);
     let delegate = build_delegate_fib(compile_fib(target_dir));
-    let verifier = build_verifier_fib(verifier_preprocessing);
     let input = 9u32;
     let native_output = fib(input);
 
@@ -76,6 +73,13 @@ fn main() -> eyre::Result<()> {
     let (output, proof, program_io) = delegate(&mut client, input, "fibonacci")?;
 
     // Verify the proof
+    let (bytecode, memory_init, program_size) = preprocessing_program.decode();
+    let mut memory_config = memory_config_fib();
+    memory_config.program_size = Some(program_size);
+    let memory_layout = MemoryLayout::new(&memory_config);
+    let prover_preprocessing: JoltProverPreprocessing<F, PCS> =
+        JoltRVArch::prover_preprocess(bytecode, memory_layout, memory_init, proof.trace_length);
+    let verifier = build_verifier_fib(JoltVerifierPreprocessing::from(&prover_preprocessing));
     info!("verifying proof...");
     let is_valid = verifier(input, output, program_io.panic, proof);
 

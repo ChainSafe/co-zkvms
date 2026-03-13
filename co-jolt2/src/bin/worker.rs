@@ -31,6 +31,7 @@ use tracing::{info, info_span};
 
 use co_jolt2::host::jolt_device::Rep3ProgramIOInput;
 use co_jolt2::host::memory::Rep3Memory;
+use co_jolt2::utils::compute_ram_k;
 use co_jolt2::utils::memory::start_jemalloc_monitor;
 #[cfg(feature = "test-utils")]
 use co_jolt2::utils::tracing::start_rss_monitor;
@@ -82,6 +83,7 @@ struct Args {
 ///
 /// Contains the worker's secret share plus public data needed for proving.
 /// NOTE: No plaintext advice or io_device — only shares and public metadata.
+/// Workers compute `padded_len` (= trace.len()) and `ram_k` locally.
 #[derive(Serialize, Deserialize)]
 struct WorkerPayload {
     trace: Vec<Rep3Cycle>,
@@ -91,8 +93,6 @@ struct WorkerPayload {
     memory_init: Vec<(u64, u8)>,
     program_id: String,
     preprocess_trace_len: usize,
-    padded_len: usize,
-    ram_k: usize,
 }
 
 fn main() -> eyre::Result<()> {
@@ -154,16 +154,17 @@ fn prove_loop(
         let payload: WorkerPayload = bincode::deserialize(&payload_bytes).context("deserializing WorkerPayload")?;
 
         let WorkerPayload {
-            mut trace,
+            trace,
             memory,
             program_io_share,
             bytecode,
             memory_init,
             program_id,
             preprocess_trace_len,
-            padded_len,
-            ram_k,
         } = payload;
+
+        // Trace is already padded to next power of 2 by the client.
+        let padded_len = trace.len();
 
         #[cfg(feature = "test-utils")]
         {
@@ -175,15 +176,25 @@ fn prove_loop(
             });
         }
 
-        info!(padded_len, ram_k, trace_len = trace.len(), "received payload from user");
-
         // 2. Sync with coordinator (barrier: "we have shares, ready to prove")
         io_ctx.sync_with_coordinator()?;
 
-        // 3. Send ProofRequest (public data) to coordinator
+        // 3. Build prover preprocessing (needed for ram_k computation and proving)
+        let preprocessing: JoltProverPreprocessing<F, PCS> = <JoltArch as Rep3JoltWorker<F, PCS, _>>::preprocess(
+            bytecode.clone(),
+            program_io_share.memory_layout.clone(),
+            memory_init.clone(),
+            preprocess_trace_len,
+        );
+
+        // Compute ram_k from the shared trace (RAM addresses are public).
+        let ram_k = compute_ram_k(&trace, &preprocessing.shared);
+        info!(padded_len, ram_k, trace_len = trace.len(), "received payload from user");
+
+        // 4. Send ProofRequest (public data) to coordinator
         let proof_request = ProofRequest {
-            bytecode: bytecode.clone(),
-            memory_init: memory_init.clone(),
+            bytecode,
+            memory_init,
             program_id,
             preprocess_trace_len,
             padded_len,
@@ -195,14 +206,6 @@ fn prove_loop(
         };
         let request_bytes = bincode::serialize(&proof_request).context("serializing ProofRequest")?;
         io_ctx.network().send_response(request_bytes)?;
-
-        // 4. Build prover preprocessing
-        let preprocessing: JoltProverPreprocessing<F, PCS> = <JoltArch as Rep3JoltWorker<F, PCS, _>>::preprocess(
-            bytecode,
-            program_io_share.memory_layout.clone(),
-            memory_init,
-            preprocess_trace_len,
-        );
 
         let _dory_guard = DoryGlobals::initialize(DTH_ROOT_OF_K, padded_len);
         #[cfg(feature = "ring-msm")]
@@ -342,9 +345,7 @@ fn prove_loop(
         }
         drop(_span);
 
-        // 6. Pad trace and prove
-        trace.resize(padded_len, Rep3Cycle::NoOp);
-
+        // 6. Prove
         <JoltArch as Rep3JoltWorker<F, PCS, _>>::prove(
             &preprocessing,
             trace,

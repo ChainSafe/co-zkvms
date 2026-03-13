@@ -26,6 +26,8 @@ use serde::Serialize;
 /// Payload sent to each worker containing their secret share + public data.
 ///
 /// NOTE: No plaintext advice or io_device — only shares and public metadata.
+/// Workers compute `padded_len` (= trace.len()) and `ram_k` locally from the
+/// shared trace (RAM addresses are public in Rep3RAMAccess).
 #[derive(Serialize)]
 struct WorkerPayloadRef<'a> {
     trace: &'a [Rep3Cycle],
@@ -35,8 +37,6 @@ struct WorkerPayloadRef<'a> {
     memory_init: &'a [(u64, u8)],
     program_id: &'a str,
     preprocess_trace_len: usize,
-    padded_len: usize,
-    ram_k: usize,
 }
 
 type TlsStream = rustls::StreamOwned<rustls::ClientConnection, TcpStream>;
@@ -111,8 +111,6 @@ impl Client {
         memory_init: Vec<(u64, u8)>,
         program_id: String,
         preprocess_trace_len: usize,
-        padded_len: usize,
-        ram_k: usize,
         shares: [Rep3ShareBundle; 3],
     ) -> eyre::Result<Vec<u8>> {
         for (i, ((trace, memory, program_io_share), worker)) in
@@ -126,8 +124,6 @@ impl Client {
                 memory_init: &memory_init,
                 program_id: &program_id,
                 preprocess_trace_len,
-                padded_len,
-                ram_k,
             };
             let payload_bytes = bincode::serialize(&payload).context("serializing WorkerPayload")?;
             worker.send(&payload_bytes).with_context(|| format!("sending payload to worker {i}"))?;
