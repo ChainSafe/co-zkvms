@@ -184,15 +184,22 @@ fn prove_loop(
             let pool_dir = args.preproc_dir.join(format!("party_{}", my_id));
             match edabits::PreprocessingPool::load(&pool_dir, party_id) {
                 Ok(mut pool) => {
+                    // With reuse-preproc the backing data survives consumption,
+                    // so reset cursors to make the full pool available again.
+                    #[cfg(feature = "reuse-preproc")]
+                    pool.reset_cursors_for_reuse();
+
                     let (rem_eda, rem_da) = pool.remaining_counts();
                     let deficit_counts: [usize; 5] = std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
                     let deficit_dabits = num_dabits.saturating_sub(rem_da);
                     let deficit_re64 = budget.ring_edabits_u64.saturating_sub(pool.remaining_ring_edabits_u64());
                     let deficit_re128 = budget.ring_edabits_u128.saturating_sub(pool.remaining_ring_edabits_u128());
                     #[cfg(feature = "ring-msm")]
-                    let (deficit_wm, deficit_re_dory) = (
+                    let (deficit_wm, deficit_re_dory, deficit_wm_iring, deficit_re_iring) = (
                         budget.wrap_masks.saturating_sub(pool.remaining_wrap_masks()),
                         budget.ring_edabits_dory.saturating_sub(pool.remaining_ring_edabits_dory()),
+                        budget.wrap_masks_iring.saturating_sub(pool.remaining_wrap_masks_iring()),
+                        budget.ring_edabits_iring.saturating_sub(pool.remaining_ring_edabits_u66()),
                     );
 
                     let need_extend = deficit_counts.iter().any(|&d| d > 0)
@@ -200,7 +207,8 @@ fn prove_loop(
                         || deficit_re64 > 0
                         || deficit_re128 > 0;
                     #[cfg(feature = "ring-msm")]
-                    let need_extend = need_extend || deficit_wm > 0 || deficit_re_dory > 0;
+                    let need_extend =
+                        need_extend || deficit_wm > 0 || deficit_re_dory > 0 || deficit_wm_iring > 0 || deficit_re_iring > 0;
 
                     if need_extend {
                         info!(
@@ -225,6 +233,8 @@ fn prove_loop(
                             deficit_re_dory,
                             deficit_re64,
                             deficit_re128,
+                            deficit_wm_iring,
+                            deficit_re_iring,
                             io_ctx,
                         )?;
                         pool.save(&pool_dir).ok();
@@ -256,6 +266,8 @@ fn prove_loop(
                             budget.ring_edabits_dory,
                             budget.ring_edabits_u64,
                             budget.ring_edabits_u128,
+                            budget.wrap_masks_iring,
+                            budget.ring_edabits_iring,
                             io_ctx,
                         )?
                     }
@@ -274,6 +286,16 @@ fn prove_loop(
                 );
                 let lazy_dp = mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints(&qs, io_ctx)?;
                 preproc.set_dapoints(lazy_dp);
+            }
+            if budget.dapoints_iring > 0 {
+                let qs_iring = co_jolt2::poly::commitment::dory::precompute_dapoint_qs_iring(
+                    &preprocessing.generators,
+                    budget.dapoints_iring / 2,
+                    dory_num_columns,
+                );
+                let lazy_dp_iring =
+                    mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints(&qs_iring, io_ctx)?;
+                preproc.set_dapoints_iring(lazy_dp_iring);
             }
         }
         drop(_span);

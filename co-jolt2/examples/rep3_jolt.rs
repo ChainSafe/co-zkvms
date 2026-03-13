@@ -383,15 +383,20 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
 
             let pool = match edabits::PreprocessingPool::load(&pool_dir, party_id) {
                 Ok(mut pool) => {
+                    #[cfg(feature = "reuse-preproc")]
+                    pool.reset_cursors_for_reuse();
+
                     let (rem_eda, rem_da) = pool.remaining_counts();
                     let deficit_counts: [usize; 5] = std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
                     let deficit_dabits = num_dabits.saturating_sub(rem_da);
                     let deficit_re64 = budget.ring_edabits_u64.saturating_sub(pool.remaining_ring_edabits_u64());
                     let deficit_re128 = budget.ring_edabits_u128.saturating_sub(pool.remaining_ring_edabits_u128());
                     #[cfg(feature = "ring-msm")]
-                    let (deficit_wm, deficit_re) = (
+                    let (deficit_wm, deficit_re, deficit_wm_iring, deficit_re_iring) = (
                         budget.wrap_masks.saturating_sub(pool.remaining_wrap_masks()),
                         budget.ring_edabits_dory.saturating_sub(pool.remaining_ring_edabits_dory()),
+                        budget.wrap_masks_iring.saturating_sub(pool.remaining_wrap_masks_iring()),
+                        budget.ring_edabits_iring.saturating_sub(pool.remaining_ring_edabits_u66()),
                     );
 
                     let need_extend = deficit_counts.iter().any(|&d| d > 0)
@@ -399,7 +404,8 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                         || deficit_re64 > 0
                         || deficit_re128 > 0;
                     #[cfg(feature = "ring-msm")]
-                    let need_extend = need_extend || deficit_wm > 0 || deficit_re > 0;
+                    let need_extend =
+                        need_extend || deficit_wm > 0 || deficit_re > 0 || deficit_wm_iring > 0 || deficit_re_iring > 0;
 
                     if need_extend {
                         info!(
@@ -424,6 +430,8 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                             deficit_re,
                             deficit_re64,
                             deficit_re128,
+                            deficit_wm_iring,
+                            deficit_re_iring,
                             &mut io_ctx,
                         )?;
                         match pool.save(&pool_dir) {
@@ -458,6 +466,8 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                             budget.ring_edabits_dory,
                             budget.ring_edabits_u64,
                             budget.ring_edabits_u128,
+                            budget.wrap_masks_iring,
+                            budget.ring_edabits_iring,
                             &mut io_ctx,
                         )?
                     }
@@ -530,7 +540,8 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     let _span = info_span!("preprocessing", party_id = io_ctx.party_idx()).entered();
     let budget = {
         use co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget;
-        let b = compute_edabit_budget(trace_len);
+        // Use padded_len (not trace_len) — consumers operate on the padded trace.
+        let b = compute_edabit_budget(padded_len);
         tracing::info!("budget: {:?}", b);
         b
     };
@@ -543,15 +554,24 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         let pool_dir = args.preproc_dir.join(format!("party_{}", my_id));
         match edabits::PreprocessingPool::load(&pool_dir, party_id) {
             Ok(mut pool) => {
+                // With reuse-preproc the backing data survives consumption, so
+                // resetting cursors makes the full pool available again. This
+                // avoids unbounded pool growth across runs and ensures the deficit
+                // calculation reflects only what's truly missing (budget - total).
+                #[cfg(feature = "reuse-preproc")]
+                pool.reset_cursors_for_reuse();
+
                 let (rem_eda, rem_da) = pool.remaining_counts();
                 let deficit_counts: [usize; 5] = std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
                 let deficit_dabits = num_dabits.saturating_sub(rem_da);
                 let deficit_re64 = budget.ring_edabits_u64.saturating_sub(pool.remaining_ring_edabits_u64());
                 let deficit_re128 = budget.ring_edabits_u128.saturating_sub(pool.remaining_ring_edabits_u128());
                 #[cfg(feature = "ring-msm")]
-                let (deficit_wm, deficit_re) = (
+                let (deficit_wm, deficit_re, deficit_wm_iring, deficit_re_iring) = (
                     budget.wrap_masks.saturating_sub(pool.remaining_wrap_masks()),
                     budget.ring_edabits_dory.saturating_sub(pool.remaining_ring_edabits_dory()),
+                    budget.wrap_masks_iring.saturating_sub(pool.remaining_wrap_masks_iring()),
+                    budget.ring_edabits_iring.saturating_sub(pool.remaining_ring_edabits_u66()),
                 );
 
                 let need_extend = deficit_counts.iter().any(|&d| d > 0)
@@ -559,7 +579,8 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                     || deficit_re64 > 0
                     || deficit_re128 > 0;
                 #[cfg(feature = "ring-msm")]
-                let need_extend = need_extend || deficit_wm > 0 || deficit_re > 0;
+                let need_extend =
+                    need_extend || deficit_wm > 0 || deficit_re > 0 || deficit_wm_iring > 0 || deficit_re_iring > 0;
 
                 if need_extend {
                     info!("extending pool: deficit edabits={:?}, dabits={}", deficit_counts, deficit_dabits);
@@ -581,6 +602,8 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                         deficit_re,
                         deficit_re64,
                         deficit_re128,
+                        deficit_wm_iring,
+                        deficit_re_iring,
                         &mut io_ctx,
                     )?;
                     match pool.save(&pool_dir) {
@@ -617,6 +640,8 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                         budget.ring_edabits_dory,
                         budget.ring_edabits_u64,
                         budget.ring_edabits_u128,
+                        budget.wrap_masks_iring,
+                        budget.ring_edabits_iring,
                         &mut io_ctx,
                     )?
                 }
@@ -635,6 +660,16 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
             );
             let lazy_dp = mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints(&qs, &mut io_ctx)?;
             preproc.set_dapoints(lazy_dp);
+        }
+        if budget.dapoints_iring > 0 {
+            let qs_iring = co_jolt2::poly::commitment::dory::precompute_dapoint_qs_iring(
+                &preprocessing.generators,
+                budget.dapoints_iring / 2,
+                dory_num_columns,
+            );
+            let lazy_dp_iring =
+                mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints(&qs_iring, &mut io_ctx)?;
+            preproc.set_dapoints_iring(lazy_dp_iring);
         }
     }
     drop(_span);

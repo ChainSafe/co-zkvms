@@ -217,21 +217,67 @@ impl Rep3JoltDagWorker {
             })
             .collect();
 
-        // Replace U64Scalars (used for ring MSM commit) with Dense field-share polys
-        // for opening proof evaluation. The U64Scalars variant cannot evaluate in the field.
+        // Replace ring-scalar variants (used for ring MSM commit) with Dense field-share polys
+        // for opening proof evaluation. Ring variants cannot evaluate in the field.
         #[cfg(feature = "ring-msm")]
         {
-            use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
+            use jolt_common::constants::{ArithmeticWideInt, XLEN};
+            use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
+            use mpc_core::protocols::rep3_ring::{casts, conversion as ring_conv};
+
             let n = state.prover_state.cycle_witness.len();
+
+            // RingScalars (instruction inputs) → Dense field
             for key in [CommittedPolynomial::LeftInstructionInput, CommittedPolynomial::RightInstructionInput] {
                 if let Some(poly) = witness_polys.get(&key) {
-                    if matches!(poly, Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(_))) {
+                    if matches!(poly, Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RingScalars(_))) {
                         let mut field_shares: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(n);
                         for t in 0..n {
                             let (l, r) = state.prover_state.cycle_witness.row_stage1(t).to_instruction_inputs(party_id);
                             field_shares.push(if key == CommittedPolynomial::LeftInstructionInput { l } else { r });
                         }
                         witness_polys.insert(key, Rep3MultilinearPolynomial::from(field_shares));
+                    }
+                }
+            }
+
+            // IRingScalars (biased inc) → Dense field via A2B + r2f_b2a - bias
+            let bias_f = F::from_u64(1u64 << XLEN);
+            for key in [CommittedPolynomial::RdInc, CommittedPolynomial::RamInc] {
+                if let Some(poly) = witness_polys.get(&key) {
+                    if matches!(poly, Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::IRingScalars(_))) {
+                        let _span = info_span!("iring_to_dense", ?key).entered();
+                        // Extract arithmetic u64 shares
+                        let inc_poly = match witness_polys.remove(&key).unwrap() {
+                            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::IRingScalars(p)) => p,
+                            _ => unreachable!(),
+                        };
+                        let arith_shares: Vec<mpc_core::protocols::rep3_ring::Rep3RingShare<ArithmeticWideInt>> =
+                            inc_poly.coeffs.iter().map(|op| op.as_arithmetic_wide()).collect();
+
+                        // A2B → binary u64
+                        let biased_bin = ring_conv::a2b_many(&arith_shares, io_ctx.main())?;
+
+                        // r2f_b2a → biased field
+                        let batch_eda = preproc.take_edabits::<ArithmeticWideInt>(biased_bin.len())?;
+                        let biased_field: Vec<Rep3PrimeFieldShare<F>> =
+                            casts::r2f_b2a_preproc_many::<ArithmeticWideInt, F, _>(&biased_bin, &batch_eda, io_ctx.main())?;
+
+                        // Subtract bias: vanilla_f = biased_f - F(2^XLEN)
+                        let inc: Vec<Rep3PrimeFieldShare<F>> = biased_field
+                            .into_iter()
+                            .map(|s| mpc_core::protocols::rep3::arithmetic::sub_shared_by_public(s, bias_f, party_id))
+                            .collect();
+
+                        let dense = crate::poly::dense_mlpoly::Rep3DensePolynomial::new(inc);
+                        match key {
+                            CommittedPolynomial::RdInc =>
+                                state.prover_state.cycle_witness.set_stage2_incs(Some(dense.clone()), None),
+                            CommittedPolynomial::RamInc =>
+                                state.prover_state.cycle_witness.set_stage2_incs(None, Some(dense.clone())),
+                            _ => unreachable!(),
+                        }
+                        witness_polys.insert(key, Rep3MultilinearPolynomial::shared(dense));
                     }
                 }
             }

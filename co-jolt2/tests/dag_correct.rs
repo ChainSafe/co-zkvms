@@ -134,14 +134,16 @@ fn dag_correct() {
                     budget.ring_edabits_dory,
                     budget.ring_edabits_u64,
                     budget.ring_edabits_u128,
+                    budget.wrap_masks_iring,
+                    budget.ring_edabits_iring,
                     &mut io_ctx,
                 )?;
 
                 // Ring MSM preprocessing (daPoints — depend on SRS, not in pool workflow)
                 #[cfg(feature = "ring-msm")]
                 {
+                    let dory_num_columns = jolt_core::poly::commitment::dory::DoryGlobals::get_num_columns();
                     if budget.dapoints > 0 {
-                        let dory_num_columns = jolt_core::poly::commitment::dory::DoryGlobals::get_num_columns();
                         let qs = co_jolt2::poly::commitment::dory::precompute_dapoint_qs(
                             &preprocessing.generators,
                             budget.dapoints / 2,
@@ -150,6 +152,16 @@ fn dag_correct() {
                         let lazy_dp =
                             mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints(&qs, &mut io_ctx)?;
                         pool.set_dapoints(lazy_dp);
+                    }
+                    if budget.dapoints_iring > 0 {
+                        let qs_iring = co_jolt2::poly::commitment::dory::precompute_dapoint_qs_iring(
+                            &preprocessing.generators,
+                            budget.dapoints_iring / 2,
+                            dory_num_columns,
+                        );
+                        let lazy_dp_iring =
+                            mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints(&qs_iring, &mut io_ctx)?;
+                        pool.set_dapoints_iring(lazy_dp_iring);
                     }
                 }
                 pool

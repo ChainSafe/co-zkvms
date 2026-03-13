@@ -100,8 +100,11 @@ impl<F: JoltField> Rep3RLCPolynomial<F> {
                             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::OneHot(_)) => {
                                 unreachable!("OneHot polynomials excluded from dense_indices")
                             }
-                            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(_)) => {
-                                unreachable!("U64Scalars polynomials excluded from dense_indices")
+                            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RingScalars(_)) => {
+                                unreachable!("RingScalars polynomials excluded from dense_indices")
+                            }
+                            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::IRingScalars(_)) => {
+                                unreachable!("IRingScalars polynomials excluded from dense_indices")
                             }
                             Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RLC(_)) => {
                                 unreachable!("RLC polynomials excluded from dense_indices")

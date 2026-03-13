@@ -52,6 +52,10 @@ pub struct PreprocessingPool<F: PrimeField, C: ark_ec::CurveGroup = ark_bn254::G
     pub(crate) ring_edabits_u34: LazyEdaBitsRing<U34>,
     #[cfg(feature = "ring-msm")]
     pub(crate) ring_edabits_u66: LazyEdaBitsRing<U66>,
+    #[cfg(feature = "ring-msm")]
+    pub(crate) dapoints_iring: super::daPoint::LazyDaPoints<C>,
+    #[cfg(feature = "ring-msm")]
+    pub(crate) wrap_masks_iring: super::wrap_mask::LazyWrapMasks<U66>,
     #[cfg(not(feature = "ring-msm"))]
     _phantom: PhantomData<C>,
 }
@@ -76,6 +80,10 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             ring_edabits_u34: LazyEdaBitsRing::empty(party_id),
             #[cfg(feature = "ring-msm")]
             ring_edabits_u66: LazyEdaBitsRing::empty(party_id),
+            #[cfg(feature = "ring-msm")]
+            dapoints_iring: super::daPoint::LazyDaPoints::empty(party_id),
+            #[cfg(feature = "ring-msm")]
+            wrap_masks_iring: super::wrap_mask::LazyWrapMasks::empty(party_id),
             #[cfg(not(feature = "ring-msm"))]
             _phantom: PhantomData,
         }
@@ -108,6 +116,10 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             ring_edabits_u34: LazyEdaBitsRing::empty(party_id),
             #[cfg(feature = "ring-msm")]
             ring_edabits_u66: LazyEdaBitsRing::empty(party_id),
+            #[cfg(feature = "ring-msm")]
+            dapoints_iring: super::daPoint::LazyDaPoints::empty(party_id),
+            #[cfg(feature = "ring-msm")]
+            wrap_masks_iring: super::wrap_mask::LazyWrapMasks::empty(party_id),
             #[cfg(not(feature = "ring-msm"))]
             _phantom: PhantomData,
         }
@@ -149,6 +161,40 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
         self.wrap_masks.remaining()
     }
 
+    /// Inject pre-generated daPoints for IRingScalars into this pool.
+    #[cfg(feature = "ring-msm")]
+    pub fn set_dapoints_iring(&mut self, dp: super::daPoint::LazyDaPoints<C>) {
+        self.dapoints_iring = dp;
+    }
+
+    /// Drain `n` daPoint tuples for IRingScalars from the lazy source.
+    #[cfg(feature = "ring-msm")]
+    pub fn take_dapoints_iring(&mut self, n: usize) -> eyre::Result<super::daPoint::DaPointsBatch<C>> {
+        self.dapoints_iring.take_batch(n)
+    }
+
+    #[cfg(feature = "ring-msm")]
+    pub fn remaining_dapoints_iring(&self) -> usize {
+        self.dapoints_iring.remaining()
+    }
+
+    /// Inject pre-generated lazy wrap masks for IRingScalars into this pool.
+    #[cfg(feature = "ring-msm")]
+    pub fn set_wrap_masks_iring(&mut self, wm: super::wrap_mask::LazyWrapMasks<U66>) {
+        self.wrap_masks_iring = wm;
+    }
+
+    /// Drain `n` wrap masks for IRingScalars from the lazy source.
+    #[cfg(feature = "ring-msm")]
+    pub fn take_wrap_masks_iring(&mut self, n: usize) -> eyre::Result<super::wrap_mask::WrapMaskBatch<U66>> {
+        self.wrap_masks_iring.take_batch(n)
+    }
+
+    #[cfg(feature = "ring-msm")]
+    pub fn remaining_wrap_masks_iring(&self) -> usize {
+        self.wrap_masks_iring.remaining()
+    }
+
     /// Inject pre-generated lazy Dory carry-ring edaBits into this pool.
     #[cfg(feature = "ring-msm")]
     pub fn set_ring_edabits_dory(&mut self, eb: LazyEdaBitsRing<DoryRingMsmInt>) {
@@ -185,6 +231,12 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
         {
             self.ring_edabits_u34.remaining()
         }
+    }
+
+    /// Remaining U66 ring edaBits (used for both rv64 Dory and IRingScalars).
+    #[cfg(feature = "ring-msm")]
+    pub fn remaining_ring_edabits_u66(&self) -> usize {
+        self.ring_edabits_u66.remaining()
     }
 
     // --- ring edaBits (upcast B2A) ---
@@ -300,6 +352,8 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
         self.ring_edabits_u34.reset_cursor_for_reuse();
         #[cfg(feature = "ring-msm")]
         self.ring_edabits_u66.reset_cursor_for_reuse();
+        #[cfg(feature = "ring-msm")]
+        self.wrap_masks_iring.reset_cursor_for_reuse();
     }
 
     /// Generic edaBits drain as flat batch, dispatched by `TypeId`.
@@ -359,6 +413,8 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             let h6 = s.spawn(|| self.wrap_masks.save(dir));
             #[cfg(feature = "ring-msm")]
             let h7 = s.spawn(|| self.ring_edabits_u66.save(dir));
+            #[cfg(feature = "ring-msm")]
+            let h8 = s.spawn(|| self.wrap_masks_iring.save(&dir.join("iring")));
             h0.join().unwrap()?;
             h1.join().unwrap()?;
             h2.join().unwrap()?;
@@ -373,6 +429,8 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             h6.join().unwrap()?;
             #[cfg(feature = "ring-msm")]
             h7.join().unwrap()?;
+            #[cfg(feature = "ring-msm")]
+            h8.join().unwrap()?;
             std::result::Result::Ok(())
         })
     }
@@ -399,6 +457,10 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             ring_edabits_u34: LazyEdaBitsRing::<U34>::load(dir, party_id)?,
             #[cfg(feature = "ring-msm")]
             ring_edabits_u66: LazyEdaBitsRing::<U66>::load(dir, party_id)?,
+            #[cfg(feature = "ring-msm")]
+            dapoints_iring: super::daPoint::LazyDaPoints::empty(party_id),
+            #[cfg(feature = "ring-msm")]
+            wrap_masks_iring: super::wrap_mask::LazyWrapMasks::load(&dir.join("iring"), party_id)?,
             #[cfg(not(feature = "ring-msm"))]
             _phantom: PhantomData,
         })
@@ -2285,6 +2347,8 @@ pub fn preprocess_pool<F, N>(
     num_ring_edabits_dory: usize,
     num_ring_edabits_u64: usize,
     num_ring_edabits_u128: usize,
+    num_wrap_masks_iring: usize,
+    num_ring_edabits_iring: usize,
     io: &mut IoContextPool<N>,
 ) -> eyre::Result<PreprocessingPool<F>>
 where
@@ -2295,11 +2359,31 @@ where
     if num_wrap_masks > 0 {
         pool.set_wrap_masks(super::wrap_mask::generate_wrap_masks_lazy(num_wrap_masks, io.main())?);
     }
-    if num_ring_edabits_dory > 0 {
-        pool.set_ring_edabits_dory(super::edabits::random_edabits_ring_lazy::<DoryRingMsmInt, _>(
-            num_ring_edabits_dory,
-            io,
-        )?);
+    // For rv64: DoryRingMsmInt=U66, combine dory + iring U66 ring edaBits together.
+    // For rv32: DoryRingMsmInt=U34, so ring_edabits_u66 is free for IRingScalars only.
+    #[cfg(feature = "rv64")]
+    {
+        let combined_u66 = num_ring_edabits_dory + num_ring_edabits_iring;
+        if combined_u66 > 0 {
+            pool.set_ring_edabits_dory(super::edabits::random_edabits_ring_lazy::<DoryRingMsmInt, _>(
+                combined_u66,
+                io,
+            )?);
+        }
+    }
+    #[cfg(not(feature = "rv64"))]
+    {
+        if num_ring_edabits_dory > 0 {
+            pool.set_ring_edabits_dory(super::edabits::random_edabits_ring_lazy::<DoryRingMsmInt, _>(
+                num_ring_edabits_dory,
+                io,
+            )?);
+        }
+        if num_ring_edabits_iring > 0 {
+            // IRingScalars always uses U66 carry ring, even on rv32.
+            pool.ring_edabits_u66 =
+                super::edabits::random_edabits_ring_lazy::<U66, _>(num_ring_edabits_iring, io)?;
+        }
     }
     if num_ring_edabits_u64 > 0 {
         pool.set_ring_edabits_u64(super::edabits::random_edabits_ring_lazy::<u64, _>(num_ring_edabits_u64, io)?);
@@ -2307,11 +2391,19 @@ where
     if num_ring_edabits_u128 > 0 {
         pool.set_ring_edabits_u128(super::edabits::random_edabits_ring_lazy::<u128, _>(num_ring_edabits_u128, io)?);
     }
+    if num_wrap_masks_iring > 0 {
+        pool.set_wrap_masks_iring(super::wrap_mask::generate_wrap_masks_lazy(num_wrap_masks_iring, io.main())?);
+    }
     pool.save(dir)?;
     Ok(pool)
 }
 
 /// Extend an existing pool with additional edaBits + daBits + ring edaBits.
+///
+/// Regular edaBits + daBits are *appended* to existing data (cursor preserved).
+/// Ring edaBits are *replaced* — the old source is discarded and a fresh source
+/// of size `deficit + remaining` (= budget) is generated so the full budget is
+/// available from cursor 0.
 #[cfg(not(feature = "ring-msm"))]
 pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTransport>(
     pool: &mut PreprocessingPool<F>,
@@ -2322,16 +2414,24 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTra
     io: &mut IoContextPool<N>,
 ) -> eyre::Result<()> {
     extend_pool_batched_base(pool, deficit_counts, deficit_dabits, io)?;
+    // set_* replaces the entire source, so generate deficit + remaining = budget.
     if deficit_ring_edabits_u64 > 0 {
-        pool.set_ring_edabits_u64(super::edabits::random_edabits_ring_lazy::<u64, _>(deficit_ring_edabits_u64, io)?);
+        let total = deficit_ring_edabits_u64 + pool.remaining_ring_edabits_u64();
+        pool.set_ring_edabits_u64(super::edabits::random_edabits_ring_lazy::<u64, _>(total, io)?);
     }
     if deficit_ring_edabits_u128 > 0 {
-        pool.set_ring_edabits_u128(super::edabits::random_edabits_ring_lazy::<u128, _>(deficit_ring_edabits_u128, io)?);
+        let total = deficit_ring_edabits_u128 + pool.remaining_ring_edabits_u128();
+        pool.set_ring_edabits_u128(super::edabits::random_edabits_ring_lazy::<u128, _>(total, io)?);
     }
     Ok(())
 }
 
 /// Extend an existing pool with additional edaBits + daBits + wrap masks + ring edaBits.
+///
+/// Regular edaBits + daBits are *appended* to existing data (cursor preserved).
+/// Ring edaBits and wrap masks are *replaced* — the old source is discarded and a
+/// fresh source of size `deficit + remaining` (= budget) is generated so the full
+/// budget is available from cursor 0.
 #[cfg(feature = "ring-msm")]
 pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTransport>(
     pool: &mut PreprocessingPool<F>,
@@ -2341,23 +2441,56 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTra
     deficit_ring_edabits_dory: usize,
     deficit_ring_edabits_u64: usize,
     deficit_ring_edabits_u128: usize,
+    deficit_wrap_masks_iring: usize,
+    deficit_ring_edabits_iring: usize,
     io: &mut IoContextPool<N>,
 ) -> eyre::Result<()> {
     extend_pool_batched_base(pool, deficit_counts, deficit_dabits, io)?;
+    // All set_* calls below REPLACE the source, so generate deficit + remaining = budget.
     if deficit_wrap_masks > 0 {
-        pool.set_wrap_masks(super::wrap_mask::generate_wrap_masks_lazy(deficit_wrap_masks, io.main())?);
+        let total = deficit_wrap_masks + pool.remaining_wrap_masks();
+        pool.set_wrap_masks(super::wrap_mask::generate_wrap_masks_lazy(total, io.main())?);
     }
-    if deficit_ring_edabits_dory > 0 {
-        pool.set_ring_edabits_dory(super::edabits::random_edabits_ring_lazy::<DoryRingMsmInt, _>(
-            deficit_ring_edabits_dory,
-            io,
-        )?);
+    // For rv64: DoryRingMsmInt=U66, combine dory + iring U66 ring edaBits together.
+    // For rv32: DoryRingMsmInt=U34, so ring_edabits_u66 is free for IRingScalars only.
+    #[cfg(feature = "rv64")]
+    {
+        let combined_deficit = deficit_ring_edabits_dory + deficit_ring_edabits_iring;
+        if combined_deficit > 0 {
+            let total = combined_deficit + pool.remaining_ring_edabits_dory();
+            pool.set_ring_edabits_dory(super::edabits::random_edabits_ring_lazy::<DoryRingMsmInt, _>(
+                total,
+                io,
+            )?);
+        }
+    }
+    #[cfg(not(feature = "rv64"))]
+    {
+        if deficit_ring_edabits_dory > 0 {
+            let total = deficit_ring_edabits_dory + pool.remaining_ring_edabits_dory();
+            pool.set_ring_edabits_dory(super::edabits::random_edabits_ring_lazy::<DoryRingMsmInt, _>(
+                total,
+                io,
+            )?);
+        }
+        if deficit_ring_edabits_iring > 0 {
+            // IRingScalars always uses U66 carry ring, even on rv32.
+            let total = deficit_ring_edabits_iring + pool.remaining_ring_edabits_u66();
+            pool.ring_edabits_u66 =
+                super::edabits::random_edabits_ring_lazy::<U66, _>(total, io)?;
+        }
     }
     if deficit_ring_edabits_u64 > 0 {
-        pool.set_ring_edabits_u64(super::edabits::random_edabits_ring_lazy::<u64, _>(deficit_ring_edabits_u64, io)?);
+        let total = deficit_ring_edabits_u64 + pool.remaining_ring_edabits_u64();
+        pool.set_ring_edabits_u64(super::edabits::random_edabits_ring_lazy::<u64, _>(total, io)?);
     }
     if deficit_ring_edabits_u128 > 0 {
-        pool.set_ring_edabits_u128(super::edabits::random_edabits_ring_lazy::<u128, _>(deficit_ring_edabits_u128, io)?);
+        let total = deficit_ring_edabits_u128 + pool.remaining_ring_edabits_u128();
+        pool.set_ring_edabits_u128(super::edabits::random_edabits_ring_lazy::<u128, _>(total, io)?);
+    }
+    if deficit_wrap_masks_iring > 0 {
+        let total = deficit_wrap_masks_iring + pool.remaining_wrap_masks_iring();
+        pool.set_wrap_masks_iring(super::wrap_mask::generate_wrap_masks_lazy(total, io.main())?);
     }
     Ok(())
 }
