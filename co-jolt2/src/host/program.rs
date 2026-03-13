@@ -35,8 +35,7 @@ pub fn generate_trace_shares<R: RngCore + CryptoRng>(
     [Rep3ShareBundle; 3],
 ) {
     let (bytecode, memory_init, _) = program.decode();
-    let (mut trace, memory, mut program_io) = program.trace(inputs, untrusted_advice, trusted_advice);
-    program_io.outputs.truncate(program_io.outputs.iter().rposition(|&byte| byte != 0).map_or(0, |idx| idx + 1));
+    let (mut trace, memory, program_io) = program.trace(inputs, untrusted_advice, trusted_advice);
 
     let padded_len = (trace.len() + 1).next_power_of_two();
     trace.resize(padded_len, tracer::instruction::Cycle::NoOp);

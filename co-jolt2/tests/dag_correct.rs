@@ -111,8 +111,12 @@ fn build_dag_fixture(trace_file: &str) -> DagFixture {
     let _test_guard = dag_test_lock();
     let _tracing_guard = init_tracing(trace_file, std::path::Path::new("traces"));
 
-    let (shares, preprocessing, verifier_preprocessing, io_device, ram_K, padded_len) =
+    let (shares, preprocessing, verifier_preprocessing, mut io_device, ram_K, padded_len) =
         build_public_fixture(trace_file);
+
+    // Truncate trailing zeros from outputs, matching what vanilla Jolt::prove does.
+    // Both coordinator and verifier must see the same truncated outputs for Fiat-Shamir.
+    io_device.outputs.truncate(io_device.outputs.iter().rposition(|&b| b != 0).map_or(0, |pos| pos + 1));
 
     // 4) Rep3 MPC proof.
     let preprocessing_arc = Arc::new(preprocessing);
