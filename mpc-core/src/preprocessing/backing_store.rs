@@ -204,6 +204,31 @@ impl<F> BackingStore<F> {
         Ok(out)
     }
 
+    fn read_file_backed_range_into(&self, file: &File, start: usize, end: usize, out: &mut Vec<F>) -> io::Result<()> {
+        self.validate_range(start, end)?;
+        let count = end - start;
+        out.clear();
+        if count == 0 {
+            return Ok(());
+        }
+
+        let (byte_offset, byte_len) = Self::byte_range(start, end);
+        if tracing::enabled!(tracing::Level::TRACE) {
+            tracing::trace!(start, end, count, byte_offset, byte_len, "BackingStore file-backed read_into");
+        }
+
+        out.reserve(count.saturating_sub(out.capacity()));
+        // SAFETY: `F` obeys `assert_field_layout::<F>()` and the read fills the
+        // entire byte range for `count` initialized elements.
+        unsafe { out.set_len(count) };
+        let out_bytes = unsafe { std::slice::from_raw_parts_mut(out.as_mut_ptr() as *mut u8, byte_len) };
+        if let Err(err) = Self::file_read_exact_at(file, byte_offset, out_bytes) {
+            out.clear();
+            return Err(err);
+        }
+        Ok(())
+    }
+
     /// Read a range of elements in **reuse** mode (never mutates the file).
     #[cfg(feature = "reuse-preproc")]
     pub(crate) fn read_reuse(&self, start: usize, end: usize) -> io::Result<Vec<F>>
@@ -230,6 +255,37 @@ impl<F> BackingStore<F> {
         }
     }
 
+    /// Read a range of elements in **reuse** mode into an existing vec.
+    #[cfg(feature = "reuse-preproc")]
+    pub(crate) fn read_reuse_into(&self, start: usize, end: usize, out: &mut Vec<F>) -> io::Result<()>
+    where
+        F: Copy,
+    {
+        match self {
+            BackingStore::InMemory(v) => {
+                self.validate_range(start, end)?;
+                out.clear();
+                out.extend_from_slice(&v[start..end]);
+                Ok(())
+            }
+            BackingStore::FileBacked { file, path, .. } => {
+                if tracing::enabled!(tracing::Level::DEBUG) {
+                    tracing::debug!(
+                        path = %path.display(),
+                        start,
+                        end,
+                        "BackingStore::read_reuse_into"
+                    );
+                }
+                self.read_file_backed_range_into(file, start, end, out)
+            }
+            BackingStore::Empty => {
+                out.clear();
+                Ok(())
+            }
+        }
+    }
+
     /// Read a range of elements in **consume** mode (call `consume()` after use).
     #[cfg(not(feature = "reuse-preproc"))]
     pub(crate) fn read_consume(&self, start: usize, end: usize) -> io::Result<Vec<F>>
@@ -253,6 +309,37 @@ impl<F> BackingStore<F> {
                 self.read_file_backed_range(file, start, end)
             }
             BackingStore::Empty => Ok(Vec::new()),
+        }
+    }
+
+    /// Read a range of elements in **consume** mode into an existing vec.
+    #[cfg(not(feature = "reuse-preproc"))]
+    pub(crate) fn read_consume_into(&self, start: usize, end: usize, out: &mut Vec<F>) -> io::Result<()>
+    where
+        F: Copy,
+    {
+        match self {
+            BackingStore::InMemory(v) => {
+                self.validate_range(start, end)?;
+                out.clear();
+                out.extend_from_slice(&v[start..end]);
+                Ok(())
+            }
+            BackingStore::FileBacked { file, path, .. } => {
+                if tracing::enabled!(tracing::Level::DEBUG) {
+                    tracing::debug!(
+                        path = %path.display(),
+                        start,
+                        end,
+                        "BackingStore::read_consume_into"
+                    );
+                }
+                self.read_file_backed_range_into(file, start, end, out)
+            }
+            BackingStore::Empty => {
+                out.clear();
+                Ok(())
+            }
         }
     }
 

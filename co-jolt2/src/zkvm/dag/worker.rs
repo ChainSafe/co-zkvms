@@ -143,10 +143,7 @@ impl Rep3JoltDagWorker {
         // Untrusted advice opening proof (if advice is non-empty)
         // -------------------------------------------------------------------
         if state.prover_state.untrusted_advice_polynomial.is_some() {
-            Self::prove_untrusted_advice_opening::<F, PCS, ProofTranscript, N>(
-                &mut state,
-                &mut io_ctx,
-            )?;
+            Self::prove_untrusted_advice_opening::<F, PCS, ProofTranscript, N>(&mut state, &mut io_ctx)?;
         }
 
         // In-process tests share DoryGlobals across all 3 worker threads.

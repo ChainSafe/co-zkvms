@@ -163,14 +163,15 @@ impl LazyWrapMasks {
         Ok(WrapMaskBatch { r0_bin, r1_bin, mask_arith })
     }
 
-    pub fn save(&self, dir: &std::path::Path) -> std::io::Result<()> {
+    pub fn save(&mut self, dir: &std::path::Path) -> std::io::Result<()> {
         std::fs::create_dir_all(dir)?;
         if !self.mask_arith_flat.is_empty() {
             let data_path = dir.join("wrap_masks.data");
             self.mask_arith_flat.save_to_file(&data_path)?;
         }
+        let meta_path = dir.join("wrap_masks.meta");
         backing_store::write_meta(
-            &dir.join("wrap_masks.meta"),
+            &meta_path,
             &backing_store::MetaData {
                 seed1: self.seed1,
                 pos1: self.pos1,
@@ -182,6 +183,7 @@ impl LazyWrapMasks {
                 field_bytes: std::mem::size_of::<RingElement<U66>>(),
             },
         )?;
+        self.meta_path = Some(meta_path);
         std::result::Result::Ok(())
     }
 

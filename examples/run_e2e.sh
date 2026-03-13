@@ -53,6 +53,11 @@ if [ -n "$EXTRA_FEATURES" ]; then
   CO_JOLT2_FEATURES="$CO_JOLT2_FEATURES,$EXTRA_FEATURES"
 fi
 
+REUSE_PREPROC=${REUSE_PREPROC:-0}
+if [ "$REUSE_PREPROC" = "1" ]; then
+  CO_JOLT2_FEATURES="$CO_JOLT2_FEATURES,reuse-preproc"
+fi
+
 setup_jemalloc_preset "$JEMALLOC_PRESET"
 
 echo "=== E2E Test (transport=$TRANSPORT) ==="

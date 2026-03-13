@@ -153,15 +153,8 @@ fn prove_loop(
         let payload_bytes = user_conn.recv()?;
         let payload: WorkerPayload = bincode::deserialize(&payload_bytes).context("deserializing WorkerPayload")?;
 
-        let WorkerPayload {
-            trace,
-            memory,
-            program_io_share,
-            bytecode,
-            memory_init,
-            program_id,
-            preprocess_trace_len,
-        } = payload;
+        let WorkerPayload { trace, memory, program_io_share, bytecode, memory_init, program_id, preprocess_trace_len } =
+            payload;
 
         // Trace is already padded to next power of 2 by the client.
         let padded_len = trace.len();

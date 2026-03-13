@@ -668,10 +668,7 @@ impl JoltDAG {
             if let Some((point, _)) = acc.openings.get_mut(&OpeningId::UntrustedAdvice) {
                 *point = advice_opening_point;
             } else {
-                acc.openings.insert(
-                    OpeningId::UntrustedAdvice,
-                    (advice_opening_point, F::zero()),
-                );
+                acc.openings.insert(OpeningId::UntrustedAdvice, (advice_opening_point, F::zero()));
             }
         }
 

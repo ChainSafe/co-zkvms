@@ -2,7 +2,7 @@ use std::path::Path;
 
 use super::backing_store;
 use super::dabits::{DaBitBatch, LazyDaBits};
-use super::edabits::{EdaBitsBatch, EdaBitsRingBatch, LazyEdaBits, LazyEdaBitsRing};
+use super::edabits::{EdaBitsBatch, EdaBitsBatchScratch, EdaBitsRingBatch, LazyEdaBits, LazyEdaBitsRing};
 use crate::field::PrimeField;
 use crate::protocols::rep3::PartyID;
 use crate::protocols::rep3::network::Rep3RawFieldTransport;
@@ -280,26 +280,75 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
         }
     }
 
+    /// Generic edaBits drain into a reusable flat batch scratch buffer.
+    pub fn take_edabits_into<T: IntRing2k>(
+        &mut self,
+        n: usize,
+        scratch: &mut EdaBitsBatchScratch<T, F>,
+    ) -> eyre::Result<()>
+    where
+        Standard: Distribution<T>,
+    {
+        use std::any::TypeId;
+        let tid = TypeId::of::<T>();
+        if tid == TypeId::of::<u8>() {
+            // SAFETY: T == u8 confirmed by TypeId check.
+            let scratch =
+                unsafe { &mut *(scratch as *mut EdaBitsBatchScratch<T, F> as *mut EdaBitsBatchScratch<u8, F>) };
+            self.edabits_u8.take_batch_into(n, scratch)
+        } else if tid == TypeId::of::<u16>() {
+            let scratch =
+                unsafe { &mut *(scratch as *mut EdaBitsBatchScratch<T, F> as *mut EdaBitsBatchScratch<u16, F>) };
+            self.edabits_u16.take_batch_into(n, scratch)
+        } else if tid == TypeId::of::<u32>() {
+            let scratch =
+                unsafe { &mut *(scratch as *mut EdaBitsBatchScratch<T, F> as *mut EdaBitsBatchScratch<u32, F>) };
+            self.edabits_u32.take_batch_into(n, scratch)
+        } else if tid == TypeId::of::<u64>() {
+            let scratch =
+                unsafe { &mut *(scratch as *mut EdaBitsBatchScratch<T, F> as *mut EdaBitsBatchScratch<u64, F>) };
+            self.edabits_u64.take_batch_into(n, scratch)
+        } else if tid == TypeId::of::<u128>() {
+            let scratch =
+                unsafe { &mut *(scratch as *mut EdaBitsBatchScratch<T, F> as *mut EdaBitsBatchScratch<u128, F>) };
+            self.edabits_u128.take_batch_into(n, scratch)
+        } else {
+            eyre::bail!("EdaBitsPool::take_edabits_into: unsupported ring type u{}", T::K);
+        }
+    }
+
     /// Write all lazy sources to `dir` concurrently.
     ///
     /// All data+meta pairs are written in parallel via `thread::scope`.
     /// Each save writes the large data file first (page-cache, no fsync), then
     /// fsyncs the tiny 117-byte meta file as the durability barrier.
     #[tracing::instrument(skip_all, name = "Preprocessing::save")]
-    pub fn save(&self, dir: &std::path::Path) -> std::io::Result<()> {
+    pub fn save(&mut self, dir: &std::path::Path) -> std::io::Result<()> {
+        let e0 = &mut self.edabits_u8;
+        let e1 = &mut self.edabits_u16;
+        let e2 = &mut self.edabits_u32;
+        let e3 = &mut self.edabits_u64;
+        let e4 = &mut self.edabits_u128;
+        let da = &mut self.dabits;
+        let r64 = &mut self.ring_edabits_u64;
+        let r128 = &mut self.ring_edabits_u128;
+        #[cfg(feature = "ring-msm")]
+        let wm = &mut self.wrap_masks;
+        #[cfg(feature = "ring-msm")]
+        let r66 = &mut self.ring_edabits_u66;
         std::thread::scope(|s| -> std::io::Result<()> {
-            let h0 = s.spawn(|| self.edabits_u8.save(dir));
-            let h1 = s.spawn(|| self.edabits_u16.save(dir));
-            let h2 = s.spawn(|| self.edabits_u32.save(dir));
-            let h3 = s.spawn(|| self.edabits_u64.save(dir));
-            let h4 = s.spawn(|| self.edabits_u128.save(dir));
-            let h5 = s.spawn(|| self.dabits.save(dir));
-            let h_r64 = s.spawn(|| self.ring_edabits_u64.save(dir));
-            let h_r128 = s.spawn(|| self.ring_edabits_u128.save(dir));
+            let h0 = s.spawn(|| e0.save(dir));
+            let h1 = s.spawn(|| e1.save(dir));
+            let h2 = s.spawn(|| e2.save(dir));
+            let h3 = s.spawn(|| e3.save(dir));
+            let h4 = s.spawn(|| e4.save(dir));
+            let h5 = s.spawn(|| da.save(dir));
+            let h_r64 = s.spawn(|| r64.save(dir));
+            let h_r128 = s.spawn(|| r128.save(dir));
             #[cfg(feature = "ring-msm")]
-            let h6 = s.spawn(|| self.wrap_masks.save(dir));
+            let h6 = s.spawn(|| wm.save(dir));
             #[cfg(feature = "ring-msm")]
-            let h7 = s.spawn(|| self.ring_edabits_u66.save(dir));
+            let h7 = s.spawn(|| r66.save(dir));
             h0.join().unwrap()?;
             h1.join().unwrap()?;
             h2.join().unwrap()?;
@@ -1533,7 +1582,7 @@ where
             let e4 = LazyEdaBits::<u128, F>::new(s1, p1, s2, p2, counts[4], Vec::new(), party_id);
 
             let d = LazyDaBits::new_with_store(ds1, dp1, ds2, dp2, num_dabits, dabits_store, party_id);
-            let pool = PreprocessingPool::new(party_id, e0, e1, e2, e3, e4, d);
+            let mut pool = PreprocessingPool::new(party_id, e0, e1, e2, e3, e4, d);
             pool.save(dir)?;
             Ok(pool)
         }
@@ -1602,7 +1651,7 @@ where
             let e4 = LazyEdaBits::<u128, F>::new(s1, p1, s2, p2, counts[4], Vec::new(), party_id);
             let (ds1, dp1, ds2, dp2) = snaps[5];
             let d = LazyDaBits::new(ds1, dp1, ds2, dp2, num_dabits, Vec::new(), party_id);
-            let pool = PreprocessingPool::new(party_id, e0, e1, e2, e3, e4, d);
+            let mut pool = PreprocessingPool::new(party_id, e0, e1, e2, e3, e4, d);
             pool.save(dir)?;
             Ok(pool)
         }
@@ -1834,7 +1883,7 @@ where
             let (ds1, dp1, ds2, dp2) = snaps[5];
             let d = LazyDaBits::new_with_store(ds1, dp1, ds2, dp2, num_dabits, dabits_store, party_id);
 
-            let pool = PreprocessingPool::new(party_id, e0, e1, e2, e3, e4, d);
+            let mut pool = PreprocessingPool::new(party_id, e0, e1, e2, e3, e4, d);
             pool.save(dir)?;
             Ok(pool)
         }
@@ -2196,6 +2245,8 @@ where
     if num_ring_edabits_u128 > 0 {
         pool.set_ring_edabits_u128(super::edabits::random_edabits_ring_lazy::<u128, _>(num_ring_edabits_u128, io)?);
     }
+    // Re-save so ring edaBits also get meta_path set (base pool was already saved
+    // inside preprocess_pool_base, but ring edaBits were added after).
     pool.save(dir)?;
     Ok(pool)
 }

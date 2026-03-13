@@ -59,6 +59,41 @@ pub struct EdaBitsBatch<T: IntRing2k, F: PrimeField> {
     pub alphas_flat: Vec<F>,
 }
 
+#[derive(Copy, Clone)]
+pub struct EdaBitsBatchRef<'a, T: IntRing2k, F: PrimeField> {
+    pub gammas: &'a [RingElement<T>],
+    pub alphas_flat: &'a [F],
+}
+
+pub struct EdaBitsBatchScratch<T: IntRing2k, F: PrimeField> {
+    pub gammas: Vec<RingElement<T>>,
+    pub alphas_flat: Vec<F>,
+    interleaved_bytes: Vec<u8>,
+    gamma_bytes: Vec<u8>,
+}
+
+impl<T: IntRing2k, F: PrimeField> Default for EdaBitsBatchScratch<T, F> {
+    fn default() -> Self {
+        Self { gammas: Vec::new(), alphas_flat: Vec::new(), interleaved_bytes: Vec::new(), gamma_bytes: Vec::new() }
+    }
+}
+
+impl<T: IntRing2k, F: PrimeField> EdaBitsBatchScratch<T, F> {
+    pub fn as_ref(&self) -> EdaBitsBatchRef<'_, T, F> {
+        EdaBitsBatchRef { gammas: &self.gammas, alphas_flat: &self.alphas_flat }
+    }
+
+    pub fn into_batch(self) -> EdaBitsBatch<T, F> {
+        EdaBitsBatch { gammas: self.gammas, alphas_flat: self.alphas_flat }
+    }
+}
+
+impl<T: IntRing2k, F: PrimeField> EdaBitsBatch<T, F> {
+    pub fn as_ref(&self) -> EdaBitsBatchRef<'_, T, F> {
+        EdaBitsBatchRef { gammas: &self.gammas, alphas_flat: &self.alphas_flat }
+    }
+}
+
 /// Generate `num` random Protocol Π₂ B2A tuples using Rep3 preprocessing.
 ///
 /// For each tuple, generates K random bits γ known only to P0, plus a 2-of-2
@@ -262,6 +297,13 @@ where
     ///
     /// Two allocations total: `gammas` (len n) + `alphas_flat` (len n*K).
     pub fn take_batch(&mut self, n: usize) -> eyre::Result<EdaBitsBatch<T, F>> {
+        let mut scratch = EdaBitsBatchScratch::default();
+        self.take_batch_into(n, &mut scratch)?;
+        Ok(scratch.into_batch())
+    }
+
+    /// Drain `n` edaBits into a reusable scratch buffer.
+    pub fn take_batch_into(&mut self, n: usize, scratch: &mut EdaBitsBatchScratch<T, F>) -> eyre::Result<()> {
         eyre::ensure!(
             self.cursor + n <= self.total,
             "LazyEdaBits<u{}>: need {n}, have {} (cursor={}, total={})",
@@ -272,7 +314,11 @@ where
         );
 
         if n == 0 {
-            return Ok(EdaBitsBatch { gammas: Vec::new(), alphas_flat: Vec::new() });
+            scratch.gammas.clear();
+            scratch.alphas_flat.clear();
+            scratch.interleaved_bytes.clear();
+            scratch.gamma_bytes.clear();
+            return Ok(());
         }
 
         let t_bytes = std::mem::size_of::<T>();
@@ -285,25 +331,22 @@ where
         if party_id == PartyID::ID2 {
             let flat_start = cursor_base * k;
             let flat_end = flat_start + n * k;
-            let alphas_flat = {
-                #[cfg(feature = "reuse-preproc")]
-                {
-                    self.alpha2_flat.read_reuse(flat_start, flat_end).unwrap_or_else(|e| {
-                        panic!("LazyEdaBits(P2): read_reuse({flat_start}..{flat_end}) failed: {e}");
-                    })
-                }
-                #[cfg(not(feature = "reuse-preproc"))]
-                {
-                    self.alpha2_flat.read_consume(flat_start, flat_end).unwrap_or_else(|e| {
-                        panic!("LazyEdaBits(P2): read_consume({flat_start}..{flat_end}) failed: {e}");
-                    })
-                }
-            };
-            let gammas = vec![RingElement(T::zero()); n];
+            #[cfg(feature = "reuse-preproc")]
+            self.alpha2_flat.read_reuse_into(flat_start, flat_end, &mut scratch.alphas_flat).unwrap_or_else(|e| {
+                panic!("LazyEdaBits(P2): read_reuse_into({flat_start}..{flat_end}) failed: {e}");
+            });
+            #[cfg(not(feature = "reuse-preproc"))]
+            self.alpha2_flat.read_consume_into(flat_start, flat_end, &mut scratch.alphas_flat).unwrap_or_else(|e| {
+                panic!("LazyEdaBits(P2): read_consume_into({flat_start}..{flat_end}) failed: {e}");
+            });
+            scratch.gammas.clear();
+            scratch.gammas.resize(n, RingElement(T::zero()));
+            scratch.interleaved_bytes.clear();
+            scratch.gamma_bytes.clear();
             self.cursor += n;
             self.persist_cursor();
             self.alpha2_flat.consume(flat_start, flat_end);
-            return Ok(EdaBitsBatch { gammas, alphas_flat });
+            return Ok(());
         }
 
         // P0/P1: regenerate from RNG seeds.
@@ -315,76 +358,79 @@ where
         let item_byte_offset = cursor_base * stride;
         let interleaved_bytes = n * stride;
 
-        fn seek_and_generate(
+        fn seek_and_generate_into(
             seed: [u8; crate::SEED_SIZE],
             base_pos: u128,
             byte_offset: usize,
             needed: usize,
-        ) -> Vec<u8> {
+            out: &mut Vec<u8>,
+        ) {
             let word_offset = (byte_offset as u128) / 4;
             let skip = byte_offset % 4;
             let mut rng = crate::RngType::from_seed(seed);
             rng.set_word_pos(base_pos + word_offset);
-            let mut buf = vec![0u8; needed + skip];
-            rng.fill_bytes(&mut buf);
+            out.resize(needed + skip, 0);
+            rng.fill_bytes(out);
             if skip > 0 {
-                buf.drain(..skip);
+                out.copy_within(skip.., 0);
             }
-            buf
+            out.truncate(needed);
         }
 
         // rng2 (P0↔P2) only carries gammas — offset = cursor * t_bytes (unchanged).
         let g2_gamma_offset = cursor_base * t_bytes;
         let g2_gamma_bytes = n * t_bytes;
 
-        let (interleaved, g2_bytes);
         if party_id == PartyID::ID0 {
             let _span = tracing::trace_span!("gen_gamma_alpha").entered();
-            let (s1, s2) = rayon::join(
-                || seek_and_generate(self.seed1, self.pos1, item_byte_offset, interleaved_bytes),
-                || seek_and_generate(self.seed2, self.pos2, g2_gamma_offset, g2_gamma_bytes),
+            let (interleaved, g2_bytes) = (&mut scratch.interleaved_bytes, &mut scratch.gamma_bytes);
+            rayon::join(
+                || seek_and_generate_into(self.seed1, self.pos1, item_byte_offset, interleaved_bytes, interleaved),
+                || seek_and_generate_into(self.seed2, self.pos2, g2_gamma_offset, g2_gamma_bytes, g2_bytes),
             );
-            interleaved = s1;
-            g2_bytes = s2;
         } else {
             // P1: same interleaved stream from seed2 (P1↔P0 = P0↔P1 shared stream).
             let _span = tracing::trace_span!("gen_alpha").entered();
-            interleaved = seek_and_generate(self.seed2, self.pos2, item_byte_offset, interleaved_bytes);
-            g2_bytes = Vec::new();
+            seek_and_generate_into(
+                self.seed2,
+                self.pos2,
+                item_byte_offset,
+                interleaved_bytes,
+                &mut scratch.interleaved_bytes,
+            );
+            scratch.gamma_bytes.clear();
         }
 
         // Build flat arrays from per-item interleaved layout.
         let _span = tracing::trace_span!("build_batch").entered();
-        let gammas: Vec<RingElement<T>> = if party_id == PartyID::ID0 {
-            (0..n)
-                .into_par_iter()
-                .map(|i| {
-                    let g1_off = i * stride;
-                    let g2_off = i * t_bytes;
-                    let g1_val = T::from_le_bytes(&interleaved[g1_off..g1_off + t_bytes]);
-                    let g2_val = T::from_le_bytes(&g2_bytes[g2_off..g2_off + t_bytes]);
-                    RingElement(g1_val ^ g2_val)
-                })
-                .collect()
-        } else {
-            vec![RingElement(T::zero()); n]
-        };
+        scratch.gammas.clear();
+        scratch.gammas.resize(n, RingElement(T::zero()));
+        if party_id == PartyID::ID0 {
+            let interleaved = &scratch.interleaved_bytes;
+            let g2_bytes = &scratch.gamma_bytes;
+            scratch.gammas.par_iter_mut().enumerate().for_each(|(i, gamma)| {
+                let g1_off = i * stride;
+                let g2_off = i * t_bytes;
+                let g1_val = T::from_le_bytes(&interleaved[g1_off..g1_off + t_bytes]);
+                let g2_val = T::from_le_bytes(&g2_bytes[g2_off..g2_off + t_bytes]);
+                *gamma = RingElement(g1_val ^ g2_val);
+            });
+        }
 
-        let alphas_flat: Vec<F> = (0..n * k)
-            .into_par_iter()
-            .with_min_len(256)
-            .map(|idx| {
-                let item = idx / k;
-                let bit = idx % k;
-                let a_start = item * stride + t_bytes + bit * fb;
-                let lo = u64::from_le_bytes(interleaved[a_start..a_start + 8].try_into().unwrap());
-                let hi = u64::from_le_bytes(interleaved[a_start + 8..a_start + 16].try_into().unwrap());
-                F::from((hi as u128) << 64 | lo as u128)
-            })
-            .collect();
+        scratch.alphas_flat.clear();
+        scratch.alphas_flat.resize(n * k, F::zero());
+        let interleaved = &scratch.interleaved_bytes;
+        scratch.alphas_flat.par_iter_mut().enumerate().with_min_len(256).for_each(|(idx, alpha)| {
+            let item = idx / k;
+            let bit = idx % k;
+            let a_start = item * stride + t_bytes + bit * fb;
+            let lo = u64::from_le_bytes(interleaved[a_start..a_start + 8].try_into().unwrap());
+            let hi = u64::from_le_bytes(interleaved[a_start + 8..a_start + 16].try_into().unwrap());
+            *alpha = F::from((hi as u128) << 64 | lo as u128);
+        });
 
         self.cursor += n;
-        Ok(EdaBitsBatch { gammas, alphas_flat })
+        Ok(())
     }
 }
 
@@ -394,7 +440,7 @@ impl<T: IntRing2k, F: PrimeField> LazyEdaBits<T, F> {
     ///
     /// Creates `edabits_{K}.meta` (all parties) and `edabits_{K}.alpha2`
     /// (P2 only, when non-empty).
-    pub fn save(&self, dir: &std::path::Path) -> std::io::Result<()> {
+    pub fn save(&mut self, dir: &std::path::Path) -> std::io::Result<()> {
         const { backing_store::assert_field_layout::<F>() };
         std::fs::create_dir_all(dir)?;
 
@@ -407,8 +453,9 @@ impl<T: IntRing2k, F: PrimeField> LazyEdaBits<T, F> {
             let data_path = dir.join(format!("edabits_{suffix}.alpha2"));
             self.alpha2_flat.save_to_file(&data_path)?;
         }
+        let meta_path = dir.join(format!("edabits_{suffix}.meta"));
         backing_store::write_meta(
-            &dir.join(format!("edabits_{suffix}.meta")),
+            &meta_path,
             &backing_store::MetaData {
                 seed1: self.seed1,
                 pos1: self.pos1,
@@ -420,6 +467,7 @@ impl<T: IntRing2k, F: PrimeField> LazyEdaBits<T, F> {
                 field_bytes: self.field_bytes,
             },
         )?;
+        self.meta_path = Some(meta_path);
         std::result::Result::Ok(())
     }
 
@@ -787,15 +835,16 @@ where
 
 // Persistence methods for LazyEdaBitsRing.
 impl<T: IntRing2k> LazyEdaBitsRing<T> {
-    pub fn save(&self, dir: &std::path::Path) -> std::io::Result<()> {
+    pub fn save(&mut self, dir: &std::path::Path) -> std::io::Result<()> {
         std::fs::create_dir_all(dir)?;
         let suffix = format!("ring_edabits_{}", T::K);
         if !self.alpha2_flat.is_empty() {
             let data_path = dir.join(format!("{suffix}.alpha2"));
             self.alpha2_flat.save_to_file(&data_path)?;
         }
+        let meta_path = dir.join(format!("{suffix}.meta"));
         backing_store::write_meta(
-            &dir.join(format!("{suffix}.meta")),
+            &meta_path,
             &backing_store::MetaData {
                 seed1: self.seed1,
                 pos1: self.pos1,
@@ -807,6 +856,7 @@ impl<T: IntRing2k> LazyEdaBitsRing<T> {
                 field_bytes: std::mem::size_of::<T>(),
             },
         )?;
+        self.meta_path = Some(meta_path);
         std::result::Result::Ok(())
     }
 
