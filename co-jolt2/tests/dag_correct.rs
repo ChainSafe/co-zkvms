@@ -60,13 +60,14 @@ fn build_program() -> Program {
     }
 }
 
-fn build_inputs() -> Vec<u8> {
+/// Returns (public_inputs, untrusted_advice).
+fn build_inputs() -> (Vec<u8>, Vec<u8>) {
     if use_sha2_fixture() {
-        let mut inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
-        inputs.append(&mut postcard::to_stdvec(&1u32).unwrap());
-        inputs
+        let mut advice = postcard::to_stdvec(&[5u8; 32]).unwrap();
+        advice.append(&mut postcard::to_stdvec(&1u32).unwrap());
+        (vec![], advice)
     } else {
-        postcard::to_stdvec(&9u32).unwrap()
+        (postcard::to_stdvec(&9u32).unwrap(), vec![])
     }
 }
 
@@ -81,11 +82,11 @@ fn build_public_fixture(
     usize,
 ) {
     let mut program = build_program();
-    let inputs = build_inputs();
+    let (inputs, untrusted_advice) = build_inputs();
 
     let mut rng = ChaCha12Rng::seed_from_u64(0);
     let (bytecode, memory_init, io_device, shares) =
-        generate_trace_shares(&mut program, &inputs, &[], &[], &mut rng);
+        generate_trace_shares(&mut program, &inputs, &untrusted_advice, &[], &mut rng);
 
     // Shares are already padded to next power of 2 by generate_trace_shares.
     let padded_len = shares[0].0.len();
@@ -110,11 +111,14 @@ fn build_dag_fixture(trace_file: &str) -> DagFixture {
     let _test_guard = dag_test_lock();
     let _tracing_guard = init_tracing(trace_file, std::path::Path::new("traces"));
 
-    let (shares, preprocessing, verifier_preprocessing, io_device, ram_K, padded_len) =
+    let (shares, preprocessing, verifier_preprocessing, mut io_device, ram_K, padded_len) =
         build_public_fixture(trace_file);
 
+    // Truncate trailing zeros from outputs, matching what vanilla Jolt::prove does.
+    // Both coordinator and verifier must see the same truncated outputs for Fiat-Shamir.
+    io_device.outputs.truncate(io_device.outputs.iter().rposition(|&b| b != 0).map_or(0, |pos| pos + 1));
+
     // 4) Rep3 MPC proof.
-    let _dory_guard = DoryGlobals::initialize(DTH_ROOT_OF_K, padded_len);
     let preprocessing_arc = Arc::new(preprocessing);
     let verifier_preprocessing_arc = Arc::new(verifier_preprocessing);
     let io_device_arc = Arc::new(io_device);
@@ -216,6 +220,9 @@ fn build_dag_fixture(trace_file: &str) -> DagFixture {
     );
 
     // 5) Verify the MPC-produced proof using the local jolt-core verifier.
+    // Initialize DoryGlobals here (not before proof generation) so workers can
+    // use advice-sized DoryGlobals during their commit without races.
+    let _dory_guard = DoryGlobals::initialize(DTH_ROOT_OF_K, padded_len);
     let verifier_preprocessing = Arc::try_unwrap(verifier_preprocessing_arc).unwrap_or_else(|arc| (*arc).clone());
     let io_device = Arc::try_unwrap(io_device_arc).unwrap_or_else(|arc| (*arc).clone());
 

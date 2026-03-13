@@ -242,6 +242,12 @@ impl<F: JoltField> Rep3RamDagWorker<F> {
         Ok(Self { val_init, val_final, stage2: None, stage3: None, stage4: None })
     }
 
+    /// Evaluate the shared `val_init` polynomial at a public point.
+    /// Returns an additive share of the evaluation (no inter-worker communication needed).
+    pub fn eval_val_init(&self, r: &[F]) -> mpc_core::protocols::additive::AdditiveShare<F> {
+        self.val_init.evaluate(r)
+    }
+
     pub fn set_stage2_init(&mut self, gamma: F, input_claim: F, r_address: Vec<F::Challenge>) {
         self.stage2 = Some((gamma, input_claim, r_address));
     }

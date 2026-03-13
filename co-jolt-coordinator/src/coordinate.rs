@@ -46,9 +46,12 @@ pub fn coordinate_once<N: Rep3NetworkCoordinator>(
     );
 
     // Reconstruct JoltDevice from public fields (no advice — workers commit those)
+    // Truncate trailing zeros from outputs, matching what vanilla Jolt::prove does.
+    let mut outputs = request.outputs;
+    outputs.truncate(outputs.iter().rposition(|&b| b != 0).map_or(0, |pos| pos + 1));
     let program_io = JoltDevice {
         inputs: request.inputs,
-        outputs: request.outputs,
+        outputs,
         panic: request.panic,
         memory_layout: request.memory_layout.clone(),
         trusted_advice: vec![],
