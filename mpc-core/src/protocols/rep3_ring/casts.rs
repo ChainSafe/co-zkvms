@@ -322,6 +322,7 @@ where
     Ok(std::mem::take(&mut scratch.out))
 }
 
+#[tracing::instrument(skip_all, level = "trace", name = "r2f_b2a_preproc_many_into")]
 pub fn r2f_b2a_preproc_many_into<T: IntRing2k, F: PrimeField, N: Rep3Network>(
     x_binary: &[Rep3RingShare<T>],
     batch: EdaBitsBatchRef<'_, T, F>,

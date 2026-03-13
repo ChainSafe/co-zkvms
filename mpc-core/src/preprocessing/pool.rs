@@ -2,13 +2,12 @@ use std::path::Path;
 
 use super::backing_store;
 use super::dabits::{DaBitBatch, LazyDaBits};
-use super::edabits::{EdaBitsBatch, EdaBitsBatchScratch, EdaBitsRingBatch, LazyEdaBits, LazyEdaBitsRing};
+use super::edabits::{EdaBitsBatch, EdaBitsBatchScratch, EdaBitsRingBatch, EdaBitsStorageMode, LazyEdaBits, LazyEdaBitsRing};
 use crate::field::PrimeField;
 use crate::protocols::rep3::PartyID;
 use crate::protocols::rep3::network::Rep3RawFieldTransport;
 use crate::protocols::rep3::network::{IoContext, IoContextPool, Rep3Network, Rep3NetworkWorker};
 use crate::protocols::rep3_ring::ring::int_ring::IntRing2k;
-use eyre::Ok;
 use rand::RngCore;
 use rand::distributions::Standard;
 use rand::prelude::Distribution;
@@ -228,6 +227,16 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
         )
     }
 
+    #[tracing::instrument(skip_all, name = "Preprocessing::prepare_edabits_precache")]
+    pub fn prepare_edabits_precache(&mut self, dir: &Path, counts: [usize; 5]) -> std::io::Result<()> {
+        self.edabits_u64.prepare_precache(dir, counts[3])?;
+        self.edabits_u128.prepare_precache(dir, counts[4])?;
+        self.edabits_u32.prepare_precache(dir, counts[2])?;
+        self.edabits_u16.prepare_precache(dir, counts[1])?;
+        self.edabits_u8.prepare_precache(dir, counts[0])?;
+        Ok(())
+    }
+
     /// Reset all internal cursors to 0 in `reuse-preproc` mode.
     ///
     /// This makes the pool re-usable across multiple proof iterations in a single process.
@@ -281,6 +290,7 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
     }
 
     /// Generic edaBits drain into a reusable flat batch scratch buffer.
+    #[tracing::instrument(skip(self, scratch), level = "trace", name = "take_edabits_into")]
     pub fn take_edabits_into<T: IntRing2k>(
         &mut self,
         n: usize,
@@ -1317,9 +1327,9 @@ where
     match party_id {
         PartyID::ID0 => {
             // Round 1: P0 → P2 sends edaBit α₂ streams per type, then daBit α₂.
-            let mut send_edabit_type = |idx: usize, num: usize| {
+            let mut send_edabit_type = |idx: usize, num: usize| -> eyre::Result<()> {
                 if num == 0 {
-                    return Ok(());
+                    return eyre::Result::<()>::Ok(());
                 }
                 let _span = info_span!("edabits_send_alphas", k = idx, n = num).entered();
                 let k = [u8::K, u16::K, u32::K, u64::K, u128::K][idx];
@@ -1391,7 +1401,7 @@ where
                             send_field_superchunk_ctx(alpha2, PartyID::ID2, ctx, max_msg_elems)?;
                             done += items;
                         }
-                        Ok(())
+                        eyre::Result::<()>::Ok(())
                     })?;
                 } else {
                     let mut done = 0usize;
@@ -1455,7 +1465,7 @@ where
                         done += items;
                     }
                 }
-                Ok(())
+                eyre::Result::<()>::Ok(())
             };
 
             // Collect active (non-zero) edaBit types.
@@ -1545,7 +1555,7 @@ where
                                 )?;
                                 offset += items;
                             }
-                            Ok(())
+                            eyre::Result::<()>::Ok(())
                         })?;
                     } else {
                         let mut offset = 0usize;
@@ -1616,7 +1626,7 @@ where
                             send_field_superchunk_ctx(s12, PartyID::ID2, ctx, max_msg_elems)?;
                             offset += items;
                         }
-                        Ok(())
+                        eyre::Result::<()>::Ok(())
                     })?;
                 } else {
                     let mut offset = 0usize;
@@ -1871,15 +1881,65 @@ where
             let [a0, a1, a2, a3, a4] = eda_stores;
             let mk = |i: usize| snaps[i];
             let (s1, p1, s2, p2) = mk(0);
-            let e0 = LazyEdaBits::<u8, F>::new_with_store(s1, p1, s2, p2, counts[0], a0, party_id);
+            let e0 = LazyEdaBits::<u8, F>::new_with_store(
+                s1,
+                p1,
+                s2,
+                p2,
+                counts[0],
+                a0,
+                if party_id == PartyID::ID2 { EdaBitsStorageMode::P2Authoritative } else { EdaBitsStorageMode::None },
+                backing_store::BackingStore::Empty,
+                party_id,
+            );
             let (s1, p1, s2, p2) = mk(1);
-            let e1 = LazyEdaBits::<u16, F>::new_with_store(s1, p1, s2, p2, counts[1], a1, party_id);
+            let e1 = LazyEdaBits::<u16, F>::new_with_store(
+                s1,
+                p1,
+                s2,
+                p2,
+                counts[1],
+                a1,
+                if party_id == PartyID::ID2 { EdaBitsStorageMode::P2Authoritative } else { EdaBitsStorageMode::None },
+                backing_store::BackingStore::Empty,
+                party_id,
+            );
             let (s1, p1, s2, p2) = mk(2);
-            let e2 = LazyEdaBits::<u32, F>::new_with_store(s1, p1, s2, p2, counts[2], a2, party_id);
+            let e2 = LazyEdaBits::<u32, F>::new_with_store(
+                s1,
+                p1,
+                s2,
+                p2,
+                counts[2],
+                a2,
+                if party_id == PartyID::ID2 { EdaBitsStorageMode::P2Authoritative } else { EdaBitsStorageMode::None },
+                backing_store::BackingStore::Empty,
+                party_id,
+            );
             let (s1, p1, s2, p2) = mk(3);
-            let e3 = LazyEdaBits::<u64, F>::new_with_store(s1, p1, s2, p2, counts[3], a3, party_id);
+            let e3 = LazyEdaBits::<u64, F>::new_with_store(
+                s1,
+                p1,
+                s2,
+                p2,
+                counts[3],
+                a3,
+                if party_id == PartyID::ID2 { EdaBitsStorageMode::P2Authoritative } else { EdaBitsStorageMode::None },
+                backing_store::BackingStore::Empty,
+                party_id,
+            );
             let (s1, p1, s2, p2) = mk(4);
-            let e4 = LazyEdaBits::<u128, F>::new_with_store(s1, p1, s2, p2, counts[4], a4, party_id);
+            let e4 = LazyEdaBits::<u128, F>::new_with_store(
+                s1,
+                p1,
+                s2,
+                p2,
+                counts[4],
+                a4,
+                if party_id == PartyID::ID2 { EdaBitsStorageMode::P2Authoritative } else { EdaBitsStorageMode::None },
+                backing_store::BackingStore::Empty,
+                party_id,
+            );
             let (ds1, dp1, ds2, dp2) = snaps[5];
             let d = LazyDaBits::new_with_store(ds1, dp1, ds2, dp2, num_dabits, dabits_store, party_id);
 
@@ -2110,11 +2170,11 @@ fn extend_pool_batched_base<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTr
             for &(ty, k, _old_total, _seeds) in &active_types {
                 let deficit = deficit_counts[ty];
                 let bs = match ty {
-                    0 => &mut pool.edabits_u8.alpha2_flat,
-                    1 => &mut pool.edabits_u16.alpha2_flat,
-                    2 => &mut pool.edabits_u32.alpha2_flat,
-                    3 => &mut pool.edabits_u64.alpha2_flat,
-                    4 => &mut pool.edabits_u128.alpha2_flat,
+                    0 => &mut pool.edabits_u8.alphas_flat_store,
+                    1 => &mut pool.edabits_u16.alphas_flat_store,
+                    2 => &mut pool.edabits_u32.alphas_flat_store,
+                    3 => &mut pool.edabits_u64.alphas_flat_store,
+                    4 => &mut pool.edabits_u128.alphas_flat_store,
                     _ => unreachable!(),
                 };
                 let old_len = bs.len();

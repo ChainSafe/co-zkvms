@@ -18,13 +18,15 @@ use crate::protocols::rep3_ring::{
     Rep3RingShare,
     ring::{int_ring::IntRing2k, ring_impl::RingElement},
 };
-use eyre::Ok;
 use num_traits::AsPrimitive;
 use rand::distributions::Standard;
 use rand::prelude::Distribution;
 use rand::{RngCore, SeedableRng};
 use rayon::prelude::*;
+use std::fs::File;
+use std::io::{Read, Write};
 use std::marker::PhantomData;
+use std::path::{Path, PathBuf};
 
 /// An edaBits *mask-only* value linking the same random `r` across:
 /// - `r_ring`: arithmetic sharing over `Z_{2^K}`
@@ -179,6 +181,19 @@ where
 // Lazy EdaBits: O(1) storage for P0/P1 via deterministic RNG regeneration
 // ---------------------------------------------------------------------------
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum EdaBitsStorageMode {
+    None,
+    P2Authoritative,
+    P01Precache { start_cursor: usize, len: usize },
+}
+
+struct EdaBitsPrecacheMeta {
+    start_cursor: usize,
+    len: usize,
+    party_id_byte: u8,
+}
+
 /// Lazy edaBits source that stores RNG seeds instead of materialized gamma/alphas.
 ///
 /// P0/P1 regenerate gamma and alpha values on demand from ChaCha12Rng seeds;
@@ -198,14 +213,15 @@ pub struct LazyEdaBits<T: IntRing2k, F: PrimeField> {
     field_bytes: usize,
     /// Consumption cursor: next edaBit index to produce.
     cursor: usize,
-    /// P2-only storage: flat alpha_2 values (length = total * T::K).
-    /// Empty for P0/P1.  May be backed by a memory-mapped file.
-    pub(crate) alpha2_flat: backing_store::BackingStore<F>,
+    /// Either authoritative P2 alpha storage or derived P0/P1 precache storage.
+    pub(crate) alphas_flat_store: backing_store::BackingStore<F>,
+    storage_mode: EdaBitsStorageMode,
+    gamma_store: backing_store::BackingStore<RingElement<T>>,
     /// This party's ID.
     party_id: PartyID,
     /// Path to the meta file on disk (set when loaded via `load()`).
     /// `None` for in-memory-only pools (freshly preprocessed).
-    meta_path: Option<std::path::PathBuf>,
+    meta_path: Option<PathBuf>,
     _phantom: PhantomData<(T, F)>,
 }
 
@@ -223,7 +239,9 @@ where
             total: 0,
             field_bytes: usize::try_from(F::MODULUS_BIT_SIZE).expect("u32 fits into usize").div_ceil(8),
             cursor: 0,
-            alpha2_flat: backing_store::BackingStore::Empty,
+            alphas_flat_store: backing_store::BackingStore::Empty,
+            storage_mode: EdaBitsStorageMode::None,
+            gamma_store: backing_store::BackingStore::Empty,
             party_id,
             meta_path: None,
             _phantom: PhantomData,
@@ -233,14 +251,14 @@ where
     /// Construct a truly lazy source from RNG seeds + P2's alpha_2.
     ///
     /// P0/P1 regenerate gamma/alphas on demand via `take()`.
-    /// P2 slices from `alpha2_flat` (received from P0 during preprocessing).
+    /// P2 slices from the authoritative alpha store received during preprocessing.
     pub fn new(
         seed1: [u8; crate::SEED_SIZE],
         pos1: u128,
         seed2: [u8; crate::SEED_SIZE],
         pos2: u128,
         total: usize,
-        alpha2_flat: Vec<F>,
+        alphas_flat: Vec<F>,
         party_id: PartyID,
     ) -> Self {
         Self::new_with_store(
@@ -249,7 +267,9 @@ where
             seed2,
             pos2,
             total,
-            backing_store::BackingStore::from_vec(alpha2_flat),
+            backing_store::BackingStore::from_vec(alphas_flat),
+            if party_id == PartyID::ID2 { EdaBitsStorageMode::P2Authoritative } else { EdaBitsStorageMode::None },
+            backing_store::BackingStore::Empty,
             party_id,
         )
     }
@@ -260,7 +280,9 @@ where
         seed2: [u8; crate::SEED_SIZE],
         pos2: u128,
         total: usize,
-        alpha2_flat: backing_store::BackingStore<F>,
+        alphas_flat_store: backing_store::BackingStore<F>,
+        storage_mode: EdaBitsStorageMode,
+        gamma_store: backing_store::BackingStore<RingElement<T>>,
         party_id: PartyID,
     ) -> Self {
         let field_bytes = usize::try_from(F::MODULUS_BIT_SIZE).expect("u32 fits into usize").div_ceil(8);
@@ -272,7 +294,9 @@ where
             total,
             field_bytes,
             cursor: 0,
-            alpha2_flat,
+            alphas_flat_store,
+            storage_mode,
+            gamma_store,
             party_id,
             meta_path: None,
             _phantom: PhantomData,
@@ -291,6 +315,264 @@ where
     #[cfg(feature = "reuse-preproc")]
     pub(crate) fn reset_cursor_for_reuse(&mut self) {
         self.cursor = 0;
+    }
+
+    fn authoritative_alpha_path(dir: &Path) -> PathBuf {
+        dir.join(format!("edabits_{}.alpha2", T::K))
+    }
+
+    fn precache_alpha_path(dir: &Path) -> PathBuf {
+        dir.join(format!("edabits_{}.precache_alpha", T::K))
+    }
+
+    fn precache_gamma_path(dir: &Path) -> PathBuf {
+        dir.join(format!("edabits_{}.precache_gamma", T::K))
+    }
+
+    fn precache_meta_path(dir: &Path) -> PathBuf {
+        dir.join(format!("edabits_{}.precache.meta", T::K))
+    }
+
+    fn read_precache_meta(path: &Path) -> std::io::Result<EdaBitsPrecacheMeta> {
+        let mut file = File::open(path)?;
+        let mut buf8 = [0u8; 8];
+        file.read_exact(&mut buf8)?;
+        let start_cursor = u64::from_le_bytes(buf8) as usize;
+        file.read_exact(&mut buf8)?;
+        let len = u64::from_le_bytes(buf8) as usize;
+        let mut buf1 = [0u8; 1];
+        file.read_exact(&mut buf1)?;
+        Ok(EdaBitsPrecacheMeta { start_cursor, len, party_id_byte: buf1[0] })
+    }
+
+    fn write_precache_meta(path: &Path, meta: &EdaBitsPrecacheMeta) -> std::io::Result<()> {
+        let mut file = File::create(path)?;
+        file.write_all(&(meta.start_cursor as u64).to_le_bytes())?;
+        file.write_all(&(meta.len as u64).to_le_bytes())?;
+        file.write_all(&[meta.party_id_byte])?;
+        file.sync_all()?;
+        Ok(())
+    }
+
+    fn remove_file_if_exists(path: &Path) -> std::io::Result<()> {
+        match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn load_precache(&mut self, dir: &Path) -> std::io::Result<()> {
+        if self.party_id == PartyID::ID2 {
+            return Ok(());
+        }
+        let meta_path = Self::precache_meta_path(dir);
+        if !meta_path.exists() {
+            return Ok(());
+        }
+        let meta = Self::read_precache_meta(&meta_path)?;
+        if meta.party_id_byte != backing_store::party_id_to_byte(self.party_id) || meta.len == 0 {
+            return Ok(());
+        }
+        let alpha_path = Self::precache_alpha_path(dir);
+        if !alpha_path.exists() {
+            return Ok(());
+        }
+        self.alphas_flat_store = backing_store::BackingStore::load_from_file(&alpha_path)?;
+        self.gamma_store = if self.party_id == PartyID::ID0 {
+            let gamma_path = Self::precache_gamma_path(dir);
+            if gamma_path.exists() {
+                backing_store::BackingStore::load_from_file(&gamma_path)?
+            } else {
+                backing_store::BackingStore::Empty
+            }
+        } else {
+            backing_store::BackingStore::Empty
+        };
+        self.storage_mode = EdaBitsStorageMode::P01Precache { start_cursor: meta.start_cursor, len: meta.len };
+        Ok(())
+    }
+
+    fn clear_precache_runtime(&mut self) {
+        if self.party_id == PartyID::ID2 {
+            self.storage_mode = EdaBitsStorageMode::P2Authoritative;
+            self.gamma_store = backing_store::BackingStore::Empty;
+            return;
+        }
+        self.storage_mode = EdaBitsStorageMode::None;
+        self.alphas_flat_store = backing_store::BackingStore::Empty;
+        self.gamma_store = backing_store::BackingStore::Empty;
+    }
+
+    fn clear_precache_files(&mut self, dir: &Path) -> std::io::Result<()> {
+        if self.party_id == PartyID::ID2 {
+            return Ok(());
+        }
+        Self::remove_file_if_exists(&Self::precache_alpha_path(dir))?;
+        Self::remove_file_if_exists(&Self::precache_gamma_path(dir))?;
+        Self::remove_file_if_exists(&Self::precache_meta_path(dir))?;
+        self.clear_precache_runtime();
+        Ok(())
+    }
+
+    fn take_store_range_into<S: Copy>(
+        store: &mut backing_store::BackingStore<S>,
+        start: usize,
+        end: usize,
+        out: &mut [S],
+    ) -> std::io::Result<()> {
+        #[cfg(feature = "reuse-preproc")]
+        {
+            store.read_reuse_into_slice(start, end, out)?;
+        }
+        #[cfg(not(feature = "reuse-preproc"))]
+        {
+            store.read_consume_into_slice(start, end, out)?;
+            store.consume(start, end);
+        }
+        Ok(())
+    }
+
+    fn fill_p2_store_into(&mut self, cursor_base: usize, n: usize, scratch: &mut EdaBitsBatchScratch<T, F>) {
+        let k = T::K;
+        let flat_start = cursor_base * k;
+        let flat_end = flat_start + n * k;
+        Self::take_store_range_into(
+            &mut self.alphas_flat_store,
+            flat_start,
+            flat_end,
+            &mut scratch.alphas_flat[..n * k],
+        )
+        .unwrap_or_else(|e| panic!("LazyEdaBits(P2): store read({flat_start}..{flat_end}) failed: {e}"));
+    }
+
+    fn fill_precache_into(&mut self, cursor_base: usize, n: usize, scratch: &mut EdaBitsBatchScratch<T, F>) -> usize {
+        let EdaBitsStorageMode::P01Precache { start_cursor, len } = self.storage_mode else {
+            return 0;
+        };
+        if cursor_base < start_cursor || cursor_base >= start_cursor + len {
+            return 0;
+        }
+
+        let cached = (start_cursor + len - cursor_base).min(n);
+        let k = T::K;
+        let alpha_start = (cursor_base - start_cursor) * k;
+        let alpha_end = alpha_start + cached * k;
+        Self::take_store_range_into(
+            &mut self.alphas_flat_store,
+            alpha_start,
+            alpha_end,
+            &mut scratch.alphas_flat[..cached * k],
+        )
+        .unwrap_or_else(|e| panic!("LazyEdaBits(precache): alpha read({alpha_start}..{alpha_end}) failed: {e}"));
+
+        match self.party_id {
+            PartyID::ID0 => {
+                let gamma_start = cursor_base - start_cursor;
+                let gamma_end = gamma_start + cached;
+                Self::take_store_range_into(
+                    &mut self.gamma_store,
+                    gamma_start,
+                    gamma_end,
+                    &mut scratch.gammas[..cached],
+                )
+                .unwrap_or_else(|e| panic!("LazyEdaBits(precache): gamma read({gamma_start}..{gamma_end}) failed: {e}"));
+            }
+            PartyID::ID1 => scratch.gammas[..cached].fill(RingElement(T::zero())),
+            PartyID::ID2 => {}
+        }
+
+        cached
+    }
+
+    fn generate_into(
+        &self,
+        cursor_base: usize,
+        n: usize,
+        scratch: &mut EdaBitsBatchScratch<T, F>,
+        item_offset: usize,
+    ) {
+        if n == 0 {
+            return;
+        }
+
+        let t_bytes = std::mem::size_of::<T>();
+        let k = T::K;
+        let party_id = self.party_id;
+        let fb = self.field_bytes;
+        let stride = t_bytes + k * fb;
+        let item_byte_offset = cursor_base * stride;
+        let interleaved_bytes = n * stride;
+
+        fn seek_and_generate_into(
+            seed: [u8; crate::SEED_SIZE],
+            base_pos: u128,
+            byte_offset: usize,
+            needed: usize,
+            out: &mut Vec<u8>,
+        ) {
+            let word_offset = (byte_offset as u128) / 4;
+            let skip = byte_offset % 4;
+            let mut rng = crate::RngType::from_seed(seed);
+            rng.set_word_pos(base_pos + word_offset);
+            out.resize(needed + skip, 0);
+            rng.fill_bytes(out);
+            if skip > 0 {
+                out.copy_within(skip.., 0);
+            }
+            out.truncate(needed);
+        }
+
+        let g2_gamma_offset = cursor_base * t_bytes;
+        let g2_gamma_bytes = n * t_bytes;
+
+        if party_id == PartyID::ID0 {
+            let (interleaved, g2_bytes) = (&mut scratch.interleaved_bytes, &mut scratch.gamma_bytes);
+            rayon::join(
+                || seek_and_generate_into(self.seed1, self.pos1, item_byte_offset, interleaved_bytes, interleaved),
+                || seek_and_generate_into(self.seed2, self.pos2, g2_gamma_offset, g2_gamma_bytes, g2_bytes),
+            );
+        } else {
+            seek_and_generate_into(
+                self.seed2,
+                self.pos2,
+                item_byte_offset,
+                interleaved_bytes,
+                &mut scratch.interleaved_bytes,
+            );
+            scratch.gamma_bytes.clear();
+        }
+
+        if party_id == PartyID::ID0 {
+            let interleaved = &scratch.interleaved_bytes;
+            let g2_bytes = &scratch.gamma_bytes;
+            scratch.gammas[item_offset..item_offset + n]
+                .par_iter_mut()
+                .enumerate()
+                .for_each(|(i, gamma)| {
+                    let g1_off = i * stride;
+                    let g2_off = i * t_bytes;
+                    let g1_val = T::from_le_bytes(&interleaved[g1_off..g1_off + t_bytes]);
+                    let g2_val = T::from_le_bytes(&g2_bytes[g2_off..g2_off + t_bytes]);
+                    *gamma = RingElement(g1_val ^ g2_val);
+                });
+        } else {
+            scratch.gammas[item_offset..item_offset + n].fill(RingElement(T::zero()));
+        }
+
+        let interleaved = &scratch.interleaved_bytes;
+        scratch.alphas_flat[item_offset * k..(item_offset + n) * k]
+            .par_iter_mut()
+            .enumerate()
+            .with_min_len(256)
+            .for_each(|(idx, alpha)| {
+                let item = idx / k;
+                let bit = idx % k;
+                let a_start = item * stride + t_bytes + bit * fb;
+                let lo = u64::from_le_bytes(interleaved[a_start..a_start + 8].try_into().unwrap());
+                let hi = u64::from_le_bytes(interleaved[a_start + 8..a_start + 16].try_into().unwrap());
+                *alpha = F::from((hi as u128) << 64 | lo as u128);
+            });
     }
 
     /// Drain `n` edaBits as a flat `EdaBitsBatch` with zero per-edaBit allocations.
@@ -320,122 +602,102 @@ where
             scratch.gamma_bytes.clear();
             return Ok(());
         }
-
-        let t_bytes = std::mem::size_of::<T>();
         let k = T::K;
         let party_id = self.party_id;
         let cursor_base = self.cursor;
-        let fb = self.field_bytes;
+        scratch.gammas.clear();
+        scratch.gammas.resize(n, RingElement(T::zero()));
+        scratch.alphas_flat.clear();
+        scratch.alphas_flat.resize(n * k, F::zero());
 
-        // P2: slice from stored alpha2_flat, zero gammas.
+        // P2: slice from authoritative alpha store, zero gammas.
         if party_id == PartyID::ID2 {
-            let flat_start = cursor_base * k;
-            let flat_end = flat_start + n * k;
-            #[cfg(feature = "reuse-preproc")]
-            self.alpha2_flat.read_reuse_into(flat_start, flat_end, &mut scratch.alphas_flat).unwrap_or_else(|e| {
-                panic!("LazyEdaBits(P2): read_reuse_into({flat_start}..{flat_end}) failed: {e}");
-            });
-            #[cfg(not(feature = "reuse-preproc"))]
-            self.alpha2_flat.read_consume_into(flat_start, flat_end, &mut scratch.alphas_flat).unwrap_or_else(|e| {
-                panic!("LazyEdaBits(P2): read_consume_into({flat_start}..{flat_end}) failed: {e}");
-            });
-            scratch.gammas.clear();
-            scratch.gammas.resize(n, RingElement(T::zero()));
+            self.fill_p2_store_into(cursor_base, n, scratch);
             scratch.interleaved_bytes.clear();
             scratch.gamma_bytes.clear();
             self.cursor += n;
             self.persist_cursor();
-            self.alpha2_flat.consume(flat_start, flat_end);
             return Ok(());
         }
 
-        // P0/P1: regenerate from RNG seeds.
-        //
-        // Per-item interleaved layout in rng1 (P0↔P1 stream):
-        //   [γ₀(t_B) α_{0,0}(fb)..α_{0,k-1}(fb) | γ₁ α_{1,0}..α_{1,k-1} | ...]
-        // stride = t_bytes + k * fb per item.  Offsets are independent of `total`.
-        let stride = t_bytes + k * fb;
-        let item_byte_offset = cursor_base * stride;
-        let interleaved_bytes = n * stride;
-
-        fn seek_and_generate_into(
-            seed: [u8; crate::SEED_SIZE],
-            base_pos: u128,
-            byte_offset: usize,
-            needed: usize,
-            out: &mut Vec<u8>,
-        ) {
-            let word_offset = (byte_offset as u128) / 4;
-            let skip = byte_offset % 4;
-            let mut rng = crate::RngType::from_seed(seed);
-            rng.set_word_pos(base_pos + word_offset);
-            out.resize(needed + skip, 0);
-            rng.fill_bytes(out);
-            if skip > 0 {
-                out.copy_within(skip.., 0);
+        let precached = self.fill_precache_into(cursor_base, n, scratch);
+        if precached < n {
+            let remaining = n - precached;
+            let cursor = cursor_base + precached;
+            if party_id == PartyID::ID0 {
+                let _span = tracing::trace_span!("gen_gamma_alpha").entered();
+                self.generate_into(cursor, remaining, scratch, precached);
+            } else {
+                let _span = tracing::trace_span!("gen_alpha").entered();
+                self.generate_into(cursor, remaining, scratch, precached);
             }
-            out.truncate(needed);
         }
-
-        // rng2 (P0↔P2) only carries gammas — offset = cursor * t_bytes (unchanged).
-        let g2_gamma_offset = cursor_base * t_bytes;
-        let g2_gamma_bytes = n * t_bytes;
-
-        if party_id == PartyID::ID0 {
-            let _span = tracing::trace_span!("gen_gamma_alpha").entered();
-            let (interleaved, g2_bytes) = (&mut scratch.interleaved_bytes, &mut scratch.gamma_bytes);
-            rayon::join(
-                || seek_and_generate_into(self.seed1, self.pos1, item_byte_offset, interleaved_bytes, interleaved),
-                || seek_and_generate_into(self.seed2, self.pos2, g2_gamma_offset, g2_gamma_bytes, g2_bytes),
-            );
-        } else {
-            // P1: same interleaved stream from seed2 (P1↔P0 = P0↔P1 shared stream).
-            let _span = tracing::trace_span!("gen_alpha").entered();
-            seek_and_generate_into(
-                self.seed2,
-                self.pos2,
-                item_byte_offset,
-                interleaved_bytes,
-                &mut scratch.interleaved_bytes,
-            );
-            scratch.gamma_bytes.clear();
-        }
-
-        // Build flat arrays from per-item interleaved layout.
-        let _span = tracing::trace_span!("build_batch").entered();
-        scratch.gammas.clear();
-        scratch.gammas.resize(n, RingElement(T::zero()));
-        if party_id == PartyID::ID0 {
-            let interleaved = &scratch.interleaved_bytes;
-            let g2_bytes = &scratch.gamma_bytes;
-            scratch.gammas.par_iter_mut().enumerate().for_each(|(i, gamma)| {
-                let g1_off = i * stride;
-                let g2_off = i * t_bytes;
-                let g1_val = T::from_le_bytes(&interleaved[g1_off..g1_off + t_bytes]);
-                let g2_val = T::from_le_bytes(&g2_bytes[g2_off..g2_off + t_bytes]);
-                *gamma = RingElement(g1_val ^ g2_val);
-            });
-        }
-
-        scratch.alphas_flat.clear();
-        scratch.alphas_flat.resize(n * k, F::zero());
-        let interleaved = &scratch.interleaved_bytes;
-        scratch.alphas_flat.par_iter_mut().enumerate().with_min_len(256).for_each(|(idx, alpha)| {
-            let item = idx / k;
-            let bit = idx % k;
-            let a_start = item * stride + t_bytes + bit * fb;
-            let lo = u64::from_le_bytes(interleaved[a_start..a_start + 8].try_into().unwrap());
-            let hi = u64::from_le_bytes(interleaved[a_start + 8..a_start + 16].try_into().unwrap());
-            *alpha = F::from((hi as u128) << 64 | lo as u128);
-        });
 
         self.cursor += n;
+        self.persist_cursor();
+        Ok(())
+    }
+
+    pub(crate) fn prepare_precache(&mut self, dir: &Path, requested: usize) -> std::io::Result<()> {
+        if self.party_id == PartyID::ID2 || requested == 0 || self.remaining() == 0 {
+            self.clear_precache_files(dir)?;
+            return Ok(());
+        }
+
+        let cached = requested.min(self.remaining());
+        if cached == 0 {
+            self.clear_precache_files(dir)?;
+            return Ok(());
+        }
+
+        let start_cursor = self.cursor;
+        let alpha_path = Self::precache_alpha_path(dir);
+        let gamma_path = Self::precache_gamma_path(dir);
+        let meta_path = Self::precache_meta_path(dir);
+        let mut alpha_store = backing_store::BackingStore::create_file_backed_sized(&alpha_path, cached * T::K)?;
+        let mut gamma_store = if self.party_id == PartyID::ID0 {
+            backing_store::BackingStore::create_file_backed_sized(&gamma_path, cached)?
+        } else {
+            Self::remove_file_if_exists(&gamma_path)?;
+            backing_store::BackingStore::Empty
+        };
+
+        let chunk_len = cached.min(16 * 1024);
+        let mut scratch = EdaBitsBatchScratch::<T, F>::default();
+        for offset in (0..cached).step_by(chunk_len) {
+            let len = (cached - offset).min(chunk_len);
+            scratch.gammas.clear();
+            scratch.gammas.resize(len, RingElement(T::zero()));
+            scratch.alphas_flat.clear();
+            scratch.alphas_flat.resize(len * T::K, F::zero());
+            self.generate_into(start_cursor + offset, len, &mut scratch, 0);
+            alpha_store.write_at(offset * T::K, &scratch.alphas_flat)?;
+            if self.party_id == PartyID::ID0 {
+                gamma_store.write_at(offset, &scratch.gammas)?;
+            }
+        }
+
+        Self::write_precache_meta(
+            &meta_path,
+            &EdaBitsPrecacheMeta {
+                start_cursor,
+                len: cached,
+                party_id_byte: backing_store::party_id_to_byte(self.party_id),
+            },
+        )?;
+
+        self.alphas_flat_store = alpha_store;
+        self.gamma_store = gamma_store;
+        self.storage_mode = EdaBitsStorageMode::P01Precache { start_cursor, len: cached };
         Ok(())
     }
 }
 
-// Persistence methods — no `Standard: Distribution<T>` bound needed.
-impl<T: IntRing2k, F: PrimeField> LazyEdaBits<T, F> {
+// Persistence methods.
+impl<T: IntRing2k, F: PrimeField> LazyEdaBits<T, F>
+where
+    Standard: Distribution<T>,
+{
     /// Write this lazy source to `dir`.
     ///
     /// Creates `edabits_{K}.meta` (all parties) and `edabits_{K}.alpha2`
@@ -449,9 +711,9 @@ impl<T: IntRing2k, F: PrimeField> LazyEdaBits<T, F> {
         // Data file first (page-cache write, no fsync), then meta with fsync.
         // Meta fsync is the durability barrier: if it succeeds, data is at least
         // in the kernel page cache and will be written to disk before meta.
-        if !self.alpha2_flat.is_empty() {
-            let data_path = dir.join(format!("edabits_{suffix}.alpha2"));
-            self.alpha2_flat.save_to_file(&data_path)?;
+        if matches!(self.storage_mode, EdaBitsStorageMode::P2Authoritative) && !self.alphas_flat_store.is_empty() {
+            let data_path = Self::authoritative_alpha_path(dir);
+            self.alphas_flat_store.save_to_file(&data_path)?;
         }
         let meta_path = dir.join(format!("edabits_{suffix}.meta"));
         backing_store::write_meta(
@@ -482,14 +744,14 @@ impl<T: IntRing2k, F: PrimeField> LazyEdaBits<T, F> {
         let meta = backing_store::read_meta(&meta_path)?;
         assert_eq!(meta.party_id_byte, backing_store::party_id_to_byte(party_id));
 
-        let alpha2_flat = if party_id == PartyID::ID2 && meta.total > 0 {
-            let data_path = dir.join(format!("edabits_{suffix}.alpha2"));
-            backing_store::BackingStore::load_from_file(&data_path)?
+        let (alphas_flat_store, storage_mode) = if party_id == PartyID::ID2 && meta.total > 0 {
+            let data_path = Self::authoritative_alpha_path(dir);
+            (backing_store::BackingStore::load_from_file(&data_path)?, EdaBitsStorageMode::P2Authoritative)
         } else {
-            backing_store::BackingStore::Empty
+            (backing_store::BackingStore::Empty, EdaBitsStorageMode::None)
         };
 
-        std::result::Result::Ok(Self {
+        let mut out = Self {
             seed1: meta.seed1,
             pos1: meta.pos1,
             seed2: meta.seed2,
@@ -497,21 +759,15 @@ impl<T: IntRing2k, F: PrimeField> LazyEdaBits<T, F> {
             total: meta.total,
             field_bytes: meta.field_bytes,
             cursor: meta.cursor,
-            alpha2_flat,
+            alphas_flat_store,
+            storage_mode,
+            gamma_store: backing_store::BackingStore::Empty,
             party_id,
             meta_path: Some(meta_path),
             _phantom: PhantomData,
-        })
-    }
-
-    /// Persist the current cursor to the meta file on disk.
-    ///
-    /// No-op when `meta_path` is `None` (in-memory-only pool) or when the
-    /// `reuse-preproc` feature is enabled.
-    fn persist_cursor(&self) {
-        if let Some(ref path) = self.meta_path {
-            let _ = backing_store::update_cursor(path, self.cursor);
-        }
+        };
+        out.load_precache(dir)?;
+        std::result::Result::Ok(out)
     }
 
     /// Return the RNG seeds and positions for this lazy source.
@@ -533,9 +789,24 @@ impl<T: IntRing2k, F: PrimeField> LazyEdaBits<T, F> {
             return;
         }
         if !alpha2_ext.is_empty() {
-            self.alpha2_flat.extend(&alpha2_ext);
+            self.alphas_flat_store.extend(&alpha2_ext);
         }
         self.total += deficit;
+        if self.party_id != PartyID::ID2 {
+            self.clear_precache_runtime();
+        }
+    }
+}
+
+impl<T: IntRing2k, F: PrimeField> LazyEdaBits<T, F> {
+    /// Persist the current cursor to the meta file on disk.
+    ///
+    /// No-op when `meta_path` is `None` (in-memory-only pool) or when the
+    /// `reuse-preproc` feature is enabled.
+    fn persist_cursor(&self) {
+        if let Some(ref path) = self.meta_path {
+            let _ = backing_store::update_cursor(path, self.cursor);
+        }
     }
 }
 
@@ -1479,6 +1750,63 @@ mod tests {
         assert_eq!(inj_combined, inj_expected, "preprocess_into_dir bit inject mismatch");
 
         let _ = std::fs::remove_dir_all(&base_dir);
+    }
+
+    fn preprocess_pool_precache_impl(cached_items: usize) {
+        const NUM_U64: usize = 8;
+
+        let mut rng = ChaCha20Rng::seed_from_u64(0xB003_0003 ^ cached_items as u64);
+        let xs: Vec<u64> = (0..NUM_U64).map(|_| rng.next_u64()).collect();
+        let x_bin_shares: [Vec<Rep3RingShare<u64>>; 3] = {
+            let per =
+                xs.iter().map(|&x| share_ring_element_binary::<u64, _>(RingElement(x), &mut rng)).collect::<Vec<_>>();
+            std::array::from_fn(|pid| per.iter().map(|s| s[pid]).collect())
+        };
+
+        let base_dir = std::env::temp_dir().join(format!("co_jolt2_preproc_precache_{}_{}", cached_items, rng.next_u64()));
+        let base_dir_for_workers = base_dir.clone();
+        std::fs::create_dir_all(&base_dir).expect("failed to create temp dir");
+
+        let outputs: [Vec<Rep3PrimeFieldShare<Fr>>; 3] = run_rep3_local_test_with_coordinator(
+            1,
+            |i| x_bin_shares[i].clone(),
+            || (),
+            move |x_sh: Vec<Rep3RingShare<u64>>, mut io_ctx| {
+                let party_id = io_ctx.party_id();
+                let pool_dir = base_dir_for_workers.join(format!("party_{}", usize::from(party_id)));
+                std::fs::create_dir_all(&pool_dir)?;
+
+                let counts = [0, 0, 0, NUM_U64, 0];
+                #[cfg(not(feature = "ring-msm"))]
+                let mut pool = preprocess_pool::<Fr, _>(&pool_dir, counts, 0, 0, 0, &mut io_ctx)?;
+                #[cfg(feature = "ring-msm")]
+                let mut pool = preprocess_pool::<Fr, _>(&pool_dir, counts, 0, 0, 0, 0, 0, &mut io_ctx)?;
+                let precache_counts = [0, 0, 0, cached_items, 0];
+                pool.prepare_edabits_precache(&pool_dir, precache_counts)?;
+
+                let mut loaded = PreprocessingPool::<Fr>::load(&pool_dir, party_id)?;
+                let batch = loaded.take_edabits::<u64>(NUM_U64)?;
+                r2f_b2a_preproc_many::<u64, Fr, _>(&x_sh, &batch, io_ctx.main())
+            },
+            |(): (), _net| Ok(()),
+        )
+        .0;
+
+        let combined = combine_field_elements(&outputs[0], &outputs[1], &outputs[2]);
+        let expected: Vec<Fr> = xs.iter().map(|&x| Fr::from(x)).collect();
+        assert_eq!(combined, expected, "precache B2A mismatch for cached_items={cached_items}");
+
+        let _ = std::fs::remove_dir_all(&base_dir);
+    }
+
+    #[test]
+    fn preprocess_pool_precache_full_u64() {
+        preprocess_pool_precache_impl(8);
+    }
+
+    #[test]
+    fn preprocess_pool_precache_partial_u64() {
+        preprocess_pool_precache_impl(4);
     }
 
     #[test]

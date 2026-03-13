@@ -286,6 +286,48 @@ impl<F> BackingStore<F> {
         }
     }
 
+    /// Read a range of elements in **reuse** mode into an existing slice.
+    #[cfg(feature = "reuse-preproc")]
+    pub(crate) fn read_reuse_into_slice(&self, start: usize, end: usize, out: &mut [F]) -> io::Result<()>
+    where
+        F: Copy,
+    {
+        let count = end.saturating_sub(start);
+        if out.len() != count {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("slice length {} does not match requested element count {}", out.len(), count),
+            ));
+        }
+        match self {
+            BackingStore::InMemory(v) => {
+                self.validate_range(start, end)?;
+                out.copy_from_slice(&v[start..end]);
+                Ok(())
+            }
+            BackingStore::FileBacked { file, path, .. } => {
+                if tracing::enabled!(tracing::Level::DEBUG) {
+                    tracing::debug!(
+                        path = %path.display(),
+                        start,
+                        end,
+                        "BackingStore::read_reuse_into_slice"
+                    );
+                }
+                let (byte_offset, byte_len) = Self::byte_range(start, end);
+                let out_bytes =
+                    unsafe { std::slice::from_raw_parts_mut(out.as_mut_ptr() as *mut u8, byte_len) };
+                Self::file_read_exact_at(file, byte_offset, out_bytes)
+            }
+            BackingStore::Empty => {
+                if !out.is_empty() {
+                    return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "attempted to read from empty backing store"));
+                }
+                Ok(())
+            }
+        }
+    }
+
     /// Read a range of elements in **consume** mode (call `consume()` after use).
     #[cfg(not(feature = "reuse-preproc"))]
     pub(crate) fn read_consume(&self, start: usize, end: usize) -> io::Result<Vec<F>>
@@ -338,6 +380,48 @@ impl<F> BackingStore<F> {
             }
             BackingStore::Empty => {
                 out.clear();
+                Ok(())
+            }
+        }
+    }
+
+    /// Read a range of elements in **consume** mode into an existing slice.
+    #[cfg(not(feature = "reuse-preproc"))]
+    pub(crate) fn read_consume_into_slice(&self, start: usize, end: usize, out: &mut [F]) -> io::Result<()>
+    where
+        F: Copy,
+    {
+        let count = end.saturating_sub(start);
+        if out.len() != count {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("slice length {} does not match requested element count {}", out.len(), count),
+            ));
+        }
+        match self {
+            BackingStore::InMemory(v) => {
+                self.validate_range(start, end)?;
+                out.copy_from_slice(&v[start..end]);
+                Ok(())
+            }
+            BackingStore::FileBacked { file, path, .. } => {
+                if tracing::enabled!(tracing::Level::DEBUG) {
+                    tracing::debug!(
+                        path = %path.display(),
+                        start,
+                        end,
+                        "BackingStore::read_consume_into_slice"
+                    );
+                }
+                let (byte_offset, byte_len) = Self::byte_range(start, end);
+                let out_bytes =
+                    unsafe { std::slice::from_raw_parts_mut(out.as_mut_ptr() as *mut u8, byte_len) };
+                Self::file_read_exact_at(file, byte_offset, out_bytes)
+            }
+            BackingStore::Empty => {
+                if !out.is_empty() {
+                    return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "attempted to read from empty backing store"));
+                }
                 Ok(())
             }
         }
