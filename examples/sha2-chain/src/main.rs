@@ -67,7 +67,7 @@ fn main() -> eyre::Result<()> {
     };
 
     let (bytecode, memory_init, _) = program.decode();
-    let (vanilla_trace, _, io_device) = program.trace(&inputs, &[], &[]);
+    let (vanilla_trace, _, io_device) = program.trace(&[], &inputs, &[]);
     let memory_layout = io_device.memory_layout.clone();
 
     let padded_len = (vanilla_trace.len() + 1).next_power_of_two();

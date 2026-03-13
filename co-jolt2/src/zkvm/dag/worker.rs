@@ -62,18 +62,20 @@ impl Rep3JoltDagWorker {
         let ram_K = state.ram_K;
         let bytecode_d = state.prover_state.preprocessing.shared.bytecode.d;
 
-        let _guard = (
-            DoryGlobals::initialize(DTH_ROOT_OF_K, padded_trace_length),
-            AllCommittedPolynomials::initialize(compute_d_parameter(ram_K), bytecode_d),
-        );
-
-        // --- Commit untrusted advice (must use the same DoryGlobals T) ---
+        // --- Commit untrusted advice under its own DoryGlobals (K=1, T=advice_size) ---
+        // Must happen before the Main DoryGlobals init because the advice poly
+        // is smaller and needs its own sigma/nu dimensions.
         Self::commit_untrusted_advice::<F, PCS, ProofTranscript, N>(
             &mut state,
             padded_trace_length,
             &mut io_ctx,
             preproc,
         )?;
+
+        let _guard = (
+            DoryGlobals::initialize(DTH_ROOT_OF_K, padded_trace_length),
+            AllCommittedPolynomials::initialize(compute_d_parameter(ram_K), bytecode_d),
+        );
 
         let (opening_hints, polynomials_map, instruction_one_hot_polys) =
             Self::generate_and_commit_polynomials::<F, PCS, ProofTranscript, N>(
@@ -267,6 +269,9 @@ impl Rep3JoltDagWorker {
     }
 
     /// Commit the untrusted advice polynomial (if non-empty) using Rep3 shares.
+    ///
+    /// Initializes its own DoryGlobals (K=1, T=max_size) for the smaller advice
+    /// dimensions. Must be called BEFORE the Main DoryGlobals init.
     fn commit_untrusted_advice<F, PCS, ProofTranscript, N>(
         state: &mut StateManagerWorker<'_, F, PCS>,
         padded_trace_length: usize,
@@ -290,6 +295,9 @@ impl Rep3JoltDagWorker {
              current PCS generators/DoryGlobals are built for padded_trace_length"
         );
 
+        // Initialize DoryGlobals with advice dimensions (K=1, T=max_size).
+        // Overwritten by the Main init after this function returns.
+        let _advice_guard = DoryGlobals::initialize(1, max_size);
         let poly = Self::shared_advice_polynomial::<F, PCS, N>(&state.program_io.untrusted_advice, max_size, io_ctx)?;
         let (commitment, _hint) = <PCS as Rep3CommitmentScheme<F, ProofTranscript>>::commit_rep3(
             &poly,

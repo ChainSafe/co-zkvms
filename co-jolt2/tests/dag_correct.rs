@@ -62,13 +62,14 @@ fn build_program() -> Program {
     }
 }
 
-fn build_inputs() -> Vec<u8> {
+/// Returns (public_inputs, untrusted_advice).
+fn build_inputs() -> (Vec<u8>, Vec<u8>) {
     if use_sha2_fixture() {
-        let mut inputs = postcard::to_stdvec(&[5u8; 32]).unwrap();
-        inputs.append(&mut postcard::to_stdvec(&1u32).unwrap());
-        inputs
+        let mut advice = postcard::to_stdvec(&[5u8; 32]).unwrap();
+        advice.append(&mut postcard::to_stdvec(&1u32).unwrap());
+        (vec![], advice)
     } else {
-        postcard::to_stdvec(&9u32).unwrap()
+        (postcard::to_stdvec(&9u32).unwrap(), vec![])
     }
 }
 
@@ -83,12 +84,12 @@ fn build_public_fixture(
     usize,
 ) {
     let mut program = build_program();
-    let inputs = build_inputs();
+    let (inputs, untrusted_advice) = build_inputs();
     let (bytecode, memory_init, _) = program.decode();
 
     let mut rng = ChaCha12Rng::seed_from_u64(0);
-    let mut shares = program.generate_trace_shares(&inputs, &[], &[], &mut rng);
-    let (mut vanilla_trace, _vanilla_memory, mut io_device) = program.trace(&inputs, &[], &[]);
+    let mut shares = program.generate_trace_shares(&inputs, &untrusted_advice, &[], &mut rng);
+    let (mut vanilla_trace, _vanilla_memory, mut io_device) = program.trace(&inputs, &untrusted_advice, &[]);
 
     // Truncate trailing zeros on device outputs, matching what Jolt::prove does.
     io_device.outputs.truncate(io_device.outputs.iter().rposition(|&b| b != 0).map_or(0, |pos| pos + 1));
@@ -129,7 +130,6 @@ fn build_dag_fixture(trace_file: &str) -> DagFixture {
         build_public_fixture(trace_file);
 
     // 4) Rep3 MPC proof.
-    let _dory_guard = DoryGlobals::initialize(DTH_ROOT_OF_K, padded_len);
     let preprocessing_arc = Arc::new(preprocessing);
     let verifier_preprocessing_arc = Arc::new(verifier_preprocessing);
     let io_device_arc = Arc::new(io_device);
@@ -231,6 +231,9 @@ fn build_dag_fixture(trace_file: &str) -> DagFixture {
     );
 
     // 5) Verify the MPC-produced proof using the local jolt-core verifier.
+    // Initialize DoryGlobals here (not before proof generation) so workers can
+    // use advice-sized DoryGlobals during their commit without races.
+    let _dory_guard = DoryGlobals::initialize(DTH_ROOT_OF_K, padded_len);
     let verifier_preprocessing = Arc::try_unwrap(verifier_preprocessing_arc).unwrap_or_else(|arc| (*arc).clone());
     let io_device = Arc::try_unwrap(io_device_arc).unwrap_or_else(|arc| (*arc).clone());
 

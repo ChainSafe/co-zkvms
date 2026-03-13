@@ -336,7 +336,7 @@ fn run_coordinator(args: Args, config: NetworkConfig) -> eyre::Result<()> {
     let (bytecode, memory_init, _) = program.decode();
 
     info!("tracing guest program");
-    let (mut vanilla_trace, _memory, mut io_device) = program.trace(&inputs, &[], &[]);
+    let (mut vanilla_trace, _memory, mut io_device) = program.trace(&[], &inputs, &[]);
     io_device.outputs.truncate(io_device.outputs.iter().rposition(|&b| b != 0).map_or(0, |pos| pos + 1));
 
     let padded_len = (vanilla_trace.len() + 1).next_power_of_two();

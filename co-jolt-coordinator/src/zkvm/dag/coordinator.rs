@@ -58,14 +58,6 @@ impl Rep3JoltDag {
         // --- Fiat-Shamir preamble ---
         state.fiat_shamir_preamble(trace_length);
 
-        // --- Initialize DoryGlobals and AllCommittedPolynomials ---
-        let ram_K = state.ram_K;
-        let bytecode_d = state.preprocessing.shared.bytecode.d;
-        let _dory_guard = DoryGlobals::initialize(DTH_ROOT_OF_K, padded_trace_length);
-        let _poly_guard = AllCommittedPolynomials::initialize(compute_d_parameter(ram_K), bytecode_d);
-        #[cfg(feature = "zk")]
-        let mut zk_rng = thread_rng();
-
         // --- Receive, combine, and store commitments ---
         let _recv_commits = info_span!("receive_commitments").entered();
         Self::receive_commitments::<F, PCS, ProofTranscript, N>(&mut state, network)?;
@@ -82,6 +74,14 @@ impl Rep3JoltDag {
             state.transcript.append_serializable(trusted_advice_commitment);
         }
         drop(_recv_commits);
+
+        // --- Initialize DoryGlobals and AllCommittedPolynomials ---
+        let ram_K = state.ram_K;
+        let bytecode_d = state.preprocessing.shared.bytecode.d;
+        let _dory_guard = DoryGlobals::initialize(DTH_ROOT_OF_K, padded_trace_length);
+        let _poly_guard = AllCommittedPolynomials::initialize(compute_d_parameter(ram_K), bytecode_d);
+        #[cfg(feature = "zk")]
+        let mut zk_rng = thread_rng();
 
         Rep3SpartanDag::stage1_prove(&mut state, network)?;
 
