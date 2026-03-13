@@ -68,8 +68,6 @@ cargo build --release \
   --manifest-path "$REPO_DIR/examples/sha2-chain/Cargo.toml" \
   --target-dir "$REPO_DIR/target"
 
-echo "Build complete."
-
 # ── 2. Generate configs ──────────────────────────────────────────────────────
 
 # Regenerate configs every time (cheap, ensures consistency with TRANSPORT)
@@ -123,14 +121,14 @@ if [ "$TRACY_CAPTURE" = "1" ]; then
   for p in 0 1 2; do
     "$TRACY_CAPTURE_BIN" \
       -f \
-      -o "$TRACE_DIR/worker${p}.tracy" \
+      -o "$TRACE_DIR/worker${p}_$NUM_ITERS.tracy" \
       -a 127.0.0.1 \
       -p $((TRACY_BASE_PORT + p)) >/dev/null 2>&1 &
     capture_pids+=($!)
   done
   "$TRACY_CAPTURE_BIN" \
     -f \
-    -o "$TRACE_DIR/coordinator.tracy" \
+    -o "$TRACE_DIR/coordinator_$NUM_ITERS.tracy" \
     -a 127.0.0.1 \
     -p $((TRACY_BASE_PORT - 1)) >/dev/null 2>&1 &
   capture_pids+=($!)

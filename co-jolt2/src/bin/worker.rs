@@ -179,7 +179,6 @@ fn prove_loop(
 
         // 2. Sync with coordinator (barrier: "we have shares, ready to prove")
         io_ctx.sync_with_coordinator()?;
-        info!("synced with coordinator");
 
         // 3. Send ProofRequest (public data) to coordinator
         let proof_request = ProofRequest {
@@ -196,10 +195,8 @@ fn prove_loop(
         };
         let request_bytes = bincode::serialize(&proof_request).context("serializing ProofRequest")?;
         io_ctx.network().send_response(request_bytes)?;
-        info!("sent ProofRequest to coordinator");
 
         // 4. Build prover preprocessing
-        info!("building preprocessing");
         let preprocessing: JoltProverPreprocessing<F, PCS> = <JoltArch as Rep3JoltWorker<F, PCS, _>>::preprocess(
             bytecode,
             program_io_share.memory_layout.clone(),
@@ -326,7 +323,6 @@ fn prove_loop(
         // 6. Pad trace and prove
         trace.resize(padded_len, Rep3Cycle::NoOp);
 
-        info!("starting worker prove");
         <JoltArch as Rep3JoltWorker<F, PCS, _>>::prove(
             &preprocessing,
             trace,
@@ -336,7 +332,6 @@ fn prove_loop(
             ram_k,
             &mut preproc,
         )?;
-        info!("prove complete");
 
         // 7. [worker 0] Receive proof from coordinator, relay to user
         if my_id == 0 {

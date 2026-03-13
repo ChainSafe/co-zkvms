@@ -8,8 +8,8 @@
 #![allow(clippy::len_without_is_empty)]
 #![allow(clippy::too_long_first_doc_paragraph)]
 
+pub mod coordinate;
 pub mod poly;
-pub mod proving;
 pub mod subprotocols;
 pub mod transport;
 pub mod types;

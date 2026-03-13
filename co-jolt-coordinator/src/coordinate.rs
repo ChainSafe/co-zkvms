@@ -79,8 +79,6 @@ pub fn coordinate_once<N: Rep3NetworkCoordinator>(
         request.padded_len,
     )?;
 
-    info!("proof complete, sending to worker 0");
-
     // Send proof to worker 0 only (who relays to user).
     let mut proof_bytes = Vec::new();
     proof.serialize_compressed(&mut proof_bytes).context("serializing proof")?;

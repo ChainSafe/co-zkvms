@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use clap::Parser;
-use co_jolt_coordinator::proving::coordinate_once;
+use co_jolt_coordinator::coordinate::coordinate_once;
 use co_jolt_coordinator::transport::ephemeral_identity::EphemeralIdentity;
 #[cfg(feature = "test-utils")]
 use co_jolt_coordinator::utils::tracing::init_tracing_bench;
@@ -83,7 +83,7 @@ fn main() -> eyre::Result<()> {
             .context("accepting vsock+TLS connections")?;
 
         info!("accepted 3 worker connections, entering stand-by loop");
-        prove_loop(&mut network)?;
+        coordinate_loop(&mut network)?;
     }
 
     #[cfg(not(feature = "aws_nitro"))]
@@ -104,7 +104,7 @@ fn main() -> eyre::Result<()> {
                 info!("creating QUIC coordinator network");
                 let mut network = Rep3QuicNetCoordinator::new(config, 0)?;
                 info!("accepted 3 worker connections, entering stand-by loop");
-                prove_loop(&mut network, {
+                coordinate_loop(&mut network, {
                     #[cfg(feature = "test-utils")]
                     {
                         Some(args.trace_dir.clone())
@@ -132,7 +132,7 @@ fn main() -> eyre::Result<()> {
                 )
                 .context("accepting TLS connections")?;
                 info!("accepted 3 worker connections, entering stand-by loop");
-                prove_loop(&mut network, {
+                coordinate_loop(&mut network, {
                     #[cfg(feature = "test-utils")]
                     {
                         Some(args.trace_dir.clone())
@@ -150,7 +150,7 @@ fn main() -> eyre::Result<()> {
     Ok(())
 }
 
-fn prove_loop<N: Rep3NetworkCoordinator>(
+fn coordinate_loop<N: Rep3NetworkCoordinator>(
     network: &mut N,
     #[allow(unused_variables)] trace_dir: Option<PathBuf>,
 ) -> eyre::Result<()> {
