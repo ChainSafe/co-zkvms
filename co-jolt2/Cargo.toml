@@ -91,7 +91,7 @@ required-features = ["ring-msm"]
 
 
 [features]
-default = ["std", "debug", "zk"]
+default = ["std", "debug", "zk", "fewer-phases"]
 std = [
     "ark-ff/std",
     "ark-poly/std",

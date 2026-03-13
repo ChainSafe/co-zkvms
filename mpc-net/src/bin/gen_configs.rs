@@ -34,11 +34,19 @@ struct CliArgs {
     #[clap(long)]
     user_listen_base_port: Option<u16>,
 
+    /// Base port for inter-party QUIC/TLS ring (port = base + party_id).
+    #[clap(long, default_value = "10000")]
+    inter_party_base_port: u16,
+
+    /// Coordinator bind port.
+    #[clap(long, default_value = "20000")]
+    coordinator_port: u16,
+
     /// Coordinator protocol: quic or tls (default: quic).
     #[clap(long, default_value = "quic")]
     coordinator_protocol: String,
 
-    /// Override coordinator address in worker configs (default: localhost:20000).
+    /// Override coordinator address in worker configs (default: localhost:<coordinator-port>).
     #[clap(long)]
     coordinator_addr: Option<String>,
 }
@@ -60,7 +68,12 @@ fn main() -> Result<()> {
     };
 
     let data_dir = args.cert_dir.to_str().expect("cert_dir must be valid UTF-8");
-    let (mut workers, mut coordinator) = NetworkConfig::generate_worker_configs_with_dir(args.num_workers, data_dir);
+    let (mut workers, mut coordinator) = NetworkConfig::generate_worker_configs_full(
+        args.num_workers,
+        data_dir,
+        args.inter_party_base_port,
+        args.coordinator_port,
+    );
 
     // Apply user_listen_addr to worker configs
     if let Some(base_port) = args.user_listen_base_port {

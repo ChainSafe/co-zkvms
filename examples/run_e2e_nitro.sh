@@ -35,20 +35,26 @@ DEBUG=${DEBUG:-0}
 ENCLAVE_CPUS=${ENCLAVE_CPUS:-2}
 ENCLAVE_MEM_MB=${ENCLAVE_MEM_MB:-4096}
 VSOCK_PORT=${VSOCK_PORT:-9000}
-NETWORK_FORKS=${NETWORK_FORKS:-4}
 # Must match ENCLAVE_CPUS — twist_sumcheck_switch_index depends on thread count
 RAYON_THREADS=${RAYON_THREADS:-$ENCLAVE_CPUS}
+MPC_QUIC_CONN_LANES=${MPC_QUIC_CONN_LANES:-$RAYON_THREADS}
+NETWORK_FORKS=${NETWORK_FORKS:-$RAYON_THREADS}
 NUM_ITERS=${NUM_ITERS:-10}
-TRACY_BASE_PORT=${TRACY_BASE_PORT:-8086}
 TRACY_ALLOC=${TRACY_ALLOC:-0}
 TRACY_CAPTURE=${TRACY_CAPTURE:-0}
 JEMALLOC_PRESET=${JEMALLOC_PRESET:-default}
 EXTRA_FEATURES=${EXTRA_FEATURES:-}
+TRACE_SUFFIX="${NUM_ITERS}_${RAYON_THREADS}T_${MPC_QUIC_CONN_LANES}L_${NETWORK_FORKS}F"
 
 ARTIFACT_DIR=${ARTIFACT_DIR:-"$REPO_DIR/.artifacts"}
 TRACE_DIR=${TRACE_DIR:-"$REPO_DIR/.traces"}
 PREPROC_DIR=${PREPROC_DIR:-"$REPO_DIR/co-jolt2/.preprocessing"}
-USER_LISTEN_BASE_PORT=${USER_LISTEN_BASE_PORT:-30000}
+
+# Ports — PORT_OFFSET shifts all port families for concurrent worktree runs
+PORT_OFFSET=${PORT_OFFSET:-0}
+INTER_PARTY_BASE_PORT=${INTER_PARTY_BASE_PORT:-$((10000 + PORT_OFFSET))}
+USER_LISTEN_BASE_PORT=${USER_LISTEN_BASE_PORT:-$((30000 + PORT_OFFSET))}
+TRACY_BASE_PORT=${TRACY_BASE_PORT:-$((8086 + PORT_OFFSET))}
 
 ENCLAVE_DIR="$REPO_DIR/co-jolt-coordinator/enclave"
 
@@ -113,6 +119,8 @@ rm -f "$ARTIFACT_DIR"/config_*.toml "$ARTIFACT_DIR"/*.der
   -o "$ARTIFACT_DIR" \
   -c "$ARTIFACT_DIR" \
   -k "$ARTIFACT_DIR" \
+  --inter-party-base-port "$INTER_PARTY_BASE_PORT" \
+  --coordinator-port "$VSOCK_PORT" \
   --user-listen-base-port "$USER_LISTEN_BASE_PORT" \
   --coordinator-protocol tls \
   --coordinator-addr "localhost:$VSOCK_PORT"
@@ -156,7 +164,7 @@ sleep 2
 
 worker_pids=()
 for p in 0 1 2; do
-  NUM_ITERS="$NUM_ITERS" TRACY=1 TRACY_PORT=$((TRACY_BASE_PORT + p)) \
+  NUM_ITERS="$NUM_ITERS" MPC_QUIC_CONN_LANES="$MPC_QUIC_CONN_LANES" NETWORK_FORKS="$NETWORK_FORKS" TRACY=1 TRACY_PORT=$((TRACY_BASE_PORT + p)) \
   "$REPO_DIR/target/release/worker" \
     -c "$ARTIFACT_DIR/config_worker0_${p}.toml" \
     -t "$TRACE_DIR" \
@@ -172,7 +180,7 @@ if [ "$TRACY_CAPTURE" = "1" ]; then
   for p in 0 1 2; do
     "$TRACY_CAPTURE_BIN" \
       -f \
-      -o "$TRACE_DIR/worker${p}.tracy" \
+      -o "$TRACE_DIR/worker${p}_${TRACE_SUFFIX}.tracy" \
       -a 127.0.0.1 \
       -p $((TRACY_BASE_PORT + p)) >/dev/null 2>&1 &
     capture_pids+=($!)
