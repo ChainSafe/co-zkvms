@@ -153,7 +153,20 @@ impl<T: IntRing2k> LazyWrapMasks<T> {
         // Slice mask_arith from backing store (interleaved [a, b, a, b, ...]).
         let flat_start = cursor_base * 2;
         let flat_end = flat_start + n * 2;
-        let flat = &self.mask_arith_flat.as_slice()[flat_start..flat_end];
+        let flat = {
+            #[cfg(feature = "reuse-preproc")]
+            {
+                self.mask_arith_flat.read_reuse(flat_start, flat_end).unwrap_or_else(|e| {
+                    panic!("LazyWrapMasks: read_reuse({flat_start}..{flat_end}) failed: {e}");
+                })
+            }
+            #[cfg(not(feature = "reuse-preproc"))]
+            {
+                self.mask_arith_flat.read_consume(flat_start, flat_end).unwrap_or_else(|e| {
+                    panic!("LazyWrapMasks: read_consume({flat_start}..{flat_end}) failed: {e}");
+                })
+            }
+        };
         let mask_arith: Vec<Rep3RingShare<T>> =
             (0..n).map(|i| Rep3RingShare { a: flat[2 * i], b: flat[2 * i + 1] }).collect();
 
