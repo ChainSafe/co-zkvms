@@ -11,6 +11,7 @@ pub mod profiling;
 pub mod small_scalar;
 pub mod small_value;
 pub mod thread;
+pub mod tracing;
 /// Macros that determine the optimal iterator type based on the feature flags.
 ///
 /// For some cases (ex. offloading to GPU), we may not want to use a parallel iterator.
@@ -105,13 +106,13 @@ pub fn index_to_field_bitvector<F: JoltField + ChallengeFieldOps<F>>(value: u128
     bitvector
 }
 
-#[tracing::instrument(skip_all)]
+#[::tracing::instrument(skip_all)]
 pub fn compute_dotproduct<F: JoltField>(a: &[F], b: &[F]) -> F {
     a.par_iter().zip_eq(b.par_iter()).map(|(a_i, b_i)| *a_i * *b_i).sum()
 }
 
 /// Compute dotproduct optimized for values being 0 / 1
-#[tracing::instrument(skip_all)]
+#[::tracing::instrument(skip_all)]
 pub fn compute_dotproduct_low_optimized<F: JoltField>(a: &[F], b: &[F]) -> F {
     a.par_iter().zip_eq(b.par_iter()).map(|(a_i, b_i)| mul_0_1_optimized(a_i, b_i)).sum()
 }

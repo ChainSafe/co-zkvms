@@ -30,6 +30,11 @@ ark-ff.workspace = true
 ark-serialize.workspace = true
 eyre.workspace = true
 tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-forest.workspace = true
+tracing-chrome.workspace = true
+tracing-tracy = { version = "0.11", features = ["flush-on-exit"] }
+tracy-client = { version = "0.18", default-features = false, features = ["enable", "manual-lifetime"] }
 serde.workspace = true
 bincode.workspace = true
 rayon = "1.10.0"
@@ -38,6 +43,8 @@ dory.workspace = true
 rand.workspace = true
 num-traits.workspace = true
 strum = "0.26.3"
+num_cpus = "1.16"
+libc = "0.2"
 
 clap = { version = "4", features = ["derive"] }
 toml = "0.8"
@@ -52,6 +59,7 @@ aws-nitro-enclaves-nsm-api = { version = "0.4", optional = true }
 default = ["zk"]
 rv64 = ["jolt-core/rv64", "jolt-common/rv64", "tracer/rv64"]
 aws_nitro = ["dep:vsock", "dep:aws-nitro-enclaves-nsm-api"]
+test-utils = ["jolt-core/test-utils"]
 zk = ["jolt-core/zk"]
 
 [dev-dependencies]

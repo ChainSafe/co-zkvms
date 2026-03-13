@@ -1,6 +1,7 @@
 use color_eyre::{eyre::Context, Result};
 use mpc_net::config::{Address, CoordinatorProtocol, NetworkConfig};
 use rcgen::CertifiedKey;
+use serde::Serialize;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -42,6 +43,11 @@ struct CliArgs {
     coordinator_addr: Option<String>,
 }
 
+#[derive(Serialize)]
+struct DelegatorConfig {
+    workers: Vec<String>,
+}
+
 fn main() -> Result<()> {
     let args = CliArgs::parse();
 
@@ -62,6 +68,15 @@ fn main() -> Result<()> {
             let party_id = usize::from(id.party_id()) as u16;
             config.user_listen_addr = Some(SocketAddr::new(IpAddr::from_str("0.0.0.0").unwrap(), base_port + party_id));
         }
+
+        let delegator = DelegatorConfig {
+            workers: workers
+                .iter()
+                .filter_map(|(_, config)| config.user_listen_addr.map(|addr| format!("127.0.0.1:{}", addr.port())))
+                .collect(),
+        };
+        let toml = toml::to_string_pretty(&delegator).context("serializing delegator config")?;
+        std::fs::write(args.out_dir.join("config_delegator.toml"), toml).context("writing delegator config")?;
     }
 
     // Apply coordinator protocol

@@ -4,7 +4,7 @@ use ark_bn254::Fr;
 use rand::SeedableRng;
 use rand_chacha::ChaCha12Rng;
 
-use co_jolt2::host::program::Rep3Program;
+use co_jolt2::host::program::generate_trace_shares;
 use co_jolt2::utils::compute_ram_k;
 use co_jolt2::utils::test_utils::run_rep3_local_test_with_coordinator;
 use co_jolt2::utils::tracing::init_tracing;
@@ -87,7 +87,7 @@ fn build_public_fixture(
     let (bytecode, memory_init, _) = program.decode();
 
     let mut rng = ChaCha12Rng::seed_from_u64(0);
-    let mut shares = program.generate_trace_shares(&inputs, &[], &[], &mut rng);
+    let mut shares = generate_trace_shares(&mut program, &inputs, &[], &[], &mut rng);
     let (mut vanilla_trace, _vanilla_memory, mut io_device) = program.trace(&inputs, &[], &[]);
 
     // Truncate trailing zeros on device outputs, matching what Jolt::prove does.

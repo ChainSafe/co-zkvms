@@ -26,6 +26,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CO_JOLT2_DIR="$REPO_DIR/co-jolt2"
+source "$SCRIPT_DIR/common_e2e.sh"
 
 export RUSTFLAGS="${RUSTFLAGS:--A warnings}"
 
@@ -38,6 +39,11 @@ VSOCK_PORT=${VSOCK_PORT:-9000}
 NETWORK_FORKS=${NETWORK_FORKS:-4}
 # Must match ENCLAVE_CPUS — twist_sumcheck_switch_index depends on thread count
 RAYON_THREADS=${RAYON_THREADS:-$ENCLAVE_CPUS}
+NUM_ITERS=${NUM_ITERS:-10}
+TRACY_BASE_PORT=${TRACY_BASE_PORT:-8086}
+TRACY_ALLOC=${TRACY_ALLOC:-0}
+TRACY_CAPTURE=${TRACY_CAPTURE:-0}
+JEMALLOC_PRESET=${JEMALLOC_PRESET:-default}
 
 ARTIFACT_DIR=${ARTIFACT_DIR:-"$CO_JOLT2_DIR/.artifacts"}
 TRACE_DIR=${TRACE_DIR:-"$CO_JOLT2_DIR/.traces"}
@@ -67,6 +73,13 @@ fi
 
 mkdir -p "$ARTIFACT_DIR" "$TRACE_DIR"
 
+CO_JOLT2_FEATURES="test-utils"
+if [ "$TRACY_ALLOC" = "1" ]; then
+  CO_JOLT2_FEATURES="$CO_JOLT2_FEATURES,tracy-mem,jemalloc-stats"
+fi
+
+setup_jemalloc_preset "$JEMALLOC_PRESET"
+
 echo "=== Nitro Enclave E2E Test ==="
 echo "  debug=$DEBUG cpus=$ENCLAVE_CPUS mem=${ENCLAVE_MEM_MB}MB vsock_port=$VSOCK_PORT"
 
@@ -77,7 +90,9 @@ echo "Building host binaries..."
 cd "$REPO_DIR"
 
 cargo build --release \
-  -p co-jolt2 --bin worker \
+  -p co-jolt2 --bin worker --features "$CO_JOLT2_FEATURES"
+
+cargo build --release \
   -p mpc-net --bin gen_configs
 
 cargo build --release \
@@ -147,6 +162,7 @@ sleep 2
 worker_pids=()
 for p in 0 1 2; do
   echo "Starting worker $p..."
+  NUM_ITERS="$NUM_ITERS" TRACY=1 TRACY_PORT=$((TRACY_BASE_PORT + p)) \
   "$REPO_DIR/target/release/worker" \
     -c "$ARTIFACT_DIR/config_worker0_${p}.toml" \
     -t "$TRACE_DIR" \
@@ -157,12 +173,29 @@ for p in 0 1 2; do
   echo "  worker $p PID=$!"
 done
 
+capture_pids=()
+if [ "$TRACY_CAPTURE" = "1" ]; then
+  TRACY_CAPTURE_BIN=${TRACY_CAPTURE_BIN:-$(command -v tracy-capture 2>/dev/null || echo tracy-capture)}
+  for p in 0 1 2; do
+    "$TRACY_CAPTURE_BIN" \
+      -f \
+      -o "$TRACE_DIR/worker${p}.tracy" \
+      -a 127.0.0.1 \
+      -p $((TRACY_BASE_PORT + p)) >/dev/null 2>&1 &
+    capture_pids+=($!)
+  done
+fi
+
 # ── Cleanup trap ─────────────────────────────────────────────────────────────
 
 cleanup() {
   echo "Cleaning up..."
   kill "$host_proxy_pid" "${worker_pids[@]}" 2>/dev/null || true
   wait "$host_proxy_pid" "${worker_pids[@]}" 2>/dev/null || true
+  if [ ${#capture_pids[@]} -gt 0 ]; then
+    kill "${capture_pids[@]}" 2>/dev/null || true
+    wait "${capture_pids[@]}" 2>/dev/null || true
+  fi
   sudo nitro-cli terminate-enclave --all 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -179,7 +212,8 @@ WORKER_ADDRS="${WORKER_ADDRS},127.0.0.1:$((USER_LISTEN_BASE_PORT + 2))"
 echo "Running sha2-chain client (workers=$WORKER_ADDRS)..."
 
 "$REPO_DIR/target/release/sha2-chain" \
-  -w "$WORKER_ADDRS"
+  --config-path "$ARTIFACT_DIR/config_delegator.toml" \
+  --num-iters "$NUM_ITERS"
 
 echo ""
 echo "=== Nitro Enclave E2E Test PASSED ==="

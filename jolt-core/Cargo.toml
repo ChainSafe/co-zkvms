@@ -60,9 +60,12 @@ chrono.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
 thiserror.workspace = true
-tracing.workspace = true
+tracing = { workspace = true, features = ["attributes"] }
 tracing-chrome.workspace = true
+tracing-forest.workspace = true
 tracing-subscriber.workspace = true
+tracing-tracy = { version = "0.11", features = ["flush-on-exit"] }
+tracy-client = { version = "0.18", default-features = false, features = ["enable", "manual-lifetime"] }
 target-lexicon = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 dirs = { workspace = true, optional = true }
@@ -81,6 +84,8 @@ dory.workspace = true
 lazy_static.workspace = true
 allocative.workspace = true
 inferno = { workspace = true, optional = true }
+num_cpus = "1.16"
+libc = "0.2"
 # jolt-platform = { workspace = true, features = ["std"] }
 # jolt-inlines-sha2 = { workspace = true, features = ["host"], optional = true }
 # jolt-inlines-keccak256 = { workspace = true, features = ["host"], optional = true }

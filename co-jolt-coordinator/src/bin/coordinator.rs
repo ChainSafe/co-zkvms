@@ -1,8 +1,13 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+#[cfg(feature = "test-utils")]
+use std::sync::OnceLock;
+use std::time::Duration;
 
 use clap::Parser;
 use co_jolt_coordinator::proving::coordinate_once;
 use co_jolt_coordinator::transport::ephemeral_identity::EphemeralIdentity;
+#[cfg(feature = "test-utils")]
+use jolt_core::utils::tracing::{coordinator_trace_file, init_tracing_bench, start_rss_monitor};
 use eyre::Context;
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 use tracing::info;
@@ -20,9 +25,33 @@ struct Args {
     /// Number of Rayon threads (must match workers for twist_sumcheck_switch_index)
     #[clap(long)]
     rayon_threads: Option<usize>,
+
+    /// Directory for trace output files
+    #[cfg(feature = "test-utils")]
+    #[clap(short = 't', long, default_value = "./.traces")]
+    trace_dir: PathBuf,
+}
+
+#[cfg(feature = "test-utils")]
+fn init_trace_from_program_id(program_id: &str, trace_dir: &Path) {
+    static TRACING_INIT: OnceLock<()> = OnceLock::new();
+    let file = coordinator_trace_file(program_id);
+    let _ = TRACING_INIT.get_or_init(|| {
+        let guard = init_tracing_bench(&file, trace_dir);
+        let _ = Box::leak(Box::new(guard));
+    });
 }
 
 fn main() -> eyre::Result<()> {
+    #[cfg(feature = "test-utils")]
+    let _tracy = if std::env::var("TRACY").is_ok() {
+        let client = tracy_client::Client::start();
+        start_rss_monitor(Duration::from_millis(10));
+        Some(client)
+    } else {
+        None
+    };
+
     let args = Args::parse();
 
     if let Some(threads) = args.rayon_threads {
@@ -73,7 +102,16 @@ fn main() -> eyre::Result<()> {
                 info!("creating QUIC coordinator network");
                 let mut network = Rep3QuicNetCoordinator::new(config, 0)?;
                 info!("accepted 3 worker connections, entering stand-by loop");
-                prove_loop(&mut network)?;
+                prove_loop(&mut network, {
+                    #[cfg(feature = "test-utils")]
+                    {
+                        Some(args.trace_dir.clone())
+                    }
+                    #[cfg(not(feature = "test-utils"))]
+                    {
+                        None
+                    }
+                })?;
             }
             "tls" => {
                 use co_jolt_coordinator::transport::tcp_tls::TcpTlsCoordinator;
@@ -92,7 +130,16 @@ fn main() -> eyre::Result<()> {
                 )
                 .context("accepting TLS connections")?;
                 info!("accepted 3 worker connections, entering stand-by loop");
-                prove_loop(&mut network)?;
+                prove_loop(&mut network, {
+                    #[cfg(feature = "test-utils")]
+                    {
+                        Some(args.trace_dir.clone())
+                    }
+                    #[cfg(not(feature = "test-utils"))]
+                    {
+                        None
+                    }
+                })?;
             }
             other => eyre::bail!("unknown transport: {other} (expected 'quic' or 'tls')"),
         }
@@ -101,8 +148,13 @@ fn main() -> eyre::Result<()> {
     Ok(())
 }
 
-fn prove_loop<N: Rep3NetworkCoordinator>(network: &mut N) -> eyre::Result<()> {
+fn prove_loop<N: Rep3NetworkCoordinator>(network: &mut N, #[allow(unused_variables)] trace_dir: Option<PathBuf>) -> eyre::Result<()> {
     loop {
-        coordinate_once(network)?;
+        coordinate_once(network, |request| {
+            #[cfg(feature = "test-utils")]
+            if let Some(trace_dir) = trace_dir.as_deref() {
+                init_trace_from_program_id(&request.program_id, trace_dir);
+            }
+        })?;
     }
 }

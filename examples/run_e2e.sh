@@ -16,20 +16,33 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CO_JOLT2_DIR="$REPO_DIR/co-jolt2"
+source "$SCRIPT_DIR/common_e2e.sh"
 
 export RUSTFLAGS="${RUSTFLAGS:--A warnings}"
 
-TRANSPORT=${TRANSPORT:-quic}
+TRANSPORT=${TRANSPORT:-tls}
 ARTIFACT_DIR=${ARTIFACT_DIR:-"$CO_JOLT2_DIR/.artifacts"}
 TRACE_DIR=${TRACE_DIR:-"$CO_JOLT2_DIR/.traces"}
 PREPROC_DIR=${PREPROC_DIR:-"$CO_JOLT2_DIR/.preprocessing"}
 NETWORK_FORKS=${NETWORK_FORKS:-4}
 RAYON_THREADS=${RAYON_THREADS:-4}
+NUM_ITERS=${NUM_ITERS:-10}
+TRACY_BASE_PORT=${TRACY_BASE_PORT:-8086}
+TRACY_ALLOC=${TRACY_ALLOC:-0}
+TRACY_CAPTURE=${TRACY_CAPTURE:-0}
+JEMALLOC_PRESET=${JEMALLOC_PRESET:-default}
 
 # Ports
 USER_LISTEN_BASE_PORT=${USER_LISTEN_BASE_PORT:-30000}
 
 mkdir -p "$ARTIFACT_DIR" "$TRACE_DIR"
+
+CO_JOLT2_FEATURES="test-utils"
+if [ "$TRACY_ALLOC" = "1" ]; then
+  CO_JOLT2_FEATURES="$CO_JOLT2_FEATURES,tracy-mem,jemalloc-stats"
+fi
+
+setup_jemalloc_preset "$JEMALLOC_PRESET"
 
 echo "=== E2E Test (transport=$TRANSPORT) ==="
 
@@ -40,8 +53,12 @@ echo "Building binaries..."
 cd "$REPO_DIR"
 
 cargo build --release \
-  -p co-jolt-coordinator --bin coordinator \
-  -p co-jolt2 --bin worker \
+  -p co-jolt-coordinator --bin coordinator --features test-utils
+
+cargo build --release \
+  -p co-jolt2 --bin worker --features "$CO_JOLT2_FEATURES"
+
+cargo build --release \
   -p mpc-net --bin gen_configs
 
 cargo build --release \
@@ -69,9 +86,11 @@ echo "Configs generated in $ARTIFACT_DIR (coordinator-protocol=$TRANSPORT)"
 
 echo "Starting coordinator (transport=$TRANSPORT)..."
 
+NUM_ITERS="$NUM_ITERS" TRACY=1 TRACY_PORT=$((TRACY_BASE_PORT - 1)) \
 "$REPO_DIR/target/release/coordinator" \
   --config-file "$ARTIFACT_DIR/config_coordinator.toml" \
   --transport "$TRANSPORT" \
+  -t "$TRACE_DIR" \
   --rayon-threads "$RAYON_THREADS" &
 coordinator_pid=$!
 echo "  coordinator PID=$coordinator_pid"
@@ -93,6 +112,7 @@ fi
 worker_pids=()
 for p in 0 1 2; do
   echo "Starting worker $p..."
+  NUM_ITERS="$NUM_ITERS" TRACY=1 TRACY_PORT=$((TRACY_BASE_PORT + p)) \
   "$REPO_DIR/target/release/worker" \
     -c "$ARTIFACT_DIR/config_worker0_${p}.toml" \
     -t "$TRACE_DIR" \
@@ -103,6 +123,25 @@ for p in 0 1 2; do
   echo "  worker $p PID=$!"
 done
 
+capture_pids=()
+if [ "$TRACY_CAPTURE" = "1" ]; then
+  TRACY_CAPTURE_BIN=${TRACY_CAPTURE_BIN:-$(command -v tracy-capture 2>/dev/null || echo tracy-capture)}
+  for p in 0 1 2; do
+    "$TRACY_CAPTURE_BIN" \
+      -f \
+      -o "$TRACE_DIR/worker${p}.tracy" \
+      -a 127.0.0.1 \
+      -p $((TRACY_BASE_PORT + p)) >/dev/null 2>&1 &
+    capture_pids+=($!)
+  done
+  "$TRACY_CAPTURE_BIN" \
+    -f \
+    -o "$TRACE_DIR/coordinator.tracy" \
+    -a 127.0.0.1 \
+    -p $((TRACY_BASE_PORT - 1)) >/dev/null 2>&1 &
+  capture_pids+=($!)
+fi
+
 # ── Cleanup trap ─────────────────────────────────────────────────────────────
 
 cleanup() {
@@ -110,6 +149,10 @@ cleanup() {
   local pids=("$coordinator_pid" "${worker_pids[@]}")
   kill "${pids[@]}" 2>/dev/null || true
   wait "${pids[@]}" 2>/dev/null || true
+  if [ ${#capture_pids[@]} -gt 0 ]; then
+    kill "${capture_pids[@]}" 2>/dev/null || true
+    wait "${capture_pids[@]}" 2>/dev/null || true
+  fi
 }
 trap cleanup EXIT
 
@@ -126,7 +169,8 @@ WORKER_ADDRS="${WORKER_ADDRS},127.0.0.1:$((USER_LISTEN_BASE_PORT + 2))"
 echo "Running sha2-chain client (workers=$WORKER_ADDRS)..."
 
 "$REPO_DIR/target/release/sha2-chain" \
-  -w "$WORKER_ADDRS"
+  --config-path "$ARTIFACT_DIR/config_delegator.toml" \
+  --num-iters "$NUM_ITERS"
 
 echo ""
 echo "=== E2E Test PASSED (transport=$TRANSPORT) ==="
