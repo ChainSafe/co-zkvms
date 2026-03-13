@@ -69,7 +69,7 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
     /// - samples a secret mask `r` and its one-hot vector `E = e(r)`,
     /// - opens `c[j] = open(k(j) XOR r)` once for all active cycles,
     /// - injects `E` into field shares once (length K).
-    #[tracing::instrument(skip_all, name = "one_hot::from_indices", fields(K))]
+    #[tracing::instrument(skip_all, level = "trace", name = "one_hot::from_indices", fields(K))]
     pub fn from_indices<N: Rep3Network>(
         nonzero_indices: Vec<Option<Rep3RingShare<u8>>>,
         K: usize,

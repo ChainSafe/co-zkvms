@@ -29,7 +29,7 @@ use mpc_core::protocols::rep3::PartyID;
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::MaybeShared;
 use rayon::prelude::*;
-use tracing::info_span;
+use tracing::trace_span;
 
 use crate::poly::commitment::Rep3CommitmentScheme;
 
@@ -93,9 +93,9 @@ where
         let g1_affine_all = G1Projective::normalize_batch(&g1_all[..(1 << sigma)]);
         let g2_affine_all = G2Projective::normalize_batch(&setup_g2_projective(setup)[..(1 << sigma)]);
         let (row_commitments, row_mask_state, nu, l_vec, r_vec) = {
-            let _span = info_span!("init_receive_reconstruct").entered();
+            let _span = trace_span!("init_receive_reconstruct").entered();
             let init_msgs: Vec<DoryInitShareMsg> = {
-                let _receive_span = info_span!("init_receive_rows").entered();
+                let _receive_span = trace_span!("init_receive_rows").entered();
                 network.receive_responses()?
             };
             let num_vars = init_msgs[0].0;
@@ -110,7 +110,7 @@ where
                 }
             }
             let (row_commitments_affine, raw_masks) = {
-                let _mask_span = info_span!("init_mask_rows").entered();
+                let _mask_span = trace_span!("init_mask_rows").entered();
                 mask_row_commitments(&row_commitments, setup)
             };
             let mut folded_masks = raw_masks.clone();
@@ -124,7 +124,7 @@ where
                 (row_commitments_affine.clone(), mask_shares[2].clone()),
             ];
             {
-                let _broadcast_span = info_span!("init_send_masked_rows").entered();
+                let _broadcast_span = trace_span!("init_send_masked_rows").entered();
                 network.send_requests_to_workers(requests)?;
             }
 
@@ -156,7 +156,7 @@ where
         }
 
         let vmv_shares: Vec<DoryVmvShareMsg> = {
-            let _span = info_span!("vmv_receive").entered();
+            let _span = trace_span!("vmv_receive").entered();
             network.receive_responses()?
         };
         let ((vmv_c_masked, d2), e1_masked, vmv_c_correction_scalar) = combine_vmv_shares(&vmv_shares)?;
@@ -216,7 +216,7 @@ where
 
         let mut row_mask_state = row_mask_state;
         let mut curr_rounds = sigma;
-        let _loop_span = info_span!("coordinate_reduction_loop").entered();
+        let _loop_span = trace_span!("reduction_loop").entered();
         while curr_rounds > 0 {
             let n2 = 1usize << (curr_rounds - 1);
 
@@ -364,7 +364,7 @@ where
         let gamma_inv = gamma.inverse().expect("gamma must be invertible");
 
         let v2_shares: Vec<G2Affine> = {
-            let _span = info_span!("final_v2_receive").entered();
+            let _span = trace_span!("final_v2_receive").entered();
             network.receive_responses()?
         };
         let mut v2_from_workers = G2Projective::zero();
@@ -374,7 +374,7 @@ where
 
         #[cfg(feature = "zk")]
         let scalar_product_proof = {
-            let _span = info_span!("scalar_product_proof").entered();
+            let _span = trace_span!("scalar_product_proof").entered();
             let (proof, _sigma_c) =
                 scalar_product_proof(&mut dory_transcript, setup, v1_pub[0], v2_from_workers, zk_blinds);
             Some(proof)

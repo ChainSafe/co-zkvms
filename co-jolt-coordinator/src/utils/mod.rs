@@ -27,3 +27,5 @@ pub fn lagrange_interp_4<F: JoltField>(
 
     y0 * l0 + y1 * l1 + y2 * l2 + y3 * l3
 }
+
+pub mod tracing;

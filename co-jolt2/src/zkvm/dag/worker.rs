@@ -128,9 +128,7 @@ impl Rep3JoltDagWorker {
         }
 
         // Stage 2-4 DAG state can be dropped before the opening reduction.
-        let _drop_stages = info_span!("drop_stages").entered();
         drop(stages);
-        drop(_drop_stages);
         maybe_purge_jemalloc();
         // -------------------------------------------------------------------
         // Stage 5: opening proof reduction

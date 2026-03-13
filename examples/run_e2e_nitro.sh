@@ -25,8 +25,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-CO_JOLT2_DIR="$REPO_DIR/co-jolt2"
-source "$SCRIPT_DIR/common_e2e.sh"
+source "$SCRIPT_DIR/common.sh"
 
 export RUSTFLAGS="${RUSTFLAGS:--A warnings}"
 
@@ -44,10 +43,11 @@ TRACY_BASE_PORT=${TRACY_BASE_PORT:-8086}
 TRACY_ALLOC=${TRACY_ALLOC:-0}
 TRACY_CAPTURE=${TRACY_CAPTURE:-0}
 JEMALLOC_PRESET=${JEMALLOC_PRESET:-default}
+EXTRA_FEATURES=${EXTRA_FEATURES:-}
 
-ARTIFACT_DIR=${ARTIFACT_DIR:-"$CO_JOLT2_DIR/.artifacts"}
-TRACE_DIR=${TRACE_DIR:-"$CO_JOLT2_DIR/.traces"}
-PREPROC_DIR=${PREPROC_DIR:-"$CO_JOLT2_DIR/.preprocessing"}
+ARTIFACT_DIR=${ARTIFACT_DIR:-"$REPO_DIR/.artifacts"}
+TRACE_DIR=${TRACE_DIR:-"$REPO_DIR/.traces"}
+PREPROC_DIR=${PREPROC_DIR:-"$REPO_DIR/co-jolt2/.preprocessing"}
 USER_LISTEN_BASE_PORT=${USER_LISTEN_BASE_PORT:-30000}
 
 ENCLAVE_DIR="$REPO_DIR/co-jolt-coordinator/enclave"
@@ -76,6 +76,9 @@ mkdir -p "$ARTIFACT_DIR" "$TRACE_DIR"
 CO_JOLT2_FEATURES="test-utils"
 if [ "$TRACY_ALLOC" = "1" ]; then
   CO_JOLT2_FEATURES="$CO_JOLT2_FEATURES,tracy-mem,jemalloc-stats"
+fi
+if [ -n "$EXTRA_FEATURES" ]; then
+  CO_JOLT2_FEATURES="$CO_JOLT2_FEATURES,$EXTRA_FEATURES"
 fi
 
 setup_jemalloc_preset "$JEMALLOC_PRESET"
@@ -114,14 +117,10 @@ rm -f "$ARTIFACT_DIR"/config_*.toml "$ARTIFACT_DIR"/*.der
   --coordinator-protocol tls \
   --coordinator-addr "localhost:$VSOCK_PORT"
 
-echo "Configs generated (coordinator-addr=localhost:$VSOCK_PORT)"
-
 # ── 3. Launch Nitro enclave ─────────────────────────────────────────────────
 
 # Terminate any existing enclave
 sudo nitro-cli terminate-enclave --all 2>/dev/null || true
-
-echo "Launching Nitro enclave..."
 
 ENCLAVE_FLAGS=(
   --cpu-count "$ENCLAVE_CPUS"
@@ -136,11 +135,8 @@ sudo nitro-cli run-enclave "${ENCLAVE_FLAGS[@]}"
 
 enclave_cid=$(sudo nitro-cli describe-enclaves | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['EnclaveCID'])")
 enclave_id=$(sudo nitro-cli describe-enclaves | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['EnclaveID'])")
-echo "  Enclave ID=$enclave_id CID=$enclave_cid"
 
 # ── 4. Start host_proxy ─────────────────────────────────────────────────────
-
-echo "Starting host_proxy (TCP:$VSOCK_PORT → vsock $enclave_cid:$VSOCK_PORT)..."
 
 VSOCK_CID="$enclave_cid" VSOCK_PORT="$VSOCK_PORT" TCP_LISTEN_ADDR="0.0.0.0:$VSOCK_PORT" \
   "$ENCLAVE_DIR/host_proxy" &
@@ -148,7 +144,6 @@ host_proxy_pid=$!
 
 for i in $(seq 1 20); do
   if lsof -i ":$VSOCK_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
-    echo "  host_proxy listening on :$VSOCK_PORT"
     break
   fi
   sleep 0.5
@@ -161,7 +156,6 @@ sleep 2
 
 worker_pids=()
 for p in 0 1 2; do
-  echo "Starting worker $p..."
   NUM_ITERS="$NUM_ITERS" TRACY=1 TRACY_PORT=$((TRACY_BASE_PORT + p)) \
   "$REPO_DIR/target/release/worker" \
     -c "$ARTIFACT_DIR/config_worker0_${p}.toml" \
@@ -170,7 +164,6 @@ for p in 0 1 2; do
     --rayon-threads "$RAYON_THREADS" \
     -p "$PREPROC_DIR" &
   worker_pids+=($!)
-  echo "  worker $p PID=$!"
 done
 
 capture_pids=()
@@ -189,20 +182,21 @@ fi
 # ── Cleanup trap ─────────────────────────────────────────────────────────────
 
 cleanup() {
-  echo "Cleaning up..."
-  kill "$host_proxy_pid" "${worker_pids[@]}" 2>/dev/null || true
-  wait "$host_proxy_pid" "${worker_pids[@]}" 2>/dev/null || true
+  # Send SIGINT to tracy-capture first (graceful flush), then kill workers
   if [ ${#capture_pids[@]} -gt 0 ]; then
-    kill "${capture_pids[@]}" 2>/dev/null || true
+    kill -INT "${capture_pids[@]}" 2>/dev/null || true
+  fi
+  kill "$host_proxy_pid" "${worker_pids[@]}" 2>/dev/null || true
+  if [ ${#capture_pids[@]} -gt 0 ]; then
     wait "${capture_pids[@]}" 2>/dev/null || true
   fi
+  wait "$host_proxy_pid" "${worker_pids[@]}" 2>/dev/null || true
   sudo nitro-cli terminate-enclave --all 2>/dev/null || true
 }
 trap cleanup EXIT
 
 # ── 6. Wait for workers to bind, then run client ────────────────────────────
 
-echo "Waiting for workers to bind..."
 sleep 3
 
 WORKER_ADDRS="127.0.0.1:${USER_LISTEN_BASE_PORT}"

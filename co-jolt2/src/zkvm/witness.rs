@@ -23,7 +23,7 @@ use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use rand::distributions::{Distribution, Standard};
 use rayon::prelude::*;
-use tracing::info_span;
+use tracing::{info_span, trace_span};
 
 #[cfg(feature = "ring-msm")]
 use crate::poly::compact_polynomial::Rep3CompactPolynomial;
@@ -294,7 +294,7 @@ where
     drop(_span);
 
     // Process each instruction group via par_chunks
-    let _span = tracing::info_span!("to_lookup_output_batched", num_groups = num_groups).entered();
+    let _span = tracing::trace_span!("to_lookup_output_batched", num_groups = num_groups).entered();
     io_ctx.par_chunks(ops_by_instruction, None, |groups, io_ctx: &mut IoContext<N>| -> eyre::Result<Vec<()>> {
         for (steps, out) in groups {
             Rep3LookupQuery::<XLEN>::to_lookup_output_batched(steps[0], &steps, io_ctx, out)?;
@@ -304,7 +304,7 @@ where
     drop(_span);
 
     // Fulfill all pending futures (pool-based B2A via edaBits)
-    let _span = tracing::info_span!("fulfill_batched_with_pool").entered();
+    let _span = tracing::trace_span!("fulfill_batched_with_pool").entered();
     crate::utils::future_ring::fulfill_batched_with_pool(output_futures, io_ctx, preproc, |res, ()| res)
 }
 
@@ -695,7 +695,7 @@ where
     // Phase 2: Fulfill all pending index futures (batched A2B + MulA2B via io_ctx)
     let indices: Vec<Rep3RingShare<LookupIndexInt>> = {
         let total = index_futures.len();
-        let _span = info_span!("fulfill_index_futures", count = total).entered();
+        let _span = trace_span!("fulfill_index_futures", count = total).entered();
         let mut out: Vec<Rep3RingShare<LookupIndexInt>> = Vec::with_capacity(total);
         let mut iter = index_futures.into_iter();
         let mut chunk_id: usize = 0;
@@ -709,7 +709,7 @@ where
             if chunk.is_empty() {
                 break;
             }
-            let _chunk_span = info_span!("fulfill_index_futures_chunk", chunk_id, chunk_len = chunk.len()).entered();
+            let _chunk_span = trace_span!("fulfill_index_futures_chunk", chunk_id, chunk_len = chunk.len()).entered();
             let resolved: Vec<Rep3RingShare<LookupIndexInt>> = chunk.fulfill_batched(io_ctx, |r, ()| r)?;
             drop(_chunk_span);
             out.extend(resolved);
@@ -757,7 +757,7 @@ where
 
     // -- Convert to polynomials --
     let mut results = HashMap::with_capacity(polynomials.len());
-    let _span = info_span!("convert_to_polynomials", count = polynomials.len()).entered();
+    let _span = trace_span!("convert_to_polynomials", count = polynomials.len()).entered();
 
     // should_branch[i] = lookup_output[i] * circuit_flags[Branch] (public scalar).
     // Compute this before RdInc/RamInc so we can borrow cycle_witness immutably (no cloning).
@@ -856,7 +856,7 @@ where
                 debug_assert_eq!(rd_pre.len(), n);
                 debug_assert_eq!(rd_post.len(), n);
 
-                let _span = info_span!("rd_inc_b2a", n, chunk = inc_b2a_chunk, max_forks = inc_b2a_max_forks).entered();
+                let _span = trace_span!("rd_inc_b2a", n, chunk = inc_b2a_chunk, max_forks = inc_b2a_max_forks).entered();
                 let mut inc: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(n);
                 for off in (0..n).step_by(inc_b2a_chunk) {
                     let end = (off + inc_b2a_chunk).min(n);
@@ -893,7 +893,7 @@ where
                 debug_assert_eq!(ram_post.len(), n);
 
                 let _span =
-                    info_span!("ram_inc_b2a", n, chunk = inc_b2a_chunk, max_forks = inc_b2a_max_forks).entered();
+                    trace_span!("ram_inc_b2a", n, chunk = inc_b2a_chunk, max_forks = inc_b2a_max_forks).entered();
                 let mut inc: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(n);
                 for off in (0..n).step_by(inc_b2a_chunk) {
                     let end = (off + inc_b2a_chunk).min(n);

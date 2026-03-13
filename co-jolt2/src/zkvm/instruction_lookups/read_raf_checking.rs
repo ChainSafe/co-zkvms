@@ -70,7 +70,7 @@ fn reshare_and_unmask_additive_hists_chunked<F: JoltField, N: Rep3NetworkWorker>
     let chunk_hists = chunk_hists.max(1);
     let max_forks = io_ctx.max_forks();
 
-    let _span = info_span!(
+    let _span = trace_span!(
         "reshare_hists",
         n = hists.len(),
         chunk = chunk_hists,
@@ -411,7 +411,7 @@ impl<F: JoltField> ReadRafProverState<F> {
                 "one_hot_polys[{idx}].rand_ohv_e_field must have length {K_CHUNK}"
             );
         }
-        let _ehat_span = tracing::info_span!("prefix_tensor_prod").entered();
+        let _ehat_span = tracing::trace_span!("prefix_tensor_prod").entered();
 
         // derive c16 by combining CHUNKS_PER_PHASE nibbles
         for j in 0..self.c16.len() {
@@ -465,7 +465,7 @@ impl<F: JoltField> ReadRafProverState<F> {
         drop(_ehat_span);
 
         // -- Condensation (phase > 0): u_evals *= eq_shifted[c16_prev] --
-        let _cond_span = tracing::info_span!("condensation").entered();
+        let _cond_span = tracing::trace_span!("condensation").entered();
         if phase > 0 {
             eyre::ensure!(
                 self.r.len() >= phase * LOG_M,
@@ -714,7 +714,7 @@ impl<F: JoltField> ReadRafProverState<F> {
         if suffix_len == 0 {
             // All operand suffix values are zero. Only constant shift histograms matter.
             // histograms[0] == histograms[2], histograms[1,3,5] are zero.
-            let _span = info_span!("build_histograms_final", phase).entered();
+            let _span = trace_span!("build_histograms_final", phase).entered();
             let (q0, q4) = match &self.u_evals {
                 Either::Public(u_pub) => {
                     // F histograms → unmask_histogram_public (FWHT on F, ~2x cheaper)
@@ -764,7 +764,7 @@ impl<F: JoltField> ReadRafProverState<F> {
             return Ok(());
         }
 
-        let _span = info_span!("build_histograms", phase).entered();
+        let _span = trace_span!("build_histograms", phase).entered();
 
         // suffix_len > 0: classify cycles by group (interleaved vs identity)
         // and by secrecy (public vs shared).
@@ -840,14 +840,6 @@ impl<F: JoltField> ReadRafProverState<F> {
             .enumerate()
             .filter_map(|(i, &r)| if !r.is_some() { Some(i) } else { None })
             .collect();
-        tracing::info!(
-            "identity (pub: {}, priv: {}); operands (pub: {}, mixed: {}, priv: {})",
-            pub_identity.len(),
-            shared_identity_js.len(),
-            pub_interleaved.len(),
-            shared_right_idx.len(),
-            shared_interleaved_js.len() - shared_right_idx.len()
-        );
         let (s_left, s_right, s_identity) = match suffix_len {
             65..=128 => q_polys_b2a::<u128, F, N>(
                 shared_interleaved_masked,
@@ -1029,7 +1021,7 @@ impl<F: JoltField> ReadRafProverState<F> {
 
                 // Batch reshare additive → Rep3
                 if has_shared_interleaved || has_shared_identity {
-                    let _reshare = info_span!("q_reshare").entered();
+                    let _reshare = trace_span!("q_reshare").entered();
                     let mut flat: Vec<AdditiveShare<F>> = Vec::with_capacity(3 * M);
                     flat.extend_from_slice(&add_left);
                     if has_fully_shared_right {
@@ -1061,7 +1053,7 @@ impl<F: JoltField> ReadRafProverState<F> {
 
         // FWHT unmask. histograms[0]==[2] → 5 unique FWHTs (all independent).
         // Phase 0: shift histograms are F → use unmask_histogram_public (~2x cheaper).
-        let _fwht_span = info_span!("fwht_unmask", phase).entered();
+        let _fwht_span = trace_span!("fwht_unmask", phase).entered();
 
         let shift_in_rep3 = shift_half_f.is_none();
         let _seq = trace_span!("init_operand_q_polys_unmask_seq", phase, shift_in_rep3).entered();
@@ -1181,7 +1173,6 @@ impl<F: JoltField> ReadRafProverState<F> {
     }
 
     /// Initialize the final log_T rounds.
-    #[tracing::instrument(skip_all, name = "ReadRaf::init_log_t_rounds")]
     fn init_log_t_rounds(&mut self, gamma: F, gamma_squared: F) {
         let prefixes: Vec<PrefixEval<F>> =
             std::mem::take(&mut self.prefix_checkpoints).into_iter().map(|checkpoint| checkpoint.unwrap()).collect();
@@ -1716,7 +1707,7 @@ where
 
     let mut batch = SuffixFutureBatch::<F>::new();
     let mut segments = Vec::new();
-    let _span = info_span!("suffixes_mle", n = lookup_indices.len()).entered();
+    let _span = trace_span!("suffixes_mle", n = lookup_indices.len()).entered();
 
     for (table_idx, table) in LookupTables::<XLEN>::iter().enumerate() {
         let table_cycles = &lookup_indices_by_table[table_idx];

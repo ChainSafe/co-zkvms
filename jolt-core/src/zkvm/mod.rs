@@ -258,7 +258,7 @@ where
         JoltProverPreprocessing { generators, shared }
     }
 
-    #[tracing::instrument(skip_all, name = "Jolt::verify")]
+    #[tracing::instrument(skip_all, level = "trace", name = "Jolt::verify")]
     fn verify(
         preprocessing: &JoltVerifierPreprocessing<F, PCS>,
         proof: JoltProof<F, Bn254Curve, PCS, FS>,

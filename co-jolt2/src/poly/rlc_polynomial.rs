@@ -24,7 +24,7 @@ pub struct Rep3RLCPolynomial<F: JoltField> {
 }
 
 impl<F: JoltField> Rep3RLCPolynomial<F> {
-    #[tracing::instrument(skip_all, name = "RlcPoly::linear_combination")]
+    #[tracing::instrument(skip_all, level = "trace", name = "RlcPoly::linear_combination")]
     pub fn linear_combination(
         polynomials: Vec<Arc<Rep3MultilinearPolynomial<F>>>,
         coefficients: &[F],
@@ -195,7 +195,7 @@ impl<F: JoltField> Rep3RLCPolynomial<F> {
     /// Mirrors vanilla `RLCPolynomial::vector_matrix_product`, but operates on the `.a` component
     /// of rep3 shares. The dense part iterates over `dense_rlc`, and the one-hot part delegates
     /// to each one-hot polynomial's `compute_v_vec_share`.
-    #[tracing::instrument(skip_all, name = "RlcPoly::compute_v_vec_share")]
+    #[tracing::instrument(skip_all, level = "trace", name = "RlcPoly::compute_v_vec_share")]
     pub fn compute_v_vec_share(&self, l_vec: &[F]) -> Vec<F> {
         let num_columns = DoryGlobals::get_num_columns();
 

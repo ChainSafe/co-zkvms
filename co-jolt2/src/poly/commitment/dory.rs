@@ -201,7 +201,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
         let num_rows_target = 1usize << nu;
         let num_columns = 1usize << sigma;
         let row_commit_shares: Vec<G1Projective> = {
-            let _span = tracing::info_span!("row_commits").entered();
+            let _span = tracing::trace_span!("row_commits").entered();
             if let Some(hint) = opening_hint {
                 // Pre-combined hint: use directly (already the correct additive shares)
                 let mut rows: Vec<G1Projective> = hint.iter().map(|h| h.0).collect();
@@ -264,14 +264,14 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
         };
         let row_commit_shares_affine: Vec<G1Affine> = G1Projective::normalize_batch(&row_commit_shares);
         let mut v2_share: Vec<G2Projective> = {
-            let _span = tracing::info_span!("v2_init").entered();
+            let _span = tracing::trace_span!("v2_init").entered();
             fixed_base_vector_msm_g2(setup, &v_vec_share)
         };
         network.send_response((num_vars, row_commit_shares_affine))?;
 
         // 3) receive masked row commitments from coordinator
         let (row_commitments_affine, mut row_mask_shares): DoryMaskedRowsRequest = {
-            let _span = tracing::info_span!("receive_masked_rows").entered();
+            let _span = tracing::trace_span!("receive_masked_rows").entered();
             network.receive_request()?
         };
         let mut padded_row_commitments_affine = row_commitments_affine.clone();
@@ -282,7 +282,7 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
 
         // c_share + d2_share: MSMs + pairings for VMV message
         let ((c_share, d2_share), public_e1, blocked_vmv_correction_share) = {
-            let _span = tracing::info_span!("vmv_message").entered();
+            let _span = tracing::trace_span!("vmv_message").entered();
             let ((c_and_d2, public_e1), blocked_vmv_correction_share) = rayon::join(
                 || {
                     rayon::join(

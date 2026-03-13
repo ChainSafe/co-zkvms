@@ -533,7 +533,7 @@ impl<E: PairingCurve> DoryVerifierState<E> {
     ///
     /// Takes both reduce messages and both challenges, updates all state values.
     /// This implements the extended Dory-Reduce algorithm from sections 3.2 & 4.2.
-    #[tracing::instrument(skip_all, name = "DoryVerifierState::process_round")]
+    #[tracing::instrument(skip_all, level = "trace", name = "DoryVerifierState::process_round")]
     pub fn process_round(
         &mut self,
         first_msg: &FirstReduceMessage<E::G1, E::G2, E::GT>,

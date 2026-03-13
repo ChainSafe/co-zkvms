@@ -15,15 +15,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-CO_JOLT2_DIR="$REPO_DIR/co-jolt2"
-source "$SCRIPT_DIR/common_e2e.sh"
+source "$SCRIPT_DIR/common.sh"
 
 export RUSTFLAGS="${RUSTFLAGS:--A warnings}"
 
 TRANSPORT=${TRANSPORT:-tls}
-ARTIFACT_DIR=${ARTIFACT_DIR:-"$CO_JOLT2_DIR/.artifacts"}
-TRACE_DIR=${TRACE_DIR:-"$CO_JOLT2_DIR/.traces"}
-PREPROC_DIR=${PREPROC_DIR:-"$CO_JOLT2_DIR/.preprocessing"}
+ARTIFACT_DIR=${ARTIFACT_DIR:-"$REPO_DIR/.artifacts"}
+TRACE_DIR=${TRACE_DIR:-"$REPO_DIR/.traces"}
+PREPROC_DIR=${PREPROC_DIR:-"$REPO_DIR/co-jolt2/.preprocessing"}
 NETWORK_FORKS=${NETWORK_FORKS:-4}
 RAYON_THREADS=${RAYON_THREADS:-4}
 NUM_ITERS=${NUM_ITERS:-10}
@@ -31,6 +30,7 @@ TRACY_BASE_PORT=${TRACY_BASE_PORT:-8086}
 TRACY_ALLOC=${TRACY_ALLOC:-0}
 TRACY_CAPTURE=${TRACY_CAPTURE:-0}
 JEMALLOC_PRESET=${JEMALLOC_PRESET:-default}
+EXTRA_FEATURES=${EXTRA_FEATURES:-}
 
 # Ports
 USER_LISTEN_BASE_PORT=${USER_LISTEN_BASE_PORT:-30000}
@@ -40,6 +40,9 @@ mkdir -p "$ARTIFACT_DIR" "$TRACE_DIR"
 CO_JOLT2_FEATURES="test-utils"
 if [ "$TRACY_ALLOC" = "1" ]; then
   CO_JOLT2_FEATURES="$CO_JOLT2_FEATURES,tracy-mem,jemalloc-stats"
+fi
+if [ -n "$EXTRA_FEATURES" ]; then
+  CO_JOLT2_FEATURES="$CO_JOLT2_FEATURES,$EXTRA_FEATURES"
 fi
 
 setup_jemalloc_preset "$JEMALLOC_PRESET"
@@ -80,11 +83,7 @@ rm -f "$ARTIFACT_DIR"/config_*.toml "$ARTIFACT_DIR"/*.der
   --user-listen-base-port "$USER_LISTEN_BASE_PORT" \
   --coordinator-protocol "$TRANSPORT"
 
-echo "Configs generated in $ARTIFACT_DIR (coordinator-protocol=$TRANSPORT)"
-
 # ── 3. Launch coordinator ────────────────────────────────────────────────────
-
-echo "Starting coordinator (transport=$TRANSPORT)..."
 
 NUM_ITERS="$NUM_ITERS" TRACY=1 TRACY_PORT=$((TRACY_BASE_PORT - 1)) \
 "$REPO_DIR/target/release/coordinator" \
@@ -93,14 +92,11 @@ NUM_ITERS="$NUM_ITERS" TRACY=1 TRACY_PORT=$((TRACY_BASE_PORT - 1)) \
   -t "$TRACE_DIR" \
   --rayon-threads "$RAYON_THREADS" &
 coordinator_pid=$!
-echo "  coordinator PID=$coordinator_pid"
 
 # In TLS mode, wait for the coordinator to bind before starting workers
 if [ "$TRANSPORT" = "tls" ]; then
-  echo "Waiting for coordinator to bind on port 20000..."
   for i in $(seq 1 20); do
     if lsof -i :20000 -sTCP:LISTEN >/dev/null 2>&1; then
-      echo "  coordinator is listening"
       break
     fi
     sleep 0.5
@@ -111,7 +107,6 @@ fi
 
 worker_pids=()
 for p in 0 1 2; do
-  echo "Starting worker $p..."
   NUM_ITERS="$NUM_ITERS" TRACY=1 TRACY_PORT=$((TRACY_BASE_PORT + p)) \
   "$REPO_DIR/target/release/worker" \
     -c "$ARTIFACT_DIR/config_worker0_${p}.toml" \
@@ -120,7 +115,6 @@ for p in 0 1 2; do
     --rayon-threads "$RAYON_THREADS" \
     -p "$PREPROC_DIR" &
   worker_pids+=($!)
-  echo "  worker $p PID=$!"
 done
 
 capture_pids=()
@@ -145,21 +139,22 @@ fi
 # ── Cleanup trap ─────────────────────────────────────────────────────────────
 
 cleanup() {
-  echo "Cleaning up..."
+  # Send SIGINT to tracy-capture first (graceful flush), then kill workers
+  if [ ${#capture_pids[@]} -gt 0 ]; then
+    kill -INT "${capture_pids[@]}" 2>/dev/null || true
+  fi
   local pids=("$coordinator_pid" "${worker_pids[@]}")
   kill "${pids[@]}" 2>/dev/null || true
-  wait "${pids[@]}" 2>/dev/null || true
   if [ ${#capture_pids[@]} -gt 0 ]; then
-    kill "${capture_pids[@]}" 2>/dev/null || true
     wait "${capture_pids[@]}" 2>/dev/null || true
   fi
+  wait "${pids[@]}" 2>/dev/null || true
 }
 trap cleanup EXIT
 
 # ── 5. Wait for workers to bind, then run client ────────────────────────────
 
 # Give workers time to bind their user-listen ports
-echo "Waiting for workers to bind..."
 sleep 3
 
 WORKER_ADDRS="127.0.0.1:${USER_LISTEN_BASE_PORT}"

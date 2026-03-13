@@ -7,8 +7,10 @@ use clap::Parser;
 use co_jolt_coordinator::proving::coordinate_once;
 use co_jolt_coordinator::transport::ephemeral_identity::EphemeralIdentity;
 #[cfg(feature = "test-utils")]
-use jolt_core::utils::tracing::{coordinator_trace_file, init_tracing_bench, start_rss_monitor};
+use co_jolt_coordinator::utils::tracing::init_tracing_bench;
 use eyre::Context;
+#[cfg(feature = "test-utils")]
+use jolt_core::utils::tracing::{coordinator_trace_file, start_rss_monitor};
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 use tracing::info;
 
@@ -148,7 +150,10 @@ fn main() -> eyre::Result<()> {
     Ok(())
 }
 
-fn prove_loop<N: Rep3NetworkCoordinator>(network: &mut N, #[allow(unused_variables)] trace_dir: Option<PathBuf>) -> eyre::Result<()> {
+fn prove_loop<N: Rep3NetworkCoordinator>(
+    network: &mut N,
+    #[allow(unused_variables)] trace_dir: Option<PathBuf>,
+) -> eyre::Result<()> {
     loop {
         coordinate_once(network, |request| {
             #[cfg(feature = "test-utils")]

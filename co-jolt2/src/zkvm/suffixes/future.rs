@@ -157,7 +157,7 @@ impl<F: JoltField> SuffixFutureBatch<F> {
     }
 
     /// Fulfill all pending conversions and scatter into output vec.
-    #[tracing::instrument(skip_all, name = "Suffixes::fulfill")]
+    #[tracing::instrument(skip_all, level = "trace", name = "Suffixes::fulfill")]
     pub fn fulfill_with_pool<N: Rep3NetworkWorker>(
         self,
         io_ctx: &mut IoContextPool<N>,
@@ -184,7 +184,7 @@ impl<F: JoltField> SuffixFutureBatch<F> {
         // BitInject — single-bit → field via daBits
         if !self.bitinject.is_empty() {
             let dabits = pool.take_dabits(self.bitinject.len())?;
-            let _span = tracing::info_span!("bit_inject_field_many", n = self.bitinject.len()).entered();
+            let _span = tracing::trace_span!("bit_inject_field_many", n = self.bitinject.len()).entered();
             let fields = conversion::bit_inject_field_preproc_many(&self.bitinject, &dabits, io_ctx.main())?;
             drop(_span);
             scatter.extend(self.bitinject_idx.into_iter().enumerate().zip(fields.into_iter()).map(
@@ -210,7 +210,7 @@ impl<F: JoltField> SuffixFutureBatch<F> {
                         let chunk_len = end - off;
 
                         let batch = pool.take_edabits::<$ring>(chunk_len)?;
-                        let _span = tracing::info_span!("ring_to_field_b2a_many", n = chunk_len).entered();
+                        let _span = tracing::trace_span!("ring_to_field_b2a_many", n = chunk_len).entered();
 
                         let chunk_vals: Vec<Rep3RingShare<$ring>> = self.$val[off..end].to_vec();
                         let max_forks_cap = b2a_max_forks_cap.unwrap_or(io_ctx.max_forks()).max(1);

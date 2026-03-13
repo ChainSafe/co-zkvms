@@ -15,10 +15,7 @@ pub struct TracingGuard {
 
 impl TracingGuard {
     pub fn new(guard: Option<tracing_chrome::FlushGuard>, file: impl Into<String>) -> Self {
-        Self {
-            _guard: guard,
-            file: file.into(),
-        }
+        Self { _guard: guard, file: file.into() }
     }
 }
 
@@ -28,31 +25,6 @@ impl Drop for TracingGuard {
             info!("tracing_chrome flushing to {file}");
         }
     }
-}
-
-pub fn init_tracing_bench(file: &str, trace_dir: &Path) -> TracingGuard {
-    std::fs::create_dir_all(trace_dir).unwrap();
-    let trace_path = trace_dir.join(file);
-    let env_filter = EnvFilter::builder()
-        .with_default_directive(tracing::Level::INFO.into())
-        .from_env_lossy()
-        .add_directive("jolt_core=off".parse().unwrap())
-        .add_directive("quinn=off".parse().unwrap())
-        .add_directive("dory=off".parse().unwrap());
-
-    let tracy_layer = std::env::var("TRACY").is_ok().then(tracing_tracy::TracyLayer::default);
-    let (chrome_layer, _guard) = ChromeLayerBuilder::new().file(trace_path).build();
-    if tracing::subscriber::set_global_default(
-        Registry::default()
-            .with(env_filter)
-            .with(chrome_layer)
-            .with(tracy_layer)
-            .with(ForestLayer::default().with_filter(LevelFilter::INFO)),
-    )
-    .is_err()
-    {}
-    info!("tracing_chrome writes to file: {}", file);
-    TracingGuard::new(Some(_guard), file)
 }
 
 pub fn sanitize_trace_label(label: &str) -> String {
