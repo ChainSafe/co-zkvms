@@ -228,10 +228,7 @@ impl MacroBuilder {
                     io_device.outputs.append(&mut jolt::postcard::to_stdvec(&output).unwrap());
                     io_device.panic = panic;
 
-                    #[cfg(not(feature = "rv64"))]
-                    let result = JoltRV32IM::verify(&preprocessing, proof, io_device, None, None);
-                    #[cfg(feature = "rv64")]
-                    let result = JoltRV64IMAC::verify(&preprocessing, proof, io_device, None, None);
+                    let result = JoltRVArch::verify(&preprocessing, proof, io_device, None, None);
 
                     result.is_ok()
                 }
@@ -417,12 +414,8 @@ impl MacroBuilder {
                 };
                 let memory_layout = MemoryLayout::new(&memory_config);
 
-                #[cfg(not(feature = "rv64"))]
                 let preprocessing: JoltProverPreprocessing<jolt::F, jolt::PCS> =
-                    JoltRV32IM::prover_preprocess(bytecode, memory_layout, memory_init, #max_trace_length);
-                #[cfg(feature = "rv64")]
-                let preprocessing: JoltProverPreprocessing<jolt::F, jolt::PCS> =
-                    JoltRV64IMAC::prover_preprocess(bytecode, memory_layout, memory_init, #max_trace_length);
+                    JoltRVArch::prover_preprocess(bytecode, memory_layout, memory_init, #max_trace_length);
 
                 preprocessing
             }
@@ -464,12 +457,8 @@ impl MacroBuilder {
                 };
                 let memory_layout = MemoryLayout::new(&memory_config);
 
-                #[cfg(not(feature = "rv64"))]
                 let prover_preprocessing: JoltProverPreprocessing<jolt::F, jolt::PCS> =
-                    JoltRV32IM::prover_preprocess(bytecode, memory_layout, memory_init, #max_trace_length);
-                #[cfg(feature = "rv64")]
-                let prover_preprocessing: JoltProverPreprocessing<jolt::F, jolt::PCS> =
-                    JoltRV64IMAC::prover_preprocess(bytecode, memory_layout, memory_init, #max_trace_length);
+                    JoltRVArch::prover_preprocess(bytecode, memory_layout, memory_init, #max_trace_length);
                 let preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
                 preprocessing
             }
@@ -616,24 +605,16 @@ impl MacroBuilder {
                 let mut trusted_advice_bytes = vec![];
                 #(#set_program_trusted_advice_args;)*
 
-                let (bytecode, memory_init, trace, memory, program_io, ram_k) =
-                    jolt::trace_for_rep3(program, &input_bytes, &untrusted_advice_bytes, &trusted_advice_bytes);
                 let mut rng = OsRng;
-                let shares = jolt::generate_trace_shares_from_execution(
-                    trace,
-                    memory,
-                    &program_io,
-                    ram_k,
-                    &mut rng,
-                );
+                let (bytecode, memory_init, program_io, shares) =
+                    jolt::generate_trace_shares(program, &input_bytes, &untrusted_advice_bytes, &trusted_advice_bytes, &mut rng);
+                let preprocess_trace_len = shares[0].0.len();
                 let proof_bytes =
                     client.delegate(
                         bytecode,
                         memory_init,
                         program_id.to_owned(),
-                        #max_trace_length,
-                        shares[0].0.len(),
-                        ram_k,
+                        preprocess_trace_len,
                         shares,
                     )?;
                 let proof = <#proof_type>::deserialize_from_bytes(&proof_bytes)
@@ -819,6 +800,7 @@ impl MacroBuilder {
                 JoltField,
                 host::Program,
                 JoltProverPreprocessing,
+                JoltRVArch,
                 JoltVerifierPreprocessing,
                 JoltRV32IM,
                 JoltRV64IMAC,

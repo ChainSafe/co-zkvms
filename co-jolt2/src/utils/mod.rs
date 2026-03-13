@@ -15,13 +15,17 @@ use jolt_core::zkvm::ram::remap_address;
 use jolt_core::zkvm::JoltSharedPreprocessing;
 use mpc_core::protocols::additive::AdditiveShare;
 use rayon::prelude::*;
-use tracer::instruction::Cycle;
 
-/// Compute ram_K from a vanilla trace and shared preprocessing.
-pub fn compute_ram_k(trace: &[Cycle], preprocessing: &JoltSharedPreprocessing) -> usize {
+use crate::zkvm::instruction::Rep3Cycle;
+
+/// Compute ram_K from a trace and shared preprocessing.
+///
+/// Works on both vanilla `&[Cycle]` and `&[Rep3Cycle]` — only RAM addresses
+/// (which are public) are needed.
+pub fn compute_ram_k(trace: &[Rep3Cycle], preprocessing: &JoltSharedPreprocessing) -> usize {
     let max_from_trace = trace
         .par_iter()
-        .filter_map(|cycle| remap_address(cycle.ram_access().address() as u64, &preprocessing.memory_layout))
+        .filter_map(|cycle| remap_address(cycle.ram_access().address(), &preprocessing.memory_layout))
         .max()
         .unwrap_or(0);
 
