@@ -586,9 +586,11 @@ dependencies = [
  "jolt-common",
  "jolt-core",
  "jolt-tracer",
+ "libc",
  "mpc-core",
  "mpc-net",
  "num-traits",
+ "num_cpus",
  "rand 0.8.5",
  "rayon",
  "rcgen",
@@ -597,6 +599,11 @@ dependencies = [
  "strum",
  "toml 0.8.23",
  "tracing",
+ "tracing-chrome",
+ "tracing-forest",
+ "tracing-subscriber",
+ "tracing-tracy",
+ "tracy-client",
 ]
 
 [[package]]
@@ -1100,7 +1107,10 @@ dependencies = [
  "jolt-core",
  "jolt-sdk",
  "jolt-tracer",
+ "serde",
+ "toml 0.8.23",
  "tracing",
+ "tracing-forest",
  "tracing-subscriber",
 ]
 
@@ -1816,11 +1826,13 @@ dependencies = [
  "jolt-optimizations",
  "jolt-tracer",
  "lazy_static",
+ "libc",
  "memory-stats",
  "num",
  "num-derive",
  "num-integer",
  "num-traits",
+ "num_cpus",
  "once_cell",
  "paste",
  "postcard",
@@ -1839,7 +1851,10 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-chrome",
+ "tracing-forest",
  "tracing-subscriber",
+ "tracing-tracy",
+ "tracy-client",
 ]
 
 [[package]]

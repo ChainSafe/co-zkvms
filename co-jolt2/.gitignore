@@ -1,7 +1,1 @@
-.artifacts*
-.traces*
-.preprocessing*
-
-
-/examples/*.toml
 *.urs

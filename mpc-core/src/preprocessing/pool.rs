@@ -196,7 +196,7 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
     // --- always-available methods ---
 
     /// Drain `n` daBit tuples (Cheng23 Π₁) from the lazy source.
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self), level = "trace")]
     pub fn take_dabits(&mut self, n: usize) -> eyre::Result<DaBitBatch<F>> {
         self.dabits.take_batch(n)
     }

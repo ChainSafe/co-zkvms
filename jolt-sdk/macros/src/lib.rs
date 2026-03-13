@@ -66,6 +66,7 @@ impl MacroBuilder {
     fn build(&mut self) -> TokenStream {
         let memory_config_fn = self.make_memory_config_fn();
         let build_delegate_fn = self.make_build_delegate_fn();
+        let build_verifier_fn = self.make_build_verifier_fn();
         let analyze_fn = self.make_analyze_function();
         let trace_to_file_fn = self.make_trace_to_file_func();
         let compile_fn = self.make_compile_func();
@@ -102,6 +103,7 @@ impl MacroBuilder {
             #preprocess_verifier_fn
             #verifier_preprocess_from_prover_fn
             #commit_trusted_advice_fn
+            #build_verifier_fn
             #delegate_fn
             #main_fn
         }
@@ -143,7 +145,12 @@ impl MacroBuilder {
     fn make_build_delegate_fn(&self) -> TokenStream2 {
         let fn_name = self.get_func_name();
         let build_delegate_fn_name = Ident::new(&format!("build_delegate_{fn_name}"), fn_name.span());
-
+        let delegate_fn_name = Ident::new(&format!("delegate_{fn_name}"), fn_name.span());
+        let proof_type = self.make_proof_type();
+        let output_type: Type = match &self.func.sig.output {
+            ReturnType::Default => syn::parse_quote!(()),
+            ReturnType::Type(_, ty) => syn::parse_quote!((#ty)),
+        };
         let all_names: Vec<_> = self
             .pub_func_args
             .iter()
@@ -151,7 +158,6 @@ impl MacroBuilder {
             .chain(&self.untrusted_func_args)
             .map(|(name, _)| name)
             .collect();
-
         let all_types: Vec<_> = self
             .pub_func_args
             .iter()
@@ -159,25 +165,21 @@ impl MacroBuilder {
             .chain(&self.untrusted_func_args)
             .map(|(_, ty)| ty)
             .collect();
-
         let inputs_vec: Vec<_> = self.func.sig.inputs.iter().collect();
         let inputs = quote! { #(#inputs_vec),* };
-        let delegate_fn_name = Ident::new(&format!("delegate_{fn_name}"), fn_name.span());
 
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #build_delegate_fn_name(
                 program: jolt::host::Program,
-            ) -> impl Fn(&mut jolt::Client, #(#all_types),*) -> jolt::eyre::Result<Vec<u8>> + Sync + Send
+            ) -> impl Fn(&mut jolt::Client, #(#all_types,)* &str) -> jolt::eyre::Result<(#output_type, #proof_type, jolt::JoltDevice)> + Sync + Send
             {
-                let program = std::sync::Arc::new(program);
+                let program = std::sync::Arc::new(std::sync::Mutex::new(program));
 
-                let delegate_closure = move |client: &mut jolt::Client, #inputs| {
-                    let program = (*program).clone();
-                    #delegate_fn_name(client, program, #(#all_names),*)
-                };
-
-                delegate_closure
+                move |client: &mut jolt::Client, #inputs, program_id: &str| {
+                    let mut program = program.lock().unwrap();
+                    #delegate_fn_name(client, &mut program, #(#all_names),*, program_id)
+                }
             }
         }
     }
@@ -186,7 +188,8 @@ impl MacroBuilder {
         let fn_name = self.get_func_name();
         let build_verifier_fn_name =
             Ident::new(&format!("build_verifier_{fn_name}"), fn_name.span());
-
+        let imports = self.make_imports();
+        let proof_type = self.make_proof_type();
         let input_types = self.pub_func_args.iter().map(|(_, ty)| ty);
         let output_type: Type = match &self.func.sig.output {
             ReturnType::Default => syn::parse_quote!(()),
@@ -195,63 +198,40 @@ impl MacroBuilder {
         let public_inputs = self.pub_func_args.iter().map(|(name, ty)| {
             quote! { #name: #ty }
         });
-        let imports = self.make_imports();
         let set_program_args = self.pub_func_args.iter().map(|(name, _)| {
             quote! {
                 io_device.inputs.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
             }
         });
 
-        let has_trusted_advice = !self.trusted_func_args.is_empty();
-
-        let commitment_param_in_signature = if has_trusted_advice {
-            quote! { Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>, }
-        } else {
-            quote! {}
-        };
-
-        let commitment_param_in_closure = if has_trusted_advice {
-            quote! { trusted_advice_commitment: Option<<jolt::PCS as jolt::CommitmentScheme>::Commitment>, }
-        } else {
-            quote! {}
-        };
-
-        let commitment_arg_in_verify = if has_trusted_advice {
-            quote! { trusted_advice_commitment }
-        } else {
-            quote! { None }
-        };
-
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #build_verifier_fn_name(
                 preprocessing: jolt::JoltVerifierPreprocessing<jolt::F, jolt::PCS>,
-            ) -> impl Fn(#(#input_types ,)* #output_type, bool, #commitment_param_in_signature jolt::RV64IMACJoltProof) -> bool + Sync + Send
+            ) -> impl Fn(#(#input_types,)* #output_type, bool, #proof_type) -> bool + Sync + Send
             {
                 #imports
                 let preprocessing = std::sync::Arc::new(preprocessing);
 
-                let verify_closure = move |#(#public_inputs,)* output, panic, #commitment_param_in_closure proof: jolt::RV64IMACJoltProof| {
+                move |#(#public_inputs,)* output, panic, proof: #proof_type| {
                     let preprocessing = (*preprocessing).clone();
-                    let memory_config = MemoryConfig {
-                        max_input_size: preprocessing.shared.memory_layout.max_input_size,
-                        max_output_size: preprocessing.shared.memory_layout.max_output_size,
-                        max_untrusted_advice_size: preprocessing.shared.memory_layout.max_untrusted_advice_size,
-                        max_trusted_advice_size: preprocessing.shared.memory_layout.max_trusted_advice_size,
-                        stack_size: preprocessing.shared.memory_layout.stack_size,
-                        memory_size: preprocessing.shared.memory_layout.memory_size,
-                        program_size: Some(preprocessing.shared.memory_layout.program_size),
+                    let mut io_device = JoltDevice {
+                        inputs: vec![],
+                        outputs: vec![],
+                        panic: false,
+                        memory_layout: preprocessing.shared.memory_layout.clone(),
+                        trusted_advice: vec![],
+                        untrusted_advice: vec![],
                     };
-                    let mut io_device = JoltDevice::new(&memory_config);
 
                     #(#set_program_args;)*
                     io_device.outputs.append(&mut jolt::postcard::to_stdvec(&output).unwrap());
                     io_device.panic = panic;
 
-                    JoltRV64IMAC::verify(&preprocessing, proof, io_device, #commitment_arg_in_verify, None).is_ok()
-                };
+                    let result = JoltRVArch::verify(&preprocessing, proof, io_device, None, None);
 
-                verify_closure
+                    result.is_ok()
+                }
             }
         }
     }
@@ -434,14 +414,8 @@ impl MacroBuilder {
                 };
                 let memory_layout = MemoryLayout::new(&memory_config);
 
-                // TODO(moodlezoup): Feed in size parameters via macro
                 let preprocessing: JoltProverPreprocessing<jolt::F, jolt::PCS> =
-                    JoltRV64IMAC::prover_preprocess(
-                        bytecode,
-                        memory_layout,
-                        memory_init,
-                        #max_trace_length,
-                    );
+                    JoltRVArch::prover_preprocess(bytecode, memory_layout, memory_init, #max_trace_length);
 
                 preprocessing
             }
@@ -483,14 +457,8 @@ impl MacroBuilder {
                 };
                 let memory_layout = MemoryLayout::new(&memory_config);
 
-                // TODO(moodlezoup): Feed in size parameters via macro
                 let prover_preprocessing: JoltProverPreprocessing<jolt::F, jolt::PCS> =
-                    JoltRV64IMAC::prover_preprocess(
-                        bytecode,
-                        memory_layout,
-                        memory_init,
-                        #max_trace_length,
-                    );
+                    JoltRVArch::prover_preprocess(bytecode, memory_layout, memory_init, #max_trace_length);
                 let preprocessing = JoltVerifierPreprocessing::from(&prover_preprocessing);
                 preprocessing
             }
@@ -589,6 +557,10 @@ impl MacroBuilder {
     }
 
     fn make_delegate_func(&self) -> TokenStream2 {
+        let attributes = parse_attributes(&self.attr);
+        let max_trace_length = proc_macro2::Literal::u64_unsuffixed(attributes.max_trace_length);
+        let imports = self.make_imports();
+        let proof_type = self.make_proof_type();
         let set_program_args = self.pub_func_args.iter().map(|(name, _)| {
             quote! {
                 input_bytes.append(&mut jolt::postcard::to_stdvec(&#name).unwrap())
@@ -608,16 +580,24 @@ impl MacroBuilder {
         let fn_name = self.get_func_name();
         let inputs_vec: Vec<_> = self.func.sig.inputs.iter().collect();
         let inputs = quote! { #(#inputs_vec),* };
-
+        let output_type: Type = match &self.func.sig.output {
+            ReturnType::Default => syn::parse_quote!(()),
+            ReturnType::Type(_, ty) => syn::parse_quote!((#ty)),
+        };
         let delegate_fn_name = syn::Ident::new(&format!("delegate_{fn_name}"), fn_name.span());
 
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #delegate_fn_name(
                 client: &mut jolt::Client,
-                mut program: jolt::host::Program,
-                #inputs
-            ) -> jolt::eyre::Result<Vec<u8>> {
+                program: &mut jolt::host::Program,
+                #inputs,
+                program_id: &str
+            ) -> jolt::eyre::Result<(#output_type, #proof_type, jolt::JoltDevice)> {
+                #imports
+                use jolt::rand::rngs::OsRng;
+                use jolt::eyre::Context;
+
                 let mut input_bytes = vec![];
                 #(#set_program_args;)*
                 let mut untrusted_advice_bytes = vec![];
@@ -625,12 +605,24 @@ impl MacroBuilder {
                 let mut trusted_advice_bytes = vec![];
                 #(#set_program_trusted_advice_args;)*
 
-                client.delegate(
-                    &mut program,
-                    &input_bytes,
-                    &untrusted_advice_bytes,
-                    &trusted_advice_bytes,
-                )
+                let mut rng = OsRng;
+                let (bytecode, memory_init, program_io, shares) =
+                    jolt::generate_trace_shares(program, &input_bytes, &untrusted_advice_bytes, &trusted_advice_bytes, &mut rng);
+                let preprocess_trace_len = shares[0].0.len();
+                let proof_bytes =
+                    client.delegate(
+                        bytecode,
+                        memory_init,
+                        program_id.to_owned(),
+                        preprocess_trace_len,
+                        shares,
+                    )?;
+                let proof = <#proof_type>::deserialize_from_bytes(&proof_bytes)
+                    .context("deserializing proof")?;
+                let output = jolt::postcard::from_bytes::<#output_type>(&program_io.outputs)
+                    .context("deserializing guest output")?;
+
+                Ok((output, proof, program_io))
             }
         }
     }
@@ -808,13 +800,22 @@ impl MacroBuilder {
                 JoltField,
                 host::Program,
                 JoltProverPreprocessing,
+                JoltRVArch,
                 JoltVerifierPreprocessing,
+                JoltRV32IM,
                 JoltRV64IMAC,
                 RV64IMACJoltProof,
+                Serializable,
                 MemoryConfig,
                 MemoryLayout,
                 JoltDevice,
             };
+        }
+    }
+
+    fn make_proof_type(&self) -> TokenStream2 {
+        quote! {
+            jolt::JoltProof<jolt::F, jolt::Bn254Curve, jolt::PCS, jolt::Blake2bTranscript>
         }
     }
 

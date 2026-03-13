@@ -1,10 +1,13 @@
 use std::{
+    cell::RefCell,
     collections::BTreeMap,
     io::{Read, Write},
+    rc::Rc,
 };
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, SerializationError, Valid, Validate};
 use num::FromPrimitive;
+use tracer::JoltDevice;
 
 use crate::zkvm::witness::AllCommittedPolynomials;
 use crate::{
@@ -12,14 +15,17 @@ use crate::{
     field::JoltField,
     poly::{
         commitment::commitment_scheme::CommitmentScheme,
-        opening_proof::{OpeningId, OpeningPoint, Openings, ReducedOpeningProof, SumcheckId},
+        opening_proof::{
+            OpeningId, OpeningPoint, Openings, ReducedOpeningProof, SumcheckId, VerifierOpeningAccumulator,
+        },
     },
     subprotocols::blindfold::BlindFoldProof,
     subprotocols::sumcheck::SumcheckInstanceProof,
     transcripts::Transcript,
     zkvm::{
-        dag::state_manager::{ProofData, ProofKeys, Proofs},
+        dag::state_manager::{ProofData, ProofKeys, Proofs, StateManager},
         witness::{CommittedPolynomial, VirtualPolynomial},
+        JoltVerifierPreprocessing,
     },
 };
 
@@ -132,7 +138,38 @@ impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcrip
     }
 }
 
-impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F, C, PCS, FS> {}
+impl<F: JoltField, C: JoltCurve, PCS: CommitmentScheme<Field = F>, FS: Transcript> JoltProof<F, C, PCS, FS> {
+    pub fn to_verifier_state_manager<'a>(
+        self,
+        preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
+        program_io: JoltDevice,
+    ) -> StateManager<'a, F, C, FS, PCS> {
+        #[cfg(feature = "zk")]
+        let zk_mode = self.blindfold_proof.is_some();
+        #[cfg(not(feature = "zk"))]
+        let zk_mode = false;
+
+        let mut accumulator =
+            if zk_mode { VerifierOpeningAccumulator::new_zk() } else { VerifierOpeningAccumulator::new() };
+        accumulator.prime_openings(self.opening_claims.0.clone());
+
+        StateManager {
+            transcript: Rc::new(RefCell::new(FS::new(b"Jolt"))),
+            proofs: Rc::new(RefCell::new(self.proofs)),
+            commitments: Rc::new(RefCell::new(self.commitments)),
+            untrusted_advice_commitment: self.untrusted_advice_commitment,
+            trusted_advice_commitment: None,
+            #[cfg(feature = "zk")]
+            blindfold_proof: self.blindfold_proof,
+            ram_K: self.ram_K,
+            twist_sumcheck_switch_index: self.twist_sumcheck_switch_index,
+            trace_length: self.trace_length,
+            program_io,
+            preprocessing,
+            accumulator: Rc::new(RefCell::new(accumulator)),
+        }
+    }
+}
 
 pub struct Claims<F: JoltField>(pub Openings<F>);
 

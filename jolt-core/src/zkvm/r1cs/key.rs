@@ -151,7 +151,7 @@ impl<F: JoltField> UniformSpartanKey<F> {
     }
 
     /// (Verifier) Evaluates the full expanded witness vector at 'r' using evaluations of segments.
-    #[tracing::instrument(skip_all, name = "UniformSpartanKey::evaluate_z_mle_with_segment_evals")]
+    #[tracing::instrument(skip_all, level = "trace", name = "UniformSpartanKey::evaluate_z_mle_with_segment_evals")]
     pub fn evaluate_z_mle_with_segment_evals(&self, segment_evals: &[F], r: &[F::Challenge], with_const: bool) -> F {
         assert_eq!(Self::num_vars(), segment_evals.len());
         assert_eq!(r.len(), self.num_vars_uniform_padded().log_2());

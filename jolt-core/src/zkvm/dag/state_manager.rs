@@ -54,7 +54,7 @@ pub struct StateManager<'a, F: JoltField, C: JoltCurve, ProofTranscript: Transcr
     pub trace_length: usize,
     pub program_io: JoltDevice,
     pub preprocessing: &'a JoltVerifierPreprocessing<F, PCS>,
-    accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
+    pub(crate) accumulator: Rc<RefCell<VerifierOpeningAccumulator<F>>>,
 }
 
 impl<'a, F, C, ProofTranscript, PCS> StateManager<'a, F, C, ProofTranscript, PCS>

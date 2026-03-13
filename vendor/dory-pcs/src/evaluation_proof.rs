@@ -278,7 +278,7 @@ where
 /// # Errors
 /// Returns `DoryError::InvalidProof` if verification fails, or other variants
 /// if the input parameters are incorrect (e.g., point dimension mismatch).
-#[tracing::instrument(skip_all, name = "verify_evaluation_proof")]
+#[tracing::instrument(skip_all, level = "trace", name = "verify_evaluation_proof")]
 pub fn verify_evaluation_proof<F, E, M1, M2, T>(
     commitment: E::GT,
     evaluation: F,

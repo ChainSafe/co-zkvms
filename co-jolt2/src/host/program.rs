@@ -12,48 +12,53 @@ use crate::host::memory::Rep3Memory;
 use crate::utils::compute_ram_k;
 use crate::zkvm::instruction::{Rep3Cycle, Rep3Operand};
 
-pub trait Rep3Program {
-    fn generate_trace_shares<R: RngCore + CryptoRng>(
-        &mut self,
-        inputs: &[u8],
-        untrusted_advice: &[u8],
-        trusted_advice: &[u8],
-        rng: &mut R,
-    ) -> [(Vec<Rep3Cycle>, Rep3Memory, Rep3ProgramIOInput); 3];
-}
+pub type Rep3ShareBundle = (Vec<Rep3Cycle>, Rep3Memory, Rep3ProgramIOInput);
 
-impl Rep3Program for Program {
-    #[tracing::instrument(skip_all, name = "Program::generate_trace_shares")]
-    fn generate_trace_shares<R: RngCore + CryptoRng>(
-        &mut self,
-        inputs: &[u8],
-        untrusted_advice: &[u8],
-        trusted_advice: &[u8],
-        rng: &mut R,
-    ) -> [(Vec<Rep3Cycle>, Rep3Memory, Rep3ProgramIOInput); 3] {
-        let (bytecode, memory_init, _) = self.decode();
-        let (trace, memory, program_io) = self.trace(inputs, untrusted_advice, trusted_advice);
+/// Execute `program`, generate 3-way Rep3 secret shares of the trace, and return
+/// all public metadata needed by the client to build `WorkerPayload`.
+///
+/// Returns `(bytecode, memory_init, program_io, shares)`:
+/// - `bytecode` and `memory_init`: public data sent to workers for preprocessing
+/// - `program_io`: vanilla JoltDevice (needed for verification and output decoding)
+/// - `shares`: 3 Rep3ShareBundles (one per party), traces already padded to next power of 2
+#[tracing::instrument(skip_all, name = "Program::generate_trace_shares")]
+pub fn generate_trace_shares<R: RngCore + CryptoRng>(
+    program: &mut Program,
+    inputs: &[u8],
+    untrusted_advice: &[u8],
+    trusted_advice: &[u8],
+    rng: &mut R,
+) -> (
+    Vec<tracer::instruction::Instruction>,
+    Vec<(u64, u8)>,
+    tracer::JoltDevice,
+    [Rep3ShareBundle; 3],
+) {
+    let (bytecode, memory_init, _) = program.decode();
+    let (mut trace, memory, mut program_io) = program.trace(inputs, untrusted_advice, trusted_advice);
+    program_io.outputs.truncate(program_io.outputs.iter().rposition(|&byte| byte != 0).map_or(0, |idx| idx + 1));
 
-        // Build shared preprocessing to compute ram_K, used to trim the memory
-        // shares to only the DRAM words within the K-length address space.
-        let shared = JoltSharedPreprocessing {
-            memory_layout: program_io.memory_layout.clone(),
-            bytecode: BytecodePreprocessing::preprocess(bytecode),
-            ram: RAMPreprocessing::preprocess(memory_init),
-        };
-        let ram_K = compute_ram_k(&trace, &shared);
+    let padded_len = (trace.len() + 1).next_power_of_two();
+    trace.resize(padded_len, tracer::instruction::Cycle::NoOp);
 
-        let program_io_shares = Rep3ProgramIOInput::generate_secret_shares(program_io, rng);
-        let memory_shares = Rep3Memory::generate_secret_shares(memory, &shared.memory_layout, ram_K, rng);
+    let shared_preprocessing = JoltSharedPreprocessing {
+        memory_layout: program_io.memory_layout.clone(),
+        bytecode: BytecodePreprocessing::preprocess(bytecode.clone()),
+        ram: RAMPreprocessing::preprocess(memory_init.clone()),
+    };
 
-        let trace_shares = share_trace(trace, rng);
+    // Share the trace, then compute ram_k from the (public) addresses in the shared trace.
+    let trace_shares = share_trace(trace, rng);
+    let ram_k = compute_ram_k(&trace_shares[0], &shared_preprocessing);
 
-        let [io0, io1, io2]: [Rep3ProgramIOInput; 3] = program_io_shares.try_into().expect("expected 3 shares");
-        let [mem0, mem1, mem2]: [Rep3Memory; 3] = memory_shares.try_into().expect("expected 3 shares");
-        let [t0, t1, t2]: [Vec<Rep3Cycle>; 3] = trace_shares;
+    let program_io_shares = Rep3ProgramIOInput::generate_secret_shares(program_io.clone(), rng);
+    let memory_shares = Rep3Memory::generate_secret_shares(memory, &program_io.memory_layout, ram_k, rng);
 
-        [(t0, mem0, io0), (t1, mem1, io1), (t2, mem2, io2)]
-    }
+    let [io0, io1, io2]: [Rep3ProgramIOInput; 3] = program_io_shares.try_into().expect("expected 3 shares");
+    let [mem0, mem1, mem2]: [Rep3Memory; 3] = memory_shares.try_into().expect("expected 3 shares");
+    let [t0, t1, t2]: [Vec<Rep3Cycle>; 3] = trace_shares;
+
+    (bytecode, memory_init, program_io, [(t0, mem0, io0), (t1, mem1, io1), (t2, mem2, io2)])
 }
 
 /// Share a vanilla trace into 3 Rep3 traces with binary-shared operands.

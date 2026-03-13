@@ -573,7 +573,7 @@ impl<F: JoltField> PolynomialBinding<F> for MultilinearPolynomial<F> {
 }
 
 impl<F: JoltField> PolynomialEvaluation<F> for MultilinearPolynomial<F> {
-    #[tracing::instrument(skip_all, name = "MultilinearPolynomial::evaluate")]
+    #[tracing::instrument(skip_all, level = "trace", name = "MultilinearPolynomial::evaluate")]
     fn evaluate<C>(&self, r: &[C]) -> F
     where
         C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,

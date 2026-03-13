@@ -16,6 +16,10 @@ pub struct ProofRequest {
     pub bytecode: Vec<Instruction>,
     /// Initial memory state (from `program.decode()`).
     pub memory_init: Vec<(u64, u8)>,
+    /// Program identifier for tracing/debug output.
+    pub program_id: String,
+    /// Trace bound used for preprocessing/generator setup.
+    pub preprocess_trace_len: usize,
     /// Padded trace length (next power of 2).
     pub padded_len: usize,
     /// RAM address space parameter.

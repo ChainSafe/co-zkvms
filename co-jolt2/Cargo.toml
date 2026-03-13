@@ -80,10 +80,6 @@ jolt-common.workspace = true
 name = "worker"
 path = "src/bin/worker.rs"
 
-[[example]]
-name = "rep3_jolt"
-required-features = ["test-utils"]
-
 [[bench]]
 name = "fwht"
 harness = false
@@ -95,7 +91,7 @@ required-features = ["ring-msm"]
 
 
 [features]
-default = ["std", "debug", "zk"]
+default = ["std", "debug", "zk", "fewer-phases"]
 std = [
     "ark-ff/std",
     "ark-poly/std",

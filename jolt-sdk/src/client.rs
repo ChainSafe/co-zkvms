@@ -15,34 +15,28 @@ use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::sync::Arc;
 
-use eyre::Context;
-use jolt_core::host::Program;
-use jolt_core::zkvm::bytecode::BytecodePreprocessing;
-use jolt_core::zkvm::ram::RAMPreprocessing;
-use jolt_core::zkvm::JoltSharedPreprocessing;
-use rand::rngs::OsRng;
-use rustls::pki_types::ServerName;
-use serde::{Deserialize, Serialize};
-use tracer::instruction::Cycle;
-
 use co_jolt2::host::jolt_device::Rep3ProgramIOInput;
 use co_jolt2::host::memory::Rep3Memory;
-use co_jolt2::host::program::share_trace;
-use co_jolt2::utils::compute_ram_k;
+use co_jolt2::host::program::Rep3ShareBundle;
 use co_jolt2::zkvm::instruction::Rep3Cycle;
+use eyre::Context;
+use rustls::pki_types::ServerName;
+use serde::Serialize;
 
 /// Payload sent to each worker containing their secret share + public data.
 ///
 /// NOTE: No plaintext advice or io_device — only shares and public metadata.
-#[derive(Serialize, Deserialize)]
-struct WorkerPayload {
-    trace: Vec<Rep3Cycle>,
-    memory: Rep3Memory,
-    program_io_share: Rep3ProgramIOInput,
-    bytecode: Vec<tracer::instruction::Instruction>,
-    memory_init: Vec<(u64, u8)>,
-    padded_len: usize,
-    ram_k: usize,
+/// Workers compute `padded_len` (= trace.len()) and `ram_k` locally from the
+/// shared trace (RAM addresses are public in Rep3RAMAccess).
+#[derive(Serialize)]
+struct WorkerPayloadRef<'a> {
+    trace: &'a [Rep3Cycle],
+    memory: &'a Rep3Memory,
+    program_io_share: &'a Rep3ProgramIOInput,
+    bytecode: &'a [tracer::instruction::Instruction],
+    memory_init: &'a [(u64, u8)],
+    program_id: &'a str,
+    preprocess_trace_len: usize,
 }
 
 type TlsStream = rustls::StreamOwned<rustls::ClientConnection, TcpStream>;
@@ -108,61 +102,34 @@ impl Client {
         Ok(Self { workers: [w0, w1, w2] })
     }
 
-    /// Trace the program, generate shares, send to workers, and receive the proof.
+    /// Send precomputed Rep3 shares to workers and receive the proof.
     ///
     /// Returns the serialized proof bytes (ark CanonicalSerialize compressed).
     pub fn delegate(
         &mut self,
-        program: &mut Program,
-        inputs: &[u8],
-        untrusted_advice: &[u8],
-        trusted_advice: &[u8],
+        bytecode: Vec<tracer::instruction::Instruction>,
+        memory_init: Vec<(u64, u8)>,
+        program_id: String,
+        preprocess_trace_len: usize,
+        shares: [Rep3ShareBundle; 3],
     ) -> eyre::Result<Vec<u8>> {
-        // 1. Decode + trace
-        let (bytecode, memory_init, _) = program.decode();
-        let (mut vanilla_trace, memory, io_device) = program.trace(inputs, untrusted_advice, trusted_advice);
-
-        let padded_len = (vanilla_trace.len() + 1).next_power_of_two();
-        vanilla_trace.resize(padded_len, Cycle::NoOp);
-
-        // Compute ram_K
-        let shared = JoltSharedPreprocessing {
-            memory_layout: io_device.memory_layout.clone(),
-            bytecode: BytecodePreprocessing::preprocess(bytecode.clone()),
-            ram: RAMPreprocessing::preprocess(memory_init.clone()),
-        };
-        let ram_k = compute_ram_k(&vanilla_trace, &shared);
-
-        // 2. Generate 3-way secret shares
-        let mut rng = OsRng;
-        let program_io_shares = Rep3ProgramIOInput::generate_secret_shares(io_device, &mut rng);
-        let memory_shares = Rep3Memory::generate_secret_shares(memory, &shared.memory_layout, ram_k, &mut rng);
-        let trace_shares = share_trace(vanilla_trace, &mut rng);
-
-        let [io0, io1, io2]: [Rep3ProgramIOInput; 3] = program_io_shares.try_into().expect("expected 3 shares");
-        let [mem0, mem1, mem2]: [Rep3Memory; 3] = memory_shares.try_into().expect("expected 3 shares");
-        let [t0, t1, t2]: [Vec<Rep3Cycle>; 3] = trace_shares;
-
-        let shares = [(t0, mem0, io0), (t1, mem1, io1), (t2, mem2, io2)];
-
-        // 3. Build and send payloads to workers (no plaintext advice!)
-        for (i, (trace, mem, io_share)) in shares.into_iter().enumerate() {
-            let payload = WorkerPayload {
+        for (i, ((trace, memory, program_io_share), worker)) in
+            shares.iter().zip(self.workers.iter_mut()).enumerate()
+        {
+            let payload = WorkerPayloadRef {
                 trace,
-                memory: mem,
-                program_io_share: io_share,
-                bytecode: bytecode.clone(),
-                memory_init: memory_init.clone(),
-                padded_len,
-                ram_k,
+                memory,
+                program_io_share,
+                bytecode: &bytecode,
+                memory_init: &memory_init,
+                program_id: &program_id,
+                preprocess_trace_len,
             };
             let payload_bytes = bincode::serialize(&payload).context("serializing WorkerPayload")?;
-            self.workers[i].send(&payload_bytes).with_context(|| format!("sending payload to worker {i}"))?;
+            worker.send(&payload_bytes).with_context(|| format!("sending payload to worker {i}"))?;
         }
 
-        // 4. Wait for proof from worker 0
         let proof_bytes = self.workers[0].recv().context("receiving proof from worker 0")?;
-
         Ok(proof_bytes)
     }
 }

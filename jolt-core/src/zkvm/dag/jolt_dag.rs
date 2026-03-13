@@ -30,7 +30,7 @@ struct StageBlindfoldVerifyData<F: JoltField> {
 }
 
 impl JoltDAG {
-    #[tracing::instrument(skip_all, name = "JoltDAG::verify")]
+    #[tracing::instrument(skip_all, level = "trace", name = "JoltDAG::verify")]
     pub fn verify<
         'a,
         F: JoltField,

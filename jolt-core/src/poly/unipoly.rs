@@ -147,7 +147,7 @@ impl<F: JoltField> UniPoly<F> {
         (0..self.coeffs.len()).map(|i| self.coeffs[i]).sum()
     }
 
-    #[tracing::instrument(skip_all, name = "UniPoly::evaluate")]
+    #[tracing::instrument(skip_all, level = "trace", name = "UniPoly::evaluate")]
     pub fn evaluate<C>(&self, r: &C) -> F
     where
         C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,
@@ -156,7 +156,7 @@ impl<F: JoltField> UniPoly<F> {
         Self::eval_with_coeffs(&self.coeffs, r)
     }
 
-    #[tracing::instrument(skip_all, name = "UniPoly::eval_with_coeffs")]
+    #[tracing::instrument(skip_all, level = "trace", name = "UniPoly::eval_with_coeffs")]
     pub fn eval_with_coeffs<C>(coeffs: &[F], r: &C) -> F
     where
         C: Copy + Send + Sync + Into<F> + ChallengeFieldOps<F>,

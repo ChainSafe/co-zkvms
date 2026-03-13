@@ -41,7 +41,7 @@ impl<F: JoltField> EqPolynomial<F> {
         }
     }
 
-    #[tracing::instrument(skip_all, name = "EqPolynomial::evals")]
+    #[tracing::instrument(skip_all, level = "trace", name = "EqPolynomial::evals")]
     /// Computes the table of coefficients: `{eq(r, x) for all x in {0, 1}^n}`
     /// If `scaling_factor` is provided, computes `scaling_factor * eq(r, x)` instead.
     pub fn evals<C>(r: &[C]) -> Vec<F>
@@ -66,7 +66,7 @@ impl<F: JoltField> EqPolynomial<F> {
         }
     }
 
-    #[tracing::instrument(skip_all, name = "EqPolynomial::evals_cached")]
+    #[tracing::instrument(skip_all, level = "trace", name = "EqPolynomial::evals_cached")]
     /// Computes the table of coefficients like `evals`, but also caches the intermediate results
     ///
     /// In other words, computes `{eq(r[i..], x) for all x in {0, 1}^{n - i}}` and for all `i in

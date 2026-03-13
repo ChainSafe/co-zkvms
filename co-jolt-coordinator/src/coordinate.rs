@@ -26,13 +26,17 @@ type FS = Blake2bTranscript;
 /// 3. Compute preprocessing
 /// 4. Drive MPC proof
 /// 5. Send serialized proof to worker 0
-pub fn coordinate_once<N: Rep3NetworkCoordinator>(network: &mut N) -> eyre::Result<()> {
+pub fn coordinate_once<N: Rep3NetworkCoordinator>(
+    network: &mut N,
+    on_request: impl FnOnce(&ProofRequest),
+) -> eyre::Result<()> {
     info!("waiting for workers...");
     network.sync_with_parties()?;
 
     // Receive bincode-serialized ProofRequest from each worker (all identical)
     let requests: Vec<Vec<u8>> = network.receive_responses()?;
     let request: ProofRequest = bincode::deserialize(&requests[0]).context("deserializing ProofRequest")?;
+    on_request(&request);
 
     info!(
         padded_len = request.padded_len,
@@ -59,7 +63,7 @@ pub fn coordinate_once<N: Rep3NetworkCoordinator>(network: &mut N) -> eyre::Resu
         request.bytecode,
         request.memory_layout,
         request.memory_init,
-        request.padded_len,
+        request.preprocess_trace_len,
     );
     let verifier_preprocessing = JoltVerifierPreprocessing::from(&preprocessing);
 
@@ -77,8 +81,6 @@ pub fn coordinate_once<N: Rep3NetworkCoordinator>(network: &mut N) -> eyre::Resu
         request.ram_k,
         request.padded_len,
     )?;
-
-    info!("proof complete, sending to worker 0");
 
     // Send proof to worker 0 only (who relays to user).
     let mut proof_bytes = Vec::new();

@@ -1,6 +1,7 @@
 use color_eyre::{eyre::Context, Result};
 use mpc_net::config::{Address, CoordinatorProtocol, NetworkConfig};
 use rcgen::CertifiedKey;
+use serde::Serialize;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -33,13 +34,26 @@ struct CliArgs {
     #[clap(long)]
     user_listen_base_port: Option<u16>,
 
+    /// Base port for inter-party QUIC/TLS ring (port = base + party_id).
+    #[clap(long, default_value = "10000")]
+    inter_party_base_port: u16,
+
+    /// Coordinator bind port.
+    #[clap(long, default_value = "20000")]
+    coordinator_port: u16,
+
     /// Coordinator protocol: quic or tls (default: quic).
     #[clap(long, default_value = "quic")]
     coordinator_protocol: String,
 
-    /// Override coordinator address in worker configs (default: localhost:20000).
+    /// Override coordinator address in worker configs (default: localhost:<coordinator-port>).
     #[clap(long)]
     coordinator_addr: Option<String>,
+}
+
+#[derive(Serialize)]
+struct DelegatorConfig {
+    workers: Vec<String>,
 }
 
 fn main() -> Result<()> {
@@ -54,7 +68,12 @@ fn main() -> Result<()> {
     };
 
     let data_dir = args.cert_dir.to_str().expect("cert_dir must be valid UTF-8");
-    let (mut workers, mut coordinator) = NetworkConfig::generate_worker_configs_with_dir(args.num_workers, data_dir);
+    let (mut workers, mut coordinator) = NetworkConfig::generate_worker_configs_full(
+        args.num_workers,
+        data_dir,
+        args.inter_party_base_port,
+        args.coordinator_port,
+    );
 
     // Apply user_listen_addr to worker configs
     if let Some(base_port) = args.user_listen_base_port {
@@ -62,6 +81,15 @@ fn main() -> Result<()> {
             let party_id = usize::from(id.party_id()) as u16;
             config.user_listen_addr = Some(SocketAddr::new(IpAddr::from_str("0.0.0.0").unwrap(), base_port + party_id));
         }
+
+        let delegator = DelegatorConfig {
+            workers: workers
+                .iter()
+                .filter_map(|(_, config)| config.user_listen_addr.map(|addr| format!("127.0.0.1:{}", addr.port())))
+                .collect(),
+        };
+        let toml = toml::to_string_pretty(&delegator).context("serializing delegator config")?;
+        std::fs::write(args.out_dir.join("config_delegator.toml"), toml).context("writing delegator config")?;
     }
 
     // Apply coordinator protocol
