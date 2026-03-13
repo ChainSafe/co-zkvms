@@ -2344,6 +2344,15 @@ where
     N: Rep3NetworkWorker + Rep3RawFieldTransport,
 {
     let mut pool = preprocess_pool_base(dir, counts, num_dabits, io)?;
+    // Shared types first — must match non-ring-msm ordering so seeds are identical
+    // regardless of feature set (cross-feature cache compatibility).
+    if num_ring_edabits_u64 > 0 {
+        pool.set_ring_edabits_u64(super::edabits::random_edabits_ring_lazy::<u64, _>(num_ring_edabits_u64, io)?);
+    }
+    if num_ring_edabits_u128 > 0 {
+        pool.set_ring_edabits_u128(super::edabits::random_edabits_ring_lazy::<u128, _>(num_ring_edabits_u128, io)?);
+    }
+    // ring-msm-only types after shared types.
     if num_wrap_masks > 0 {
         pool.set_wrap_masks(super::wrap_mask::generate_wrap_masks_lazy(num_wrap_masks, io.main())?);
     }
@@ -2372,12 +2381,6 @@ where
             pool.ring_edabits_u66 =
                 super::edabits::random_edabits_ring_lazy::<U66, _>(num_ring_edabits_iring, io)?;
         }
-    }
-    if num_ring_edabits_u64 > 0 {
-        pool.set_ring_edabits_u64(super::edabits::random_edabits_ring_lazy::<u64, _>(num_ring_edabits_u64, io)?);
-    }
-    if num_ring_edabits_u128 > 0 {
-        pool.set_ring_edabits_u128(super::edabits::random_edabits_ring_lazy::<u128, _>(num_ring_edabits_u128, io)?);
     }
     if num_wrap_masks_iring > 0 {
         pool.set_wrap_masks_iring(super::wrap_mask::generate_wrap_masks_lazy(num_wrap_masks_iring, io.main())?);
@@ -2435,8 +2438,16 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTra
     io: &mut IoContextPool<N>,
 ) -> eyre::Result<()> {
     extend_pool_batched_base(pool, deficit_counts, deficit_dabits, io)?;
-    // All set_* calls below REPLACE the source, so generate deficit + remaining = budget.
-    // All set_* calls below REPLACE the source, so generate deficit + remaining = budget.
+    // Shared types first — must match non-ring-msm ordering (cross-feature cache compatibility).
+    if deficit_ring_edabits_u64 > 0 {
+        let total = deficit_ring_edabits_u64 + pool.remaining_ring_edabits_u64();
+        pool.set_ring_edabits_u64(super::edabits::random_edabits_ring_lazy::<u64, _>(total, io)?);
+    }
+    if deficit_ring_edabits_u128 > 0 {
+        let total = deficit_ring_edabits_u128 + pool.remaining_ring_edabits_u128();
+        pool.set_ring_edabits_u128(super::edabits::random_edabits_ring_lazy::<u128, _>(total, io)?);
+    }
+    // ring-msm-only types after shared types.
     if deficit_wrap_masks > 0 {
         let total = deficit_wrap_masks + pool.remaining_wrap_masks();
         pool.set_wrap_masks(super::wrap_mask::generate_wrap_masks_lazy(total, io.main())?);
@@ -2469,14 +2480,6 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTra
             pool.ring_edabits_u66 =
                 super::edabits::random_edabits_ring_lazy::<U66, _>(total, io)?;
         }
-    }
-    if deficit_ring_edabits_u64 > 0 {
-        let total = deficit_ring_edabits_u64 + pool.remaining_ring_edabits_u64();
-        pool.set_ring_edabits_u64(super::edabits::random_edabits_ring_lazy::<u64, _>(total, io)?);
-    }
-    if deficit_ring_edabits_u128 > 0 {
-        let total = deficit_ring_edabits_u128 + pool.remaining_ring_edabits_u128();
-        pool.set_ring_edabits_u128(super::edabits::random_edabits_ring_lazy::<u128, _>(total, io)?);
     }
     if deficit_wrap_masks_iring > 0 {
         let total = deficit_wrap_masks_iring + pool.remaining_wrap_masks_iring();

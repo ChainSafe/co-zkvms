@@ -242,6 +242,7 @@ impl<T: IntRing2k> LazyWrapMasks<T> {
 ///
 /// Binary shares are generated from a forked RNG (seed-regenerable).
 /// Arithmetic shares are stored in a BackingStore (all parties).
+#[tracing::instrument(skip_all, name = "wrap_masks_preprocess", fields(n))]
 pub fn generate_wrap_masks_lazy<T: IntRing2k, N: Rep3Network>(
     n: usize,
     io: &mut IoContext<N>,

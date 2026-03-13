@@ -861,6 +861,7 @@ impl<T: IntRing2k> LazyEdaBitsRing<T> {
 /// Mirrors `random_edabits_lazy()` but in ring domain. P0/P1 store only seeds;
 /// P2 stores received alpha₂.
 /// Communication: P0 → P2: `num * K` ring elements (1 round).
+#[tracing::instrument(skip_all, name = "ring_edabits_preprocess", fields(n = num))]
 pub fn random_edabits_ring_lazy<T: IntRing2k, N: Rep3NetworkWorker>(
     num: usize,
     io: &mut IoContextPool<N>,

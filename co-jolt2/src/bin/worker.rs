@@ -323,23 +323,20 @@ fn prove_loop(
         // Ring MSM preprocessing (daPoints only — wrap masks and ring edaBits are in the pool)
         #[cfg(feature = "ring-msm")]
         {
+            let (q0_xlen, q1_xlen, q0_64, q1_64) =
+                co_jolt2::poly::commitment::dory::precompute_dapoint_q_columns(&preprocessing.generators, dory_num_columns);
+
             if budget.dapoints > 0 {
-                let qs = co_jolt2::poly::commitment::dory::precompute_dapoint_qs(
-                    &preprocessing.generators,
-                    budget.dapoints / 2,
-                    dory_num_columns,
-                );
-                let lazy_dp = mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints(&qs, io_ctx)?;
+                let lazy_dp = mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints_from_columns(
+                    &q0_xlen, &q1_xlen, budget.dapoints / 2, dory_num_columns, io_ctx,
+                )?;
                 preproc.set_dapoints(lazy_dp);
             }
             if budget.dapoints_iring > 0 {
-                let qs_iring = co_jolt2::poly::commitment::dory::precompute_dapoint_qs_iring(
-                    &preprocessing.generators,
-                    budget.dapoints_iring / 2,
-                    dory_num_columns,
-                );
                 let lazy_dp_iring =
-                    mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints(&qs_iring, io_ctx)?;
+                    mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints_from_columns(
+                        &q0_64, &q1_64, budget.dapoints_iring / 2, dory_num_columns, io_ctx,
+                    )?;
                 preproc.set_dapoints_iring(lazy_dp_iring);
             }
         }

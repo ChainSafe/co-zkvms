@@ -186,24 +186,23 @@ fn build_dag_fixture(trace_file: &str) -> DagFixture {
                 #[cfg(feature = "ring-msm")]
                 {
                     let dory_num_columns = jolt_core::poly::commitment::dory::DoryGlobals::get_num_columns();
-                    if budget.dapoints > 0 {
-                        let qs = co_jolt2::poly::commitment::dory::precompute_dapoint_qs(
+                    let (q0_xlen, q1_xlen, q0_64, q1_64) =
+                        co_jolt2::poly::commitment::dory::precompute_dapoint_q_columns(
                             &preprocessing.generators,
-                            budget.dapoints / 2,
                             dory_num_columns,
                         );
+                    if budget.dapoints > 0 {
                         let lazy_dp =
-                            mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints(&qs, &mut io_ctx)?;
+                            mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints_from_columns(
+                                &q0_xlen, &q1_xlen, budget.dapoints / 2, dory_num_columns, &mut io_ctx,
+                            )?;
                         pool.set_dapoints(lazy_dp);
                     }
                     if budget.dapoints_iring > 0 {
-                        let qs_iring = co_jolt2::poly::commitment::dory::precompute_dapoint_qs_iring(
-                            &preprocessing.generators,
-                            budget.dapoints_iring / 2,
-                            dory_num_columns,
-                        );
                         let lazy_dp_iring =
-                            mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints(&qs_iring, &mut io_ctx)?;
+                            mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints_from_columns(
+                                &q0_64, &q1_64, budget.dapoints_iring / 2, dory_num_columns, &mut io_ctx,
+                            )?;
                         pool.set_dapoints_iring(lazy_dp_iring);
                     }
                 }
