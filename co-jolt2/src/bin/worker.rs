@@ -246,8 +246,11 @@ fn prove_loop(
                         || deficit_re64 > 0
                         || deficit_re128 > 0;
                     #[cfg(feature = "ring-msm")]
-                    let need_extend =
-                        need_extend || deficit_wm > 0 || deficit_re_dory > 0 || deficit_wm_iring > 0 || deficit_re_iring > 0;
+                    let need_extend = need_extend
+                        || deficit_wm > 0
+                        || deficit_re_dory > 0
+                        || deficit_wm_iring > 0
+                        || deficit_re_iring > 0;
 
                     if need_extend {
                         info!(
@@ -338,11 +341,14 @@ fn prove_loop(
             use mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints_from_columns;
             use mpc_core::protocols::rep3_ring::preprocessing::wrap_mask::generate_wrap_masks_lazy;
 
-            let (q0_xlen, q1_xlen, q0_64, q1_64) =
-                co_jolt2::poly::commitment::dory::precompute_dapoint_q_columns(&preprocessing.generators, dory_num_columns);
+            let (q0_xlen, q1_xlen, q0_64, q1_64) = co_jolt2::poly::commitment::dory::precompute_dapoint_q_columns(
+                &preprocessing.generators,
+                dory_num_columns,
+            );
 
             let need_wm = budget.wrap_masks > 0 && preproc.remaining_wrap_masks() < budget.wrap_masks;
-            let need_wm_iring = budget.wrap_masks_iring > 0 && preproc.remaining_wrap_masks_iring() < budget.wrap_masks_iring;
+            let need_wm_iring =
+                budget.wrap_masks_iring > 0 && preproc.remaining_wrap_masks_iring() < budget.wrap_masks_iring;
             let need_dp = budget.dapoints > 0 && preproc.remaining_dapoints() < budget.dapoints;
             let need_dp_iring = budget.dapoints_iring > 0 && preproc.remaining_dapoints_iring() < budget.dapoints_iring;
 
@@ -354,7 +360,14 @@ fn prove_loop(
 
                 // Build task closures and run in parallel via rayon.
                 // Each closure returns a tagged result so we can apply them after.
-                let mut task_fns: Vec<Box<dyn FnOnce(&mut mpc_core::protocols::rep3::network::IoContext<_>) -> eyre::Result<Box<dyn std::any::Any + Send>> + Send>> = Vec::new();
+                let mut task_fns: Vec<
+                    Box<
+                        dyn FnOnce(
+                                &mut mpc_core::protocols::rep3::network::IoContext<_>,
+                            ) -> eyre::Result<Box<dyn std::any::Any + Send>>
+                            + Send,
+                    >,
+                > = Vec::new();
                 let mut tags: Vec<u8> = Vec::new();
 
                 if need_wm {
@@ -362,16 +375,26 @@ fn prove_loop(
                     tags.push(0);
                     task_fns.push(Box::new(move |ctx| {
                         #[cfg(feature = "rv64")]
-                        { Ok(Box::new(generate_wrap_masks_lazy::<mpc_core::protocols::rep3_ring::ring::u66::U66, _>(n, ctx)?) as Box<dyn std::any::Any + Send>) }
+                        {
+                            Ok(Box::new(generate_wrap_masks_lazy::<mpc_core::protocols::rep3_ring::ring::u66::U66, _>(
+                                n, ctx,
+                            )?) as Box<dyn std::any::Any + Send>)
+                        }
                         #[cfg(not(feature = "rv64"))]
-                        { Ok(Box::new(generate_wrap_masks_lazy::<mpc_core::protocols::rep3_ring::ring::u34::U34, _>(n, ctx)?) as Box<dyn std::any::Any + Send>) }
+                        {
+                            Ok(Box::new(generate_wrap_masks_lazy::<mpc_core::protocols::rep3_ring::ring::u34::U34, _>(
+                                n, ctx,
+                            )?) as Box<dyn std::any::Any + Send>)
+                        }
                     }));
                 }
                 if need_wm_iring {
                     let n = budget.wrap_masks_iring;
                     tags.push(1);
                     task_fns.push(Box::new(move |ctx| {
-                        Ok(Box::new(generate_wrap_masks_lazy::<mpc_core::protocols::rep3_ring::ring::u66::U66, _>(n, ctx)?) as Box<dyn std::any::Any + Send>)
+                        Ok(Box::new(generate_wrap_masks_lazy::<mpc_core::protocols::rep3_ring::ring::u66::U66, _>(
+                            n, ctx,
+                        )?) as Box<dyn std::any::Any + Send>)
                     }));
                 }
                 if need_dp {
@@ -381,7 +404,8 @@ fn prove_loop(
                     let ncols = dory_num_columns;
                     tags.push(2);
                     task_fns.push(Box::new(move |ctx| {
-                        Ok(Box::new(random_dapoints_from_columns(q0, q1, nc, ncols, ctx)?) as Box<dyn std::any::Any + Send>)
+                        Ok(Box::new(random_dapoints_from_columns(q0, q1, nc, ncols, ctx)?)
+                            as Box<dyn std::any::Any + Send>)
                     }));
                 }
                 if need_dp_iring {
@@ -391,7 +415,8 @@ fn prove_loop(
                     let ncols = dory_num_columns;
                     tags.push(3);
                     task_fns.push(Box::new(move |ctx| {
-                        Ok(Box::new(random_dapoints_from_columns(q0, q1, nc, ncols, ctx)?) as Box<dyn std::any::Any + Send>)
+                        Ok(Box::new(random_dapoints_from_columns(q0, q1, nc, ncols, ctx)?)
+                            as Box<dyn std::any::Any + Send>)
                     }));
                 }
 
@@ -427,12 +452,20 @@ fn prove_loop(
                 }
                 if need_dp {
                     preproc.set_dapoints(random_dapoints_from_columns(
-                        &q0_xlen, &q1_xlen, budget.dapoints / 2, dory_num_columns, io_ctx.main(),
+                        &q0_xlen,
+                        &q1_xlen,
+                        budget.dapoints / 2,
+                        dory_num_columns,
+                        io_ctx.main(),
                     )?);
                 }
                 if need_dp_iring {
                     preproc.set_dapoints_iring(random_dapoints_from_columns(
-                        &q0_64, &q1_64, budget.dapoints_iring / 2, dory_num_columns, io_ctx.main(),
+                        &q0_64,
+                        &q1_64,
+                        budget.dapoints_iring / 2,
+                        dory_num_columns,
+                        io_ctx.main(),
                     )?);
                 }
                 preproc.save(&pool_dir).ok();

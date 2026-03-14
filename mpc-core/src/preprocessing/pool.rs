@@ -3,20 +3,20 @@ use std::path::Path;
 use super::backing_store;
 use super::dabits::{DaBitBatch, LazyDaBits};
 use super::edabits::{
-    EdaBitsBatch, EdaBitsBatchScratch, EdaBitsReservation, EdabitsReserveRange, EdaBitsRingBatch, EdaBitsStorageMode,
+    EdaBitsBatch, EdaBitsBatchScratch, EdaBitsReservation, EdaBitsRingBatch, EdaBitsStorageMode, EdabitsReserveRange,
     LazyEdaBits, LazyEdaBitsRing,
 };
 use crate::field::PrimeField;
+use crate::protocols::rep3::PartyID;
 use crate::protocols::rep3::network::Rep3RawFieldTransport;
 use crate::protocols::rep3::network::{IoContext, IoContextPool, Rep3Network, Rep3NetworkWorker};
-use crate::protocols::rep3::PartyID;
 use crate::protocols::rep3_ring::ring::int_ring::IntRing2k;
 use crate::protocols::rep3_ring::ring::ring_impl::RingElement;
 use crate::protocols::rep3_ring::ring::u34::U34;
 use crate::protocols::rep3_ring::ring::u66::U66;
+use rand::RngCore;
 use rand::distributions::Standard;
 use rand::prelude::Distribution;
-use rand::RngCore;
 use rayon::prelude::*;
 use tracing::info_span;
 
@@ -458,29 +458,26 @@ impl<'a, F: PrimeField, C: ark_ec::CurveGroup> ForkablePreprocessingSession<'a, 
         let tid = TypeId::of::<T>();
         if tid == TypeId::of::<u8>() {
             let reserved = self.pool.edabits_u8.reserve_range(n)?;
-            self.reserve_ranges
-                .push(PreprocessingReserveRanges::EdaBitsU8(reserved.reserve_range.clone()));
+            self.reserve_ranges.push(PreprocessingReserveRanges::EdaBitsU8(reserved.reserve_range.clone()));
             Ok(unsafe { std::mem::transmute::<EdaBitsReservation<'_, u8, F>, EdaBitsReservation<'_, T, F>>(reserved) })
         } else if tid == TypeId::of::<u16>() {
             let reserved = self.pool.edabits_u16.reserve_range(n)?;
-            self.reserve_ranges
-                .push(PreprocessingReserveRanges::EdaBitsU16(reserved.reserve_range.clone()));
+            self.reserve_ranges.push(PreprocessingReserveRanges::EdaBitsU16(reserved.reserve_range.clone()));
             Ok(unsafe { std::mem::transmute::<EdaBitsReservation<'_, u16, F>, EdaBitsReservation<'_, T, F>>(reserved) })
         } else if tid == TypeId::of::<u32>() {
             let reserved = self.pool.edabits_u32.reserve_range(n)?;
-            self.reserve_ranges
-                .push(PreprocessingReserveRanges::EdaBitsU32(reserved.reserve_range.clone()));
+            self.reserve_ranges.push(PreprocessingReserveRanges::EdaBitsU32(reserved.reserve_range.clone()));
             Ok(unsafe { std::mem::transmute::<EdaBitsReservation<'_, u32, F>, EdaBitsReservation<'_, T, F>>(reserved) })
         } else if tid == TypeId::of::<u64>() {
             let reserved = self.pool.edabits_u64.reserve_range(n)?;
-            self.reserve_ranges
-                .push(PreprocessingReserveRanges::EdaBitsU64(reserved.reserve_range.clone()));
+            self.reserve_ranges.push(PreprocessingReserveRanges::EdaBitsU64(reserved.reserve_range.clone()));
             Ok(unsafe { std::mem::transmute::<EdaBitsReservation<'_, u64, F>, EdaBitsReservation<'_, T, F>>(reserved) })
         } else if tid == TypeId::of::<u128>() {
             let reserved = self.pool.edabits_u128.reserve_range(n)?;
-            self.reserve_ranges
-                .push(PreprocessingReserveRanges::EdaBitsU128(reserved.reserve_range.clone()));
-            Ok(unsafe { std::mem::transmute::<EdaBitsReservation<'_, u128, F>, EdaBitsReservation<'_, T, F>>(reserved) })
+            self.reserve_ranges.push(PreprocessingReserveRanges::EdaBitsU128(reserved.reserve_range.clone()));
+            Ok(unsafe {
+                std::mem::transmute::<EdaBitsReservation<'_, u128, F>, EdaBitsReservation<'_, T, F>>(reserved)
+            })
         } else {
             eyre::bail!("ForkablePreprocessingSession::reserve_edabits: unsupported ring type u{}", T::K);
         }

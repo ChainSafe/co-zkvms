@@ -4,14 +4,14 @@
 //! diff = m·2^(K-2) in Z_{2^K}, replacing the expensive A2B Kogge-Stone adder
 //! with a single batched open (1 round).
 
-use crate::protocols::rep3::network::{IoContext, Rep3Network};
+use crate::IoResult;
 use crate::protocols::rep3::PartyID;
+use crate::protocols::rep3::network::{IoContext, Rep3Network};
+use crate::protocols::rep3_ring::Rep3RingShare;
 use crate::protocols::rep3_ring::ring::bit::Bit;
 use crate::protocols::rep3_ring::ring::int_ring::IntRing2k;
 use crate::protocols::rep3_ring::ring::ring_impl::RingElement;
-use crate::protocols::rep3_ring::Rep3RingShare;
 use crate::protocols::rep3_ring::{arithmetic, binary, conversion};
-use crate::IoResult;
 use rand::distributions::Standard;
 use rand::prelude::Distribution;
 use rand::{Rng, SeedableRng};
@@ -357,8 +357,8 @@ fn two_bit_add_public_const_into_binary_share(
 mod tests {
     use super::*;
     use crate::protocols::rep3::network::IoContextPool;
-    use crate::protocols::rep3::test_utils::run_rep3_local_test_with_coordinator;
     use crate::protocols::rep3::test_utils::LocalRep3TestWorkerNet;
+    use crate::protocols::rep3::test_utils::run_rep3_local_test_with_coordinator;
     use crate::protocols::rep3_ring::ring::u34::U34;
     use crate::protocols::rep3_ring::ring::u66::U66;
     use rand::distributions::Standard;

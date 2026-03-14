@@ -275,8 +275,8 @@ impl Rep3JoltDagWorker {
                             inc_poly.coeffs.iter().map(|op| op.as_arithmetic_wide()).collect();
 
                         // A2B → r2f_b2a → sub bias, chunked to limit RSS.
-                        let inc_b2a_chunk: usize = std::env::var("INC_B2A_CHUNK")
-                            .ok().and_then(|s| s.parse().ok()).unwrap_or(8 * 1024);
+                        let inc_b2a_chunk: usize =
+                            std::env::var("INC_B2A_CHUNK").ok().and_then(|s| s.parse().ok()).unwrap_or(8 * 1024);
                         let total = arith_shares.len();
                         let mut inc: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(total);
                         for off in (0..total).step_by(inc_b2a_chunk) {
@@ -286,7 +286,9 @@ impl Rep3JoltDagWorker {
                             let batch_eda = preproc.take_edabits::<ArithmeticWideInt>(chunk.len())?;
                             let biased_field: Vec<Rep3PrimeFieldShare<F>> =
                                 casts::r2f_b2a_preproc_many::<ArithmeticWideInt, F, _>(
-                                    &biased_bin, &batch_eda, io_ctx.main(),
+                                    &biased_bin,
+                                    &batch_eda,
+                                    io_ctx.main(),
                                 )?;
                             inc.extend(biased_field.into_iter().map(|s| {
                                 mpc_core::protocols::rep3::arithmetic::sub_shared_by_public(s, bias_f, party_id)

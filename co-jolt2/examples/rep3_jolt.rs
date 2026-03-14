@@ -674,15 +674,22 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
             co_jolt2::poly::commitment::dory::precompute_dapoint_q_columns(&preprocessing.generators, dory_num_columns);
         if budget.dapoints > 0 {
             let lazy_dp = mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints_from_columns(
-                &q0_xlen, &q1_xlen, budget.dapoints / 2, dory_num_columns, io_ctx.main(),
+                &q0_xlen,
+                &q1_xlen,
+                budget.dapoints / 2,
+                dory_num_columns,
+                io_ctx.main(),
             )?;
             preproc.set_dapoints(lazy_dp);
         }
         if budget.dapoints_iring > 0 {
-            let lazy_dp_iring =
-                mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints_from_columns(
-                    &q0_64, &q1_64, budget.dapoints_iring / 2, dory_num_columns, io_ctx.main(),
-                )?;
+            let lazy_dp_iring = mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints_from_columns(
+                &q0_64,
+                &q1_64,
+                budget.dapoints_iring / 2,
+                dory_num_columns,
+                io_ctx.main(),
+            )?;
             preproc.set_dapoints_iring(lazy_dp_iring);
         }
     }

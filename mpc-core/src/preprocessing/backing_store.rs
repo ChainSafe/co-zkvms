@@ -896,10 +896,7 @@ impl<F> BackingStoreReadView<'_, F> {
             ));
         }
         if end > len {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("range end({end}) exceeds len({len})"),
-            ));
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("range end({end}) exceeds len({len})")));
         }
         Ok(())
     }

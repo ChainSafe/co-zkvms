@@ -33,13 +33,13 @@ use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use rayon::prelude::*;
 use std::borrow::Borrow;
 
+use super::super::Rep3CommitmentScheme;
+use super::commitment_scheme::rep3_local_coeffs_a;
 use super::commitment_scheme::{
-    commit_local_rep3, combine_hints_rep3_impl, compute_nu, prove_rep3_impl, rows_to_commitment,
-    setup_g1_projective, DoryCarryRing,
+    combine_hints_rep3_impl, commit_local_rep3, compute_nu, prove_rep3_impl, rows_to_commitment, setup_g1_projective,
+    DoryCarryRing,
 };
 pub use jolt_core::poly::commitment::dory::*;
-use super::commitment_scheme::rep3_local_coeffs_a;
-use super::super::Rep3CommitmentScheme;
 
 // =============================================================================
 // Rep3CommitmentScheme impl for ring-MSM feature
@@ -61,7 +61,9 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
             ) => commit_local_rep3::<ProofTranscript>(poly, setup, commit_to_public),
 
             // Ring-scalar shared polys: require networked MPC commit.
-            Rep3MultilinearPolynomial::Shared(shared_poly @ (Rep3SharedPoly::RingScalars(_) | Rep3SharedPoly::IRingScalars(_))) => {
+            Rep3MultilinearPolynomial::Shared(
+                shared_poly @ (Rep3SharedPoly::RingScalars(_) | Rep3SharedPoly::IRingScalars(_)),
+            ) => {
                 let sigma = DoryGlobals::get_num_columns().log_2();
                 let (num_vars, rows) = match shared_poly {
                     Rep3SharedPoly::RingScalars(poly_ring) => {
@@ -146,68 +148,65 @@ impl<ProofTranscript: Transcript> Rep3CommitmentScheme<Fr, ProofTranscript> for 
 
         // Run local (CPU-only) and ring (forked IO) commits concurrently.
         // Sequential fallback when insufficient forks (can't share io_ctx.main() across join).
-        let (local_results, ring_results): (Vec<CommitResult>, Vec<CommitResult>) =
-            if num_ring > 0 && avail_forks < num_ring {
-                // Insufficient forks — sequential (same perf as before).
-                let local_results: Vec<CommitResult> = local_idxs
-                    .par_iter()
-                    .map(|&i| commit_local_rep3::<ProofTranscript>(polys[i].borrow(), setup, per_poly_commit_public[i]))
-                    .collect();
-                let ring_results: Vec<CommitResult> = ring_preprocs
-                    .into_iter()
-                    .map(|(idx, rp)| {
-                        let (poly_compact, num_vars) = match polys[idx].borrow() {
-                            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RingScalars(p)) => (p, p.get_num_vars()),
-                            Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::IRingScalars(p)) => (p, p.get_num_vars()),
-                            _ => unreachable!(),
-                        };
-                        let nu = compute_nu(num_vars, sigma);
-                        let rows = commit_ring_poly_inner(poly_compact, setup, nu, io_ctx.main(), rp)?;
-                        rows_to_commitment(rows, num_vars, sigma, setup)
-                    })
-                    .collect();
-                (local_results, ring_results)
-            } else {
-                // Parallel: local commits on rayon, ring commits on forked IoContexts.
-                let forks = io_ctx.forks(num_ring);
-                rayon::join(
-                    || {
-                        local_idxs
-                            .par_iter()
-                            .map(|&i| {
-                                commit_local_rep3::<ProofTranscript>(
-                                    polys[i].borrow(),
-                                    setup,
-                                    per_poly_commit_public[i],
-                                )
-                            })
-                            .collect()
-                    },
-                    || {
-                        if num_ring == 0 {
-                            return Vec::new();
-                        }
-                        ring_preprocs
-                            .into_par_iter()
-                            .zip(forks.par_iter_mut())
-                            .map(|((idx, rp), io)| {
-                                let (poly_compact, num_vars) = match polys[idx].borrow() {
-                                    Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RingScalars(p)) => {
-                                        (p, p.get_num_vars())
-                                    }
-                                    Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::IRingScalars(p)) => {
-                                        (p, p.get_num_vars())
-                                    }
-                                    _ => unreachable!(),
-                                };
-                                let nu = compute_nu(num_vars, sigma);
-                                let rows = commit_ring_poly_inner(poly_compact, setup, nu, io, rp)?;
-                                rows_to_commitment(rows, num_vars, sigma, setup)
-                            })
-                            .collect()
-                    },
-                )
-            };
+        let (local_results, ring_results): (Vec<CommitResult>, Vec<CommitResult>) = if num_ring > 0
+            && avail_forks < num_ring
+        {
+            // Insufficient forks — sequential (same perf as before).
+            let local_results: Vec<CommitResult> = local_idxs
+                .par_iter()
+                .map(|&i| commit_local_rep3::<ProofTranscript>(polys[i].borrow(), setup, per_poly_commit_public[i]))
+                .collect();
+            let ring_results: Vec<CommitResult> = ring_preprocs
+                .into_iter()
+                .map(|(idx, rp)| {
+                    let (poly_compact, num_vars) = match polys[idx].borrow() {
+                        Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RingScalars(p)) => (p, p.get_num_vars()),
+                        Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::IRingScalars(p)) => (p, p.get_num_vars()),
+                        _ => unreachable!(),
+                    };
+                    let nu = compute_nu(num_vars, sigma);
+                    let rows = commit_ring_poly_inner(poly_compact, setup, nu, io_ctx.main(), rp)?;
+                    rows_to_commitment(rows, num_vars, sigma, setup)
+                })
+                .collect();
+            (local_results, ring_results)
+        } else {
+            // Parallel: local commits on rayon, ring commits on forked IoContexts.
+            let forks = io_ctx.forks(num_ring);
+            rayon::join(
+                || {
+                    local_idxs
+                        .par_iter()
+                        .map(|&i| {
+                            commit_local_rep3::<ProofTranscript>(polys[i].borrow(), setup, per_poly_commit_public[i])
+                        })
+                        .collect()
+                },
+                || {
+                    if num_ring == 0 {
+                        return Vec::new();
+                    }
+                    ring_preprocs
+                        .into_par_iter()
+                        .zip(forks.par_iter_mut())
+                        .map(|((idx, rp), io)| {
+                            let (poly_compact, num_vars) = match polys[idx].borrow() {
+                                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RingScalars(p)) => {
+                                    (p, p.get_num_vars())
+                                }
+                                Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::IRingScalars(p)) => {
+                                    (p, p.get_num_vars())
+                                }
+                                _ => unreachable!(),
+                            };
+                            let nu = compute_nu(num_vars, sigma);
+                            let rows = commit_ring_poly_inner(poly_compact, setup, nu, io, rp)?;
+                            rows_to_commitment(rows, num_vars, sigma, setup)
+                        })
+                        .collect()
+                },
+            )
+        };
 
         // Merge results back into original order.
         let mut out: Vec<Option<(MaybeShared<DoryCommitment>, MaybeShared<DoryOpeningProofHint>)>> =
@@ -722,15 +721,21 @@ fn compute_row_commitment_shares_iring<N: Rep3Network>(
 
 #[cfg(test)]
 mod tests {
+    use super::super::super::Rep3CommitmentScheme;
     use super::*;
     use crate::poly::compact_polynomial::Rep3CompactPolynomial;
     use crate::poly::{Rep3MultilinearPolynomial, Rep3SharedPoly};
     use crate::utils::types::MaybeShared;
+    use ark_ec::scalar_mul::variable_base::VariableBaseMSM as ArkVariableBaseMSM;
+    use ark_ec::CurveGroup;
+    use ark_std::Zero;
     use jolt_core::ark_bn254::{Fr, G1Projective};
     use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
+    use jolt_core::poly::commitment::dory::JoltGroupWrapper;
     use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
     use jolt_core::transcripts::Blake2bTranscript;
     use jolt_core::utils::math::Math;
+    use mpc_core::protocols::rep3;
     use mpc_core::protocols::rep3::network::IoContextPool;
     use mpc_core::protocols::rep3::test_utils::{run_rep3_local_test_with_coordinator, LocalRep3TestWorkerNet};
     use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
@@ -743,12 +748,6 @@ mod tests {
     use rand::Rng;
     use rand::SeedableRng;
     use rand_chacha::ChaCha12Rng;
-    use super::super::super::Rep3CommitmentScheme;
-    use ark_ec::scalar_mul::variable_base::VariableBaseMSM as ArkVariableBaseMSM;
-    use ark_ec::CurveGroup;
-    use ark_std::Zero;
-    use mpc_core::protocols::rep3;
-    use jolt_core::poly::commitment::dory::JoltGroupWrapper;
 
     #[test]
     fn dory_u64_scalars_commit_correct() {

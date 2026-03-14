@@ -9,13 +9,13 @@ use std::path::Path;
 use super::backing_store;
 use super::edabits::{EdaBitsRingBatch, LazyEdaBitsRing};
 use super::pool::{
-    configured_transport_lanes, preproc_lanes, preproc_max_msg_mb, preproc_segment_mb,
-    extend_pool_batched_base, preprocess_pool_base, DoryRingMsmInt, PreprocessingPool,
+    DoryRingMsmInt, PreprocessingPool, configured_transport_lanes, extend_pool_batched_base, preproc_lanes,
+    preproc_max_msg_mb, preproc_segment_mb, preprocess_pool_base,
 };
 use crate::field::PrimeField;
+use crate::protocols::rep3::PartyID;
 use crate::protocols::rep3::network::Rep3RawFieldTransport;
 use crate::protocols::rep3::network::{IoContext, IoContextPool, Rep3Network, Rep3NetworkWorker};
-use crate::protocols::rep3::PartyID;
 use crate::protocols::rep3_ring::ring::int_ring::IntRing2k;
 use crate::protocols::rep3_ring::ring::ring_impl::RingElement;
 use crate::protocols::rep3_ring::ring::u34::U34;
@@ -159,54 +159,68 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
 
         if active >= 2 && io.max_forks() >= active {
             // Parallel: one task per fork.
-            let mut tasks: Vec<(u8, Box<dyn FnOnce(&mut IoContext<N>) -> eyre::Result<Box<dyn std::any::Any + Send>> + Send>)> = Vec::new();
+            let mut tasks: Vec<(
+                u8,
+                Box<dyn FnOnce(&mut IoContext<N>) -> eyre::Result<Box<dyn std::any::Any + Send>> + Send>,
+            )> = Vec::new();
 
             if need_wm {
                 let n = num_wrap_masks;
-                tasks.push((0, Box::new(move |ctx: &mut IoContext<N>| {
-                    let wm = super::wrap_mask::generate_wrap_masks_lazy::<DoryRingMsmInt, _>(n, ctx)?;
-                    Ok(Box::new(wm) as Box<dyn std::any::Any + Send>)
-                })));
+                tasks.push((
+                    0,
+                    Box::new(move |ctx: &mut IoContext<N>| {
+                        let wm = super::wrap_mask::generate_wrap_masks_lazy::<DoryRingMsmInt, _>(n, ctx)?;
+                        Ok(Box::new(wm) as Box<dyn std::any::Any + Send>)
+                    }),
+                ));
             }
             if need_wm_iring {
                 let n = num_wrap_masks_iring;
-                tasks.push((1, Box::new(move |ctx: &mut IoContext<N>| {
-                    let wm = super::wrap_mask::generate_wrap_masks_lazy::<U66, _>(n, ctx)?;
-                    Ok(Box::new(wm) as Box<dyn std::any::Any + Send>)
-                })));
+                tasks.push((
+                    1,
+                    Box::new(move |ctx: &mut IoContext<N>| {
+                        let wm = super::wrap_mask::generate_wrap_masks_lazy::<U66, _>(n, ctx)?;
+                        Ok(Box::new(wm) as Box<dyn std::any::Any + Send>)
+                    }),
+                ));
             }
             if need_dp {
                 let num_coeffs = num_dapoints / 2;
                 let nc = num_columns;
                 let q0 = q0_xlen_cols.to_vec();
                 let q1 = q1_xlen_cols.to_vec();
-                tasks.push((2, Box::new(move |ctx: &mut IoContext<N>| {
-                    let dp = super::daPoint::random_dapoints_from_columns(&q0, &q1, num_coeffs, nc, ctx)?;
-                    Ok(Box::new(dp) as Box<dyn std::any::Any + Send>)
-                })));
+                tasks.push((
+                    2,
+                    Box::new(move |ctx: &mut IoContext<N>| {
+                        let dp = super::daPoint::random_dapoints_from_columns(&q0, &q1, num_coeffs, nc, ctx)?;
+                        Ok(Box::new(dp) as Box<dyn std::any::Any + Send>)
+                    }),
+                ));
             }
             if need_dp_iring {
                 let num_coeffs = num_dapoints_iring / 2;
                 let nc = num_columns;
                 let q0 = q0_64_cols.to_vec();
                 let q1 = q1_64_cols.to_vec();
-                tasks.push((3, Box::new(move |ctx: &mut IoContext<N>| {
-                    let dp = super::daPoint::random_dapoints_from_columns(&q0, &q1, num_coeffs, nc, ctx)?;
-                    Ok(Box::new(dp) as Box<dyn std::any::Any + Send>)
-                })));
+                tasks.push((
+                    3,
+                    Box::new(move |ctx: &mut IoContext<N>| {
+                        let dp = super::daPoint::random_dapoints_from_columns(&q0, &q1, num_coeffs, nc, ctx)?;
+                        Ok(Box::new(dp) as Box<dyn std::any::Any + Send>)
+                    }),
+                ));
             }
 
             let forks = io.forks(tasks.len());
-            let results: Vec<(u8, eyre::Result<Box<dyn std::any::Any + Send>>)> = tasks
-                .into_par_iter()
-                .zip(forks.par_iter_mut())
-                .map(|((tag, f), ctx)| (tag, f(ctx)))
-                .collect();
+            let results: Vec<(u8, eyre::Result<Box<dyn std::any::Any + Send>>)> =
+                tasks.into_par_iter().zip(forks.par_iter_mut()).map(|((tag, f), ctx)| (tag, f(ctx))).collect();
 
             for (tag, result) in results {
                 let val: Box<dyn std::any::Any + Send> = result?;
                 match tag {
-                    0 => self.set_wrap_masks(*val.downcast::<super::wrap_mask::LazyWrapMasks<DoryRingMsmInt>>().unwrap()),
+                    0 => {
+                        self.set_wrap_masks(*val.downcast::<super::wrap_mask::LazyWrapMasks<DoryRingMsmInt>>().unwrap())
+                    }
                     1 => self.set_wrap_masks_iring(*val.downcast::<super::wrap_mask::LazyWrapMasks<U66>>().unwrap()),
                     2 => self.set_dapoints(*val.downcast::<super::daPoint::LazyDaPoints<C>>().unwrap()),
                     3 => self.set_dapoints_iring(*val.downcast::<super::daPoint::LazyDaPoints<C>>().unwrap()),
@@ -216,17 +230,35 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
         } else {
             // Sequential fallback.
             if need_wm {
-                self.set_wrap_masks(super::wrap_mask::generate_wrap_masks_lazy::<DoryRingMsmInt, _>(num_wrap_masks, io.main())?);
+                self.set_wrap_masks(super::wrap_mask::generate_wrap_masks_lazy::<DoryRingMsmInt, _>(
+                    num_wrap_masks,
+                    io.main(),
+                )?);
             }
             if need_wm_iring {
-                self.set_wrap_masks_iring(super::wrap_mask::generate_wrap_masks_lazy::<U66, _>(num_wrap_masks_iring, io.main())?);
+                self.set_wrap_masks_iring(super::wrap_mask::generate_wrap_masks_lazy::<U66, _>(
+                    num_wrap_masks_iring,
+                    io.main(),
+                )?);
             }
             if need_dp {
-                let dp = super::daPoint::random_dapoints_from_columns(q0_xlen_cols, q1_xlen_cols, num_dapoints / 2, num_columns, io.main())?;
+                let dp = super::daPoint::random_dapoints_from_columns(
+                    q0_xlen_cols,
+                    q1_xlen_cols,
+                    num_dapoints / 2,
+                    num_columns,
+                    io.main(),
+                )?;
                 self.set_dapoints(dp);
             }
             if need_dp_iring {
-                let dp = super::daPoint::random_dapoints_from_columns(q0_64_cols, q1_64_cols, num_dapoints_iring / 2, num_columns, io.main())?;
+                let dp = super::daPoint::random_dapoints_from_columns(
+                    q0_64_cols,
+                    q1_64_cols,
+                    num_dapoints_iring / 2,
+                    num_columns,
+                    io.main(),
+                )?;
                 self.set_dapoints_iring(dp);
             }
         }
@@ -263,14 +295,9 @@ where
     let t_bytes = std::mem::size_of::<T>();
     let k = T::K;
     let stride = (1 + k) * t_bytes;
-    let _span = tracing::trace_span!(
-        "ring_edabit_alpha2_p0_chunk",
-        ring_bits = k,
-        items = num,
-        start_item,
-        elems = num * k,
-    )
-    .entered();
+    let _span =
+        tracing::trace_span!("ring_edabit_alpha2_p0_chunk", ring_bits = k, items = num, start_item, elems = num * k,)
+            .entered();
 
     let all1 = dabits::seek_and_generate(seed1, pos1, start_item * stride, num * stride);
     let g2 = dabits::seek_and_generate(seed2, pos2, start_item * stride, num * stride);
@@ -428,11 +455,7 @@ where
     );
 
     // Dispatch: one ring type per fork when enough lanes; sequential fallback otherwise.
-    let mut dispatch = |tag: u8,
-                    count: usize,
-                    seeds: Seeds,
-                    ctx: &mut IoContext<N>|
-     -> eyre::Result<()> {
+    let mut dispatch = |tag: u8, count: usize, seeds: Seeds, ctx: &mut IoContext<N>| -> eyre::Result<()> {
         match tag {
             0 => {
                 let path = dir.join(format!("ring_edabits_{}.alpha2", u64::K));
@@ -470,20 +493,24 @@ where
                 let result = match tag {
                     0 => {
                         let path = dir.join(format!("ring_edabits_{}.alpha2", u64::K));
-                        stream_ring_edabits::<u64, _>(seeds, count, &path, party_id, ctx).map(|r| Box::new(r) as Box<dyn std::any::Any + Send>)
+                        stream_ring_edabits::<u64, _>(seeds, count, &path, party_id, ctx)
+                            .map(|r| Box::new(r) as Box<dyn std::any::Any + Send>)
                     }
                     1 => {
                         let path = dir.join(format!("ring_edabits_{}.alpha2", u128::K));
-                        stream_ring_edabits::<u128, _>(seeds, count, &path, party_id, ctx).map(|r| Box::new(r) as Box<dyn std::any::Any + Send>)
+                        stream_ring_edabits::<u128, _>(seeds, count, &path, party_id, ctx)
+                            .map(|r| Box::new(r) as Box<dyn std::any::Any + Send>)
                     }
                     2 => {
                         let path = dir.join(format!("ring_edabits_{}.alpha2", DoryRingMsmInt::K));
-                        stream_ring_edabits::<DoryRingMsmInt, _>(seeds, count, &path, party_id, ctx).map(|r| Box::new(r) as Box<dyn std::any::Any + Send>)
+                        stream_ring_edabits::<DoryRingMsmInt, _>(seeds, count, &path, party_id, ctx)
+                            .map(|r| Box::new(r) as Box<dyn std::any::Any + Send>)
                     }
                     #[cfg(not(feature = "rv64"))]
                     3 => {
                         let path = dir.join(format!("ring_edabits_{}.alpha2", U66::K));
-                        stream_ring_edabits::<U66, _>(seeds, count, &path, party_id, ctx).map(|r| Box::new(r) as Box<dyn std::any::Any + Send>)
+                        stream_ring_edabits::<U66, _>(seeds, count, &path, party_id, ctx)
+                            .map(|r| Box::new(r) as Box<dyn std::any::Any + Send>)
                     }
                     _ => unreachable!(),
                 };
@@ -586,26 +613,19 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTra
         let combined_deficit = deficit_ring_edabits_dory + deficit_ring_edabits_iring;
         if combined_deficit > 0 {
             let total = combined_deficit + pool.remaining_ring_edabits_dory();
-            pool.set_ring_edabits_dory(super::edabits::random_edabits_ring_lazy::<DoryRingMsmInt, _>(
-                total,
-                io,
-            )?);
+            pool.set_ring_edabits_dory(super::edabits::random_edabits_ring_lazy::<DoryRingMsmInt, _>(total, io)?);
         }
     }
     #[cfg(not(feature = "rv64"))]
     {
         if deficit_ring_edabits_dory > 0 {
             let total = deficit_ring_edabits_dory + pool.remaining_ring_edabits_dory();
-            pool.set_ring_edabits_dory(super::edabits::random_edabits_ring_lazy::<DoryRingMsmInt, _>(
-                total,
-                io,
-            )?);
+            pool.set_ring_edabits_dory(super::edabits::random_edabits_ring_lazy::<DoryRingMsmInt, _>(total, io)?);
         }
         if deficit_ring_edabits_iring > 0 {
             // IRingScalars always uses U66 carry ring, even on rv32.
             let total = deficit_ring_edabits_iring + pool.remaining_ring_edabits_u66();
-            pool.ring_edabits_u66 =
-                super::edabits::random_edabits_ring_lazy::<U66, _>(total, io)?;
+            pool.ring_edabits_u66 = super::edabits::random_edabits_ring_lazy::<U66, _>(total, io)?;
         }
     }
     // deficit_wrap_masks_iring also deferred to caller.

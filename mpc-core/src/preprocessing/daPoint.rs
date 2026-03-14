@@ -40,11 +40,7 @@ impl<C: CurveGroup> DaPointsBatch<C> {
     /// Extract a contiguous sub-batch `[start..start+len]`.
     pub fn slice(&self, start: usize, len: usize) -> Self {
         let gammas = self.gammas[start..start + len].to_vec();
-        let alphas = if self.alphas.is_empty() {
-            Vec::new()
-        } else {
-            self.alphas[start..start + len].to_vec()
-        };
+        let alphas = if self.alphas.is_empty() { Vec::new() } else { self.alphas[start..start + len].to_vec() };
         Self { gammas, alphas }
     }
 

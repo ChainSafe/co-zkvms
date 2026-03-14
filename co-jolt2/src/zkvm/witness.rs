@@ -5,7 +5,6 @@ use std::mem;
 use std::sync::Arc;
 
 use jolt_common::constants::{ArithmeticWideInt, LookupIndexInt, XlenInt, XLEN};
-use mpc_core::protocols::rep3::PartyID;
 use jolt_core::field::JoltField;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
@@ -17,11 +16,12 @@ use jolt_core::zkvm::ram::remap_address;
 use jolt_core::zkvm::witness::{CommittedPolynomial, DTH_ROOT_OF_K};
 use jolt_core::zkvm::{instruction_lookups, JoltProverPreprocessing};
 use mpc_core::protocols::rep3::network::{IoContext, IoContextPool, Rep3NetworkWorker};
+use mpc_core::protocols::rep3::PartyID;
 use mpc_core::protocols::rep3::{arithmetic::promote_to_trivial_share, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3_ring::casts;
-use mpc_core::protocols::rep3_ring::edabits::{EdaBitsBatchScratch, EdaBitsRangeView, PreprocessingPool};
 #[cfg(not(feature = "ring-msm"))]
 use mpc_core::protocols::rep3_ring::conversion as ring_conv;
+use mpc_core::protocols::rep3_ring::edabits::{EdaBitsBatchScratch, EdaBitsRangeView, PreprocessingPool};
 use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use rand::distributions::{Distribution, Standard};
@@ -985,7 +985,9 @@ where
                         let batch_eda = preproc.take_edabits::<ArithmeticWideInt>(chunk.len())?;
                         let biased_field: Vec<Rep3PrimeFieldShare<F>> = if inc_b2a_max_forks <= 1 {
                             casts::r2f_b2a_preproc_many::<ArithmeticWideInt, F, _>(
-                                &biased_bin, &batch_eda, io_ctx.main(),
+                                &biased_bin,
+                                &batch_eda,
+                                io_ctx.main(),
                             )?
                         } else {
                             let chunk_size = biased_bin.len().div_ceil(inc_b2a_max_forks);
@@ -993,9 +995,11 @@ where
                                 casts::r2f_b2a_preproc_many::<ArithmeticWideInt, F, _>(&xs, &b, c)
                             })?
                         };
-                        inc.extend(biased_field.into_iter().map(|s| {
-                            mpc_core::protocols::rep3::arithmetic::sub_shared_by_public(s, bias_f, party_id)
-                        }));
+                        inc.extend(
+                            biased_field.into_iter().map(|s| {
+                                mpc_core::protocols::rep3::arithmetic::sub_shared_by_public(s, bias_f, party_id)
+                            }),
+                        );
                     }
                     drop(_span);
                     let dense = Rep3DensePolynomial::new(inc);
@@ -1031,7 +1035,9 @@ where
                         let batch_eda = preproc.take_edabits::<ArithmeticWideInt>(chunk.len())?;
                         let biased_field: Vec<Rep3PrimeFieldShare<F>> = if inc_b2a_max_forks <= 1 {
                             casts::r2f_b2a_preproc_many::<ArithmeticWideInt, F, _>(
-                                &biased_bin, &batch_eda, io_ctx.main(),
+                                &biased_bin,
+                                &batch_eda,
+                                io_ctx.main(),
                             )?
                         } else {
                             let chunk_size = biased_bin.len().div_ceil(inc_b2a_max_forks);
@@ -1039,9 +1045,11 @@ where
                                 casts::r2f_b2a_preproc_many::<ArithmeticWideInt, F, _>(&xs, &b, c)
                             })?
                         };
-                        inc.extend(biased_field.into_iter().map(|s| {
-                            mpc_core::protocols::rep3::arithmetic::sub_shared_by_public(s, bias_f, party_id)
-                        }));
+                        inc.extend(
+                            biased_field.into_iter().map(|s| {
+                                mpc_core::protocols::rep3::arithmetic::sub_shared_by_public(s, bias_f, party_id)
+                            }),
+                        );
                     }
                     drop(_span);
                     let dense = Rep3DensePolynomial::new(inc);
