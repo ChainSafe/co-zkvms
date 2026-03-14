@@ -338,8 +338,8 @@ fn prove_loop(
 
             let need_wm = budget.wrap_masks > 0 && preproc.remaining_wrap_masks() < budget.wrap_masks;
             let need_wm_iring = budget.wrap_masks_iring > 0 && preproc.remaining_wrap_masks_iring() < budget.wrap_masks_iring;
-            let need_dp = budget.dapoints > 0;
-            let need_dp_iring = budget.dapoints_iring > 0;
+            let need_dp = budget.dapoints > 0 && preproc.remaining_dapoints() < budget.dapoints;
+            let need_dp_iring = budget.dapoints_iring > 0 && preproc.remaining_dapoints_iring() < budget.dapoints_iring;
 
             // Count active tasks and dispatch on forks when >= 2.
             let active = [need_wm, need_wm_iring, need_dp, need_dp_iring].iter().filter(|&&b| b).count();
