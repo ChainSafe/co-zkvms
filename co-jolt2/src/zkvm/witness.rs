@@ -979,17 +979,29 @@ where
                 }
                 #[cfg(not(feature = "ring-msm"))]
                 {
-                    // Non-ring-msm: A2B → r2f_b2a → sub_public(2^XLEN)
-                    let _span = info_span!("rd_inc_biased_b2a", n).entered();
-                    let biased_bin = ring_conv::a2b_many(&biased_arith, io_ctx.main())?;
-                    let batch_eda = preproc.take_edabits::<ArithmeticWideInt>(n)?;
-                    let biased_field: Vec<Rep3PrimeFieldShare<F>> =
-                        casts::r2f_b2a_preproc_many::<ArithmeticWideInt, F, _>(&biased_bin, &batch_eda, io_ctx.main())?;
+                    // Non-ring-msm: A2B → r2f_b2a → sub_public(2^XLEN), chunked to limit RSS.
+                    let _span = info_span!("rd_inc_biased_b2a", n, chunk = inc_b2a_chunk).entered();
                     let bias_f = F::from_u64(1u64 << XLEN);
-                    let inc: Vec<Rep3PrimeFieldShare<F>> = biased_field
-                        .into_iter()
-                        .map(|s| mpc_core::protocols::rep3::arithmetic::sub_shared_by_public(s, bias_f, party_id))
-                        .collect();
+                    let mut inc: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(n);
+                    for off in (0..n).step_by(inc_b2a_chunk) {
+                        let end = (off + inc_b2a_chunk).min(n);
+                        let chunk = &biased_arith[off..end];
+                        let biased_bin = ring_conv::a2b_many(chunk, io_ctx.main())?;
+                        let batch_eda = preproc.take_edabits::<ArithmeticWideInt>(chunk.len())?;
+                        let biased_field: Vec<Rep3PrimeFieldShare<F>> = if inc_b2a_max_forks <= 1 {
+                            casts::r2f_b2a_preproc_many::<ArithmeticWideInt, F, _>(
+                                &biased_bin, &batch_eda, io_ctx.main(),
+                            )?
+                        } else {
+                            let chunk_size = biased_bin.len().div_ceil(inc_b2a_max_forks);
+                            io_ctx.par_chunks_preproc(biased_bin, batch_eda, Some(chunk_size), |xs, b, c| {
+                                casts::r2f_b2a_preproc_many::<ArithmeticWideInt, F, _>(&xs, &b, c)
+                            })?
+                        };
+                        inc.extend(biased_field.into_iter().map(|s| {
+                            mpc_core::protocols::rep3::arithmetic::sub_shared_by_public(s, bias_f, party_id)
+                        }));
+                    }
                     drop(_span);
                     let dense = Rep3DensePolynomial::new(inc);
                     state.prover_state.cycle_witness.set_stage2_incs(Some(dense.clone()), None);
@@ -1014,16 +1026,28 @@ where
                 }
                 #[cfg(not(feature = "ring-msm"))]
                 {
-                    let _span = info_span!("ram_inc_biased_b2a", n).entered();
-                    let biased_bin = ring_conv::a2b_many(&biased_arith, io_ctx.main())?;
-                    let batch_eda = preproc.take_edabits::<ArithmeticWideInt>(n)?;
-                    let biased_field: Vec<Rep3PrimeFieldShare<F>> =
-                        casts::r2f_b2a_preproc_many::<ArithmeticWideInt, F, _>(&biased_bin, &batch_eda, io_ctx.main())?;
+                    let _span = info_span!("ram_inc_biased_b2a", n, chunk = inc_b2a_chunk).entered();
                     let bias_f = F::from_u64(1u64 << XLEN);
-                    let inc: Vec<Rep3PrimeFieldShare<F>> = biased_field
-                        .into_iter()
-                        .map(|s| mpc_core::protocols::rep3::arithmetic::sub_shared_by_public(s, bias_f, party_id))
-                        .collect();
+                    let mut inc: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(n);
+                    for off in (0..n).step_by(inc_b2a_chunk) {
+                        let end = (off + inc_b2a_chunk).min(n);
+                        let chunk = &biased_arith[off..end];
+                        let biased_bin = ring_conv::a2b_many(chunk, io_ctx.main())?;
+                        let batch_eda = preproc.take_edabits::<ArithmeticWideInt>(chunk.len())?;
+                        let biased_field: Vec<Rep3PrimeFieldShare<F>> = if inc_b2a_max_forks <= 1 {
+                            casts::r2f_b2a_preproc_many::<ArithmeticWideInt, F, _>(
+                                &biased_bin, &batch_eda, io_ctx.main(),
+                            )?
+                        } else {
+                            let chunk_size = biased_bin.len().div_ceil(inc_b2a_max_forks);
+                            io_ctx.par_chunks_preproc(biased_bin, batch_eda, Some(chunk_size), |xs, b, c| {
+                                casts::r2f_b2a_preproc_many::<ArithmeticWideInt, F, _>(&xs, &b, c)
+                            })?
+                        };
+                        inc.extend(biased_field.into_iter().map(|s| {
+                            mpc_core::protocols::rep3::arithmetic::sub_shared_by_public(s, bias_f, party_id)
+                        }));
+                    }
                     drop(_span);
                     let dense = Rep3DensePolynomial::new(inc);
                     state.prover_state.cycle_witness.set_stage2_incs(None, Some(dense.clone()));

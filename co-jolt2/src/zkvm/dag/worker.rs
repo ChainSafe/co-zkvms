@@ -274,26 +274,33 @@ impl Rep3JoltDagWorker {
                         let arith_shares: Vec<mpc_core::protocols::rep3_ring::Rep3RingShare<ArithmeticWideInt>> =
                             inc_poly.coeffs.iter().map(|op| op.as_arithmetic_wide()).collect();
 
-                        // A2B → binary u64
-                        let biased_bin = ring_conv::a2b_many(&arith_shares, io_ctx.main())?;
-
-                        // r2f_b2a → biased field
-                        let batch_eda = preproc.take_edabits::<ArithmeticWideInt>(biased_bin.len())?;
-                        let biased_field: Vec<Rep3PrimeFieldShare<F>> =
-                            casts::r2f_b2a_preproc_many::<ArithmeticWideInt, F, _>(&biased_bin, &batch_eda, io_ctx.main())?;
-
-                        // Subtract bias: vanilla_f = biased_f - F(2^XLEN)
-                        let inc: Vec<Rep3PrimeFieldShare<F>> = biased_field
-                            .into_iter()
-                            .map(|s| mpc_core::protocols::rep3::arithmetic::sub_shared_by_public(s, bias_f, party_id))
-                            .collect();
+                        // A2B → r2f_b2a → sub bias, chunked to limit RSS.
+                        let inc_b2a_chunk: usize = std::env::var("INC_B2A_CHUNK")
+                            .ok().and_then(|s| s.parse().ok()).unwrap_or(8 * 1024);
+                        let total = arith_shares.len();
+                        let mut inc: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(total);
+                        for off in (0..total).step_by(inc_b2a_chunk) {
+                            let end = (off + inc_b2a_chunk).min(total);
+                            let chunk = &arith_shares[off..end];
+                            let biased_bin = ring_conv::a2b_many(chunk, io_ctx.main())?;
+                            let batch_eda = preproc.take_edabits::<ArithmeticWideInt>(chunk.len())?;
+                            let biased_field: Vec<Rep3PrimeFieldShare<F>> =
+                                casts::r2f_b2a_preproc_many::<ArithmeticWideInt, F, _>(
+                                    &biased_bin, &batch_eda, io_ctx.main(),
+                                )?;
+                            inc.extend(biased_field.into_iter().map(|s| {
+                                mpc_core::protocols::rep3::arithmetic::sub_shared_by_public(s, bias_f, party_id)
+                            }));
+                        }
 
                         let dense = crate::poly::dense_mlpoly::Rep3DensePolynomial::new(inc);
                         match key {
-                            CommittedPolynomial::RdInc =>
-                                state.prover_state.cycle_witness.set_stage2_incs(Some(dense.clone()), None),
-                            CommittedPolynomial::RamInc =>
-                                state.prover_state.cycle_witness.set_stage2_incs(None, Some(dense.clone())),
+                            CommittedPolynomial::RdInc => {
+                                state.prover_state.cycle_witness.set_stage2_incs(Some(dense.clone()), None)
+                            }
+                            CommittedPolynomial::RamInc => {
+                                state.prover_state.cycle_witness.set_stage2_incs(None, Some(dense.clone()))
+                            }
                             _ => unreachable!(),
                         }
                         witness_polys.insert(key, Rep3MultilinearPolynomial::shared(dense));
