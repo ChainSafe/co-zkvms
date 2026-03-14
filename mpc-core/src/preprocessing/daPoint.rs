@@ -65,6 +65,8 @@ pub struct LazyDaPoints<C: CurveGroup> {
     alphas: backing_store::BackingStore<C>,
     party_id: PartyID,
     meta_path: Option<PathBuf>,
+    /// Dory num_columns at generation time — used to detect SRS mismatch on load.
+    num_columns: Option<usize>,
 }
 
 impl<C: CurveGroup> LazyDaPoints<C> {
@@ -76,10 +78,11 @@ impl<C: CurveGroup> LazyDaPoints<C> {
             alphas: backing_store::BackingStore::Empty,
             party_id,
             meta_path: None,
+            num_columns: None,
         }
     }
 
-    pub fn new(total: usize, gammas: Vec<Bit>, alphas: Vec<C>, party_id: PartyID) -> Self {
+    pub fn new(total: usize, gammas: Vec<Bit>, alphas: Vec<C>, party_id: PartyID, num_columns: usize) -> Self {
         Self {
             total,
             cursor: 0,
@@ -87,11 +90,99 @@ impl<C: CurveGroup> LazyDaPoints<C> {
             alphas: backing_store::BackingStore::from_vec(alphas),
             party_id,
             meta_path: None,
+            num_columns: Some(num_columns),
         }
     }
 
     pub fn remaining(&self) -> usize {
         self.total - self.cursor
+    }
+
+    pub fn num_columns(&self) -> Option<usize> {
+        self.num_columns
+    }
+
+    /// Persist to `dir/dapoints.meta` + `dir/dapoints.data`.
+    ///
+    /// P0 saves gammas (tiny). P1/P2 save alphas (curve points).
+    /// `num_columns` is stored in metadata for SRS validation on load.
+    pub fn save(&self, dir: &std::path::Path) -> std::io::Result<()> {
+        std::fs::create_dir_all(dir)?;
+        let data_path = dir.join("dapoints.data");
+        if self.party_id == PartyID::ID0 {
+            if !self.gammas.is_empty() {
+                let bytes: &[u8] = unsafe {
+                    std::slice::from_raw_parts(self.gammas.as_ptr() as *const u8, self.gammas.len())
+                };
+                let file = std::fs::File::create(&data_path)?;
+                let mut w = std::io::BufWriter::new(file);
+                std::io::Write::write_all(&mut w, bytes)?;
+                std::io::Write::flush(&mut w)?;
+            }
+        } else if !self.alphas.is_empty() {
+            self.alphas.save_to_file(&data_path)?;
+        }
+        let meta_path = dir.join("dapoints.meta");
+        backing_store::write_meta(
+            &meta_path,
+            &backing_store::MetaData {
+                seed1: [0u8; 32],
+                pos1: self.num_columns.unwrap_or(0) as u128,
+                seed2: [0u8; 32],
+                pos2: 0,
+                total: self.total,
+                party_id_byte: backing_store::party_id_to_byte(self.party_id),
+                cursor: self.cursor,
+                field_bytes: std::mem::size_of::<C>(),
+            },
+        )?;
+        std::result::Result::Ok(())
+    }
+
+    /// Load from `dir/dapoints.meta` + `dir/dapoints.data`.
+    ///
+    /// Returns `empty()` if no meta file exists.
+    pub fn load(dir: &std::path::Path, party_id: PartyID) -> std::io::Result<Self> {
+        let meta_path = dir.join("dapoints.meta");
+        if !meta_path.exists() {
+            return std::result::Result::Ok(Self::empty(party_id));
+        }
+        let meta = backing_store::read_meta(&meta_path)?;
+        assert_eq!(meta.party_id_byte, backing_store::party_id_to_byte(party_id));
+        let num_columns = meta.pos1 as usize;
+
+        let data_path = dir.join("dapoints.data");
+        let (gammas, alphas) = if meta.total == 0 {
+            (Vec::new(), backing_store::BackingStore::Empty)
+        } else if party_id == PartyID::ID0 {
+            let bytes = std::fs::read(&data_path)?;
+            let gammas: Vec<Bit> = bytes.into_iter().map(|b| Bit::new(b != 0)).collect();
+            (gammas, backing_store::BackingStore::Empty)
+        } else {
+            (Vec::new(), backing_store::BackingStore::load_from_file(&data_path)?)
+        };
+
+        std::result::Result::Ok(Self {
+            total: meta.total,
+            cursor: meta.cursor,
+            gammas,
+            alphas,
+            party_id,
+            meta_path: Some(meta_path),
+            num_columns: Some(num_columns),
+        })
+    }
+
+    fn persist_cursor(&self) {
+        if let Some(ref path) = self.meta_path {
+            let _ = backing_store::update_cursor(path, self.cursor);
+        }
+    }
+
+    #[cfg(feature = "reuse-preproc")]
+    pub(crate) fn reset_cursor_for_reuse(&mut self) {
+        self.cursor = 0;
+        self.persist_cursor();
     }
 
     /// Drain `n` daPoint tuples as a `DaPointsBatch`.
@@ -115,8 +206,12 @@ impl<C: CurveGroup> LazyDaPoints<C> {
             if self.party_id == PartyID::ID0 { self.gammas[start..end].to_vec() } else { vec![Bit::new(false); n] };
 
         let alphas = if self.party_id != PartyID::ID0 {
-            let slice = self.alphas.as_slice();
-            let points = slice[start..end].to_vec();
+            let points = {
+                #[cfg(feature = "reuse-preproc")]
+                { self.alphas.read_reuse(start, end)? }
+                #[cfg(not(feature = "reuse-preproc"))]
+                { self.alphas.read_consume(start, end)? }
+            };
             self.alphas.consume(start, end);
             points
         } else {
@@ -124,6 +219,7 @@ impl<C: CurveGroup> LazyDaPoints<C> {
         };
 
         self.cursor += n;
+        self.persist_cursor();
         Ok(DaPointsBatch { gammas, alphas })
     }
 }
@@ -191,7 +287,7 @@ pub fn random_dapoints<C: CurveGroup, N: Rep3NetworkWorker>(
         }
     }
 
-    Ok(LazyDaPoints::new(n, gammas, alphas, party_id))
+    Ok(LazyDaPoints::new(n, gammas, alphas, party_id, 0))
 }
 
 /// Like [`random_dapoints`] but takes column templates instead of a pre-expanded Q array.
@@ -261,7 +357,7 @@ pub fn random_dapoints_from_columns<C: CurveGroup, N: Rep3Network>(
         }
     }
 
-    Ok(LazyDaPoints::new(n, gammas, alphas, party_id))
+    Ok(LazyDaPoints::new(n, gammas, alphas, party_id, num_columns))
 }
 
 // dot_product_dapoints moved to rep3/pointshare.rs

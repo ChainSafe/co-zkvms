@@ -913,6 +913,7 @@ where
             CommittedPolynomial::LeftInstructionInput => {
                 #[cfg(feature = "ring-msm")]
                 {
+                    use crate::poly::Rep3SharedPoly;
                     let compact = Rep3CompactPolynomial::from_operands(mem::take(&mut left_ops));
                     results.insert(*poly, Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RingScalars(compact)));
                 }
@@ -929,6 +930,7 @@ where
             CommittedPolynomial::RightInstructionInput => {
                 #[cfg(feature = "ring-msm")]
                 {
+                    use crate::poly::Rep3SharedPoly;
                     let compact = Rep3CompactPolynomial::from_operands(mem::take(&mut right_ops));
                     results.insert(*poly, Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RingScalars(compact)));
                 }
@@ -963,6 +965,8 @@ where
                 #[cfg(feature = "ring-msm")]
                 {
                     // Ring-msm: store as IRingScalars, defer field conversion to worker.rs
+
+                    use crate::poly::Rep3SharedPoly;
                     let coeffs: Vec<Rep3Operand> = biased_arith
                         .iter()
                         .map(|a| Rep3Operand::Shared {
@@ -1033,6 +1037,7 @@ where
                 let n = biased_arith.len();
                 #[cfg(feature = "ring-msm")]
                 {
+                    use crate::poly::{Rep3CompactPolynomial, Rep3SharedPoly};
                     let coeffs: Vec<Rep3Operand> = biased_arith
                         .iter()
                         .map(|a| Rep3Operand::Shared {

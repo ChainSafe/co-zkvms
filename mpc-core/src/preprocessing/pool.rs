@@ -288,6 +288,10 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
         self.ring_edabits_u66.reset_cursor_for_reuse();
         #[cfg(feature = "ring-msm")]
         self.wrap_masks_iring.reset_cursor_for_reuse();
+        #[cfg(feature = "ring-msm")]
+        self.dapoints.reset_cursor_for_reuse();
+        #[cfg(feature = "ring-msm")]
+        self.dapoints_iring.reset_cursor_for_reuse();
     }
 
     /// Generic edaBits drain as flat batch, dispatched by `TypeId`.
@@ -395,6 +399,10 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             let h7 = s.spawn(|| self.ring_edabits_u66.save(dir));
             #[cfg(feature = "ring-msm")]
             let h8 = s.spawn(|| self.wrap_masks_iring.save(&dir.join("iring")));
+            #[cfg(feature = "ring-msm")]
+            let h_dp = s.spawn(|| self.dapoints.save(dir));
+            #[cfg(feature = "ring-msm")]
+            let h_dp_i = s.spawn(|| self.dapoints_iring.save(&dir.join("iring")));
             h0.join().unwrap()?;
             h1.join().unwrap()?;
             h2.join().unwrap()?;
@@ -411,14 +419,15 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             h7.join().unwrap()?;
             #[cfg(feature = "ring-msm")]
             h8.join().unwrap()?;
+            #[cfg(feature = "ring-msm")]
+            h_dp.join().unwrap()?;
+            #[cfg(feature = "ring-msm")]
+            h_dp_i.join().unwrap()?;
             std::result::Result::Ok(())
         })
     }
 
     /// Load all lazy sources from `dir`.
-    ///
-    /// Note: daPoints are NOT persisted — they are regenerated via
-    /// `set_dapoints()` after loading, since they depend on the SRS.
     pub fn load(dir: &std::path::Path, party_id: PartyID) -> std::io::Result<Self> {
         std::result::Result::Ok(Self {
             edabits_u8: LazyEdaBits::<u8, F>::load(dir, party_id)?,
@@ -430,7 +439,7 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             ring_edabits_u64: LazyEdaBitsRing::<u64>::load(dir, party_id)?,
             ring_edabits_u128: LazyEdaBitsRing::<u128>::load(dir, party_id)?,
             #[cfg(feature = "ring-msm")]
-            dapoints: super::daPoint::LazyDaPoints::empty(party_id),
+            dapoints: super::daPoint::LazyDaPoints::load(dir, party_id)?,
             #[cfg(feature = "ring-msm")]
             wrap_masks: super::wrap_mask::LazyWrapMasks::load(dir, party_id)?,
             #[cfg(feature = "ring-msm")]
@@ -438,7 +447,7 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             #[cfg(feature = "ring-msm")]
             ring_edabits_u66: LazyEdaBitsRing::<U66>::load(dir, party_id)?,
             #[cfg(feature = "ring-msm")]
-            dapoints_iring: super::daPoint::LazyDaPoints::empty(party_id),
+            dapoints_iring: super::daPoint::LazyDaPoints::load(&dir.join("iring"), party_id)?,
             #[cfg(feature = "ring-msm")]
             wrap_masks_iring: super::wrap_mask::LazyWrapMasks::load(&dir.join("iring"), party_id)?,
             #[cfg(not(feature = "ring-msm"))]

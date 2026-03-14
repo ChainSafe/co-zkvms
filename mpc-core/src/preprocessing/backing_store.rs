@@ -25,8 +25,8 @@ use std::path::{Path, PathBuf};
 /// zero-sized `PhantomData`.  All parties run the same binary on the same
 /// architecture so endianness is consistent.
 pub(crate) const fn assert_field_layout<F>() {
-    assert!(std::mem::size_of::<F>() % 8 == 0, "Field element size must be a multiple of 8 bytes");
-    assert!(std::mem::align_of::<F>() <= 8, "Field element alignment must not exceed u64 alignment");
+    assert!(std::mem::size_of::<F>() > 0, "Element size must be non-zero");
+    assert!(std::mem::align_of::<F>() <= 8, "Element alignment must not exceed u64 alignment");
 }
 
 // ---------------------------------------------------------------------------

@@ -193,7 +193,7 @@ impl Rep3JoltDagWorker {
         // Populate the field-domain per-cycle witness cache (used for Spartan Stage1 and later).
         populate_cycle_witness_rep3(state, io_ctx, preproc)?;
 
-        let witness_polys = generate_witness_batch_rep3(&poly_keys, state, io_ctx, preproc)?;
+        let mut witness_polys = generate_witness_batch_rep3(&poly_keys, state, io_ctx, preproc)?;
 
         let instruction_one_hot_polys: [Rep3OneHotPolynomial<F>; D] = std::array::from_fn(|i| {
             let key = CommittedPolynomial::InstructionRa(i);
@@ -252,7 +252,8 @@ impl Rep3JoltDagWorker {
                     if matches!(poly, Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RingScalars(_))) {
                         let mut field_shares: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(n);
                         for t in 0..n {
-                            let (l, r) = state.prover_state.cycle_witness.row_stage1(t).to_instruction_inputs(party_id);
+                            let (l, r) =
+                                state.prover_state.cycle_witness.row_stage1(t).to_instruction_inputs(_party_id);
                             field_shares.push(if key == CommittedPolynomial::LeftInstructionInput { l } else { r });
                         }
                         witness_polys.insert(key, Rep3MultilinearPolynomial::from(field_shares));
@@ -291,7 +292,7 @@ impl Rep3JoltDagWorker {
                                     io_ctx.main(),
                                 )?;
                             inc.extend(biased_field.into_iter().map(|s| {
-                                mpc_core::protocols::rep3::arithmetic::sub_shared_by_public(s, bias_f, party_id)
+                                mpc_core::protocols::rep3::arithmetic::sub_shared_by_public(s, bias_f, _party_id)
                             }));
                         }
 
