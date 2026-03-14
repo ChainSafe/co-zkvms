@@ -22,6 +22,7 @@ pub struct ProverStateWorker<'a, F: JoltField, PCS: CommitmentScheme<Field = F>>
     pub trace: Option<Vec<Rep3Cycle>>,
     pub final_memory_state: Rep3Memory,
     pub untrusted_advice_polynomial: Option<Rep3MultilinearPolynomial<F>>,
+    pub untrusted_advice_hint: Option<MaybeShared<PCS::OpeningProofHint>>,
     pub trusted_advice_polynomial: Option<Rep3MultilinearPolynomial<F>>,
     /// Field-domain per-cycle cache for R1CS virtual inputs.
     pub cycle_witness: Rep3CycleWitnesses<F>,
@@ -68,6 +69,7 @@ where
                 trace: Some(trace),
                 final_memory_state,
                 untrusted_advice_polynomial: None,
+                untrusted_advice_hint: None,
                 trusted_advice_polynomial: None,
                 cycle_witness: Rep3CycleWitnesses::default(),
             },

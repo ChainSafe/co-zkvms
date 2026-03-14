@@ -208,18 +208,13 @@ where
 
         // === 4) RAM: ValEvaluation (secret) + ValFinal (secret) + HammingBooleanity (public) ===
         let (ram_val_eval, ram_val_eval_input_claim) = {
-            use jolt_core::poly::multilinear_polynomial::{MultilinearPolynomial, PolynomialEvaluation};
+            use crate::zkvm::ram::val_evaluation::Rep3RamValEvaluation;
 
-            use crate::zkvm::ram::{build_initial_memory_state, val_evaluation::Rep3RamValEvaluation};
-
-            let initial_ram_state =
-                build_initial_memory_state(&state.preprocessing.shared.ram, &state.program_io, state.ram_K);
-            let (r_val_point, _) = state
-                .accumulator
-                .get_virtual_polynomial_opening(VirtualPolynomial::RamVal, SumcheckId::RamReadWriteChecking);
-            let (r_address, _) = r_val_point.split_at(state.ram_K.log_2());
-            let val_init_poly: MultilinearPolynomial<F> = MultilinearPolynomial::from(initial_ram_state);
-            let ram_init_eval = val_init_poly.evaluate(&r_address.r);
+            // Workers evaluate their shared val_init polynomial (which includes advice
+            // regions) at the RamVal address point and send additive shares.
+            // Sum the 3 additive shares to reconstruct the full ram_init_eval.
+            let ram_init_shares: Vec<F> = network.receive_responses()?;
+            let ram_init_eval: F = ram_init_shares.into_iter().sum();
 
             let val_eval = Rep3RamValEvaluation::<F>::new::<ProofTranscript, PCS>(state, ram_init_eval);
             let claim = val_eval.input_claim();

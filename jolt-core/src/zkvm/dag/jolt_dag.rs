@@ -10,12 +10,10 @@ use crate::subprotocols::blindfold::{
     pedersen_generator_count_for_r1cs, BakedPublicInputs, BlindFoldVerifier, BlindFoldVerifierInput,
     InputClaimConstraint, OutputClaimConstraint, StageConfig, ValueSource, VerifierR1CSBuilder,
 };
-use crate::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance, SumcheckInstanceProof};
 use crate::transcripts::Transcript;
-use crate::utils::math::Math;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
-use crate::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, VirtualPolynomial};
+use crate::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial};
 use anyhow::Context;
 
 #[cfg(feature = "zk")]
@@ -639,6 +637,10 @@ impl JoltDAG {
         verifier_setup: &PCS::VerifierSetup,
         transcript: &mut ProofTranscript,
     ) -> Result<(), anyhow::Error> {
+        use crate::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
+        use crate::utils::math::Math;
+        use crate::zkvm::witness::VirtualPolynomial;
+
         let untrusted_advice_commitment = state_manager.untrusted_advice_commitment.as_ref().unwrap();
         let accumulator = state_manager.get_verifier_accumulator();
 
