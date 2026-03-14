@@ -10,17 +10,14 @@ use crate::protocols::{
 };
 use crate::{
     IoResult,
-    protocols::{
-        rep3::{
+    protocols::rep3::{
             network::{IoContext, Rep3Network},
             rngs::Rep3CorrelatedRng,
         },
-        rep3_ring::binary::add_many,
-    },
 };
 use itertools::{Itertools, izip};
 use num_traits::{One, Zero};
-use rand::{Rng, distributions::Standard, prelude::Distribution};
+use rand::{distributions::Standard, prelude::Distribution};
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
 use super::{binary, conversion, detail};

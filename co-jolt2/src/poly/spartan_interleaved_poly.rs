@@ -356,7 +356,7 @@ fn round0_build_bound_shards_from_cycle_inputs<F: JoltField>(
                     let c0_idx = pair * 2;
                     let c1_idx = c0_idx + 1;
 
-                    let (az0, bz0, cz0, a0_present, b0_present, c0_present) = if c0_idx < num_constraints {
+                    let (_az0, _bz0, _cz0, a0_present, b0_present, c0_present) = if c0_idx < num_constraints {
                         let named = &UNIFORM_R1CS[c0_idx];
                         let az0 = eval_lc_rep3(named.cons.a, inputs, party_id);
                         let bz0 = eval_lc_rep3(named.cons.b, inputs, party_id);
@@ -373,7 +373,7 @@ fn round0_build_bound_shards_from_cycle_inputs<F: JoltField>(
                         )
                     };
 
-                    let (az1, bz1, cz1, a1_present, b1_present, c1_present) = if c1_idx < num_constraints {
+                    let (_az1, _bz1, _cz1, a1_present, b1_present, c1_present) = if c1_idx < num_constraints {
                         let named = &UNIFORM_R1CS[c1_idx];
                         let az1 = eval_lc_rep3(named.cons.a, inputs, party_id);
                         let bz1 = eval_lc_rep3(named.cons.b, inputs, party_id);

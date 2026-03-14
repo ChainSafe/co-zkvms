@@ -9,7 +9,6 @@ use crate::{
     field::JoltField,
     poly::commitment::{
         commitment_scheme::{CommitmentScheme, ZkEvalCommitment},
-        dory::DoryGlobals,
         pedersen::PedersenGenerators,
     },
     transcripts::Transcript,

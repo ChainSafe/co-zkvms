@@ -1,4 +1,3 @@
-use jolt_core::poly::eq_poly::EqPlusOnePolynomial;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::poly::unipoly::UniPoly;
 use jolt_core::zkvm::instruction::CircuitFlags;

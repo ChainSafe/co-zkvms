@@ -58,7 +58,6 @@ pub fn bytes_to_ram_word(bytes: &[u8]) -> u64 {
 use crate::field::JoltField;
 use crate::poly::eq_poly::EqPolynomial;
 use crate::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
-use crate::utils::math::Math;
 use tracer::JoltDevice;
 
 pub fn build_initial_memory_state(ram_preprocessing: &RAMPreprocessing, program_io: &JoltDevice, K: usize) -> Vec<u64> {

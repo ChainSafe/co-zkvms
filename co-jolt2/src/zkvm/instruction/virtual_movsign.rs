@@ -21,7 +21,7 @@ impl<const XLEN: usize> Rep3LookupQuery<XLEN> for Rep3RISCVCycle<VirtualMovsign>
                 l.as_binary_or_trivial(io_ctx.id)
             })
             .collect();
-        let sign_bits: Vec<_> = vals.iter().map(|v| (*v >> (XLEN - 1))).collect();
+        let sign_bits: Vec<_> = vals.iter().map(|v| *v >> (XLEN - 1) ).collect();
         let is_negative = rep3_ring::binary::is_zero_many(&sign_bits, io_ctx)?;
         // is_negative[i] == 1 means sign bit was 0 (positive), == 0 means sign bit was 1 (negative)
         // We want: if sign_bit then all_ones else 0

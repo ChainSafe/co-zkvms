@@ -1,10 +1,8 @@
-use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
-use jolt_core::poly::opening_proof::{OpeningId, OpeningPoint, SumcheckId, BIG_ENDIAN};
+use jolt_core::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::r1cs::inputs::{JoltR1CSInputs, ALL_R1CS_INPUTS};
 use jolt_core::zkvm::r1cs::key::UniformSpartanKey;
-use jolt_core::zkvm::witness::VirtualPolynomial;
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;

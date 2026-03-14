@@ -6,7 +6,6 @@ use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 #[cfg(feature = "zk")]
 use jolt_core::subprotocols::blindfold::{InputClaimConstraint, OutputClaimConstraint, ValueSource};
 use jolt_core::transcripts::Transcript;
-use jolt_core::utils::math::Math;
 use jolt_core::zkvm::witness::CommittedPolynomial;
 use jolt_core::zkvm::witness::VirtualPolynomial;
 

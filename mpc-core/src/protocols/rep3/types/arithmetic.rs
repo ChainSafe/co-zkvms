@@ -1,5 +1,4 @@
 use crate::field::PrimeField;
-use ark_ff::BigInteger;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 

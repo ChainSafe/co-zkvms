@@ -5,7 +5,6 @@
 pub use super::types::binary::Rep3BigUintShare;
 
 use crate::field::PrimeField;
-use ark_ff::BigInteger;
 use ark_ff::One;
 use itertools;
 use itertools::{Itertools as _, izip};

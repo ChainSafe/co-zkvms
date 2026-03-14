@@ -14,7 +14,7 @@ use crate::{
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
     utils::math::Math,
-    zkvm::witness::{compute_d_parameter, CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K},
+    zkvm::witness::{CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K},
 };
 
 #[derive(Allocative)]

@@ -7,7 +7,6 @@ use crate::protocols::rep3::PartyID;
 use crate::protocols::rep3::network::{IoContext, Rep3Network};
 use crate::protocols::rep3_ring::Rep3RingShare;
 use crate::protocols::rep3_ring::ring::bit::Bit;
-use crate::protocols::rep3_ring::ring::int_ring::IntRing2k;
 use crate::protocols::rep3_ring::ring::ring_impl::RingElement;
 use ark_ec::CurveGroup;
 use itertools::izip;

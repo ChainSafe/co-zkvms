@@ -390,7 +390,7 @@ impl HybridBatchedSumcheck {
         let batching_coeffs: Vec<F> = transcript.challenge_vector(instances.len());
         network.broadcast_request(batching_coeffs.clone())?;
 
-        let mut individual_claims: Vec<F> = instances
+        let individual_claims: Vec<F> = instances
             .iter()
             .map(|instance| instance.input_claim_public().mul_pow_2(max_num_rounds - instance.num_rounds()))
             .collect();

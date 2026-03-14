@@ -80,7 +80,7 @@ fn reshare_and_unmask_additive_hists_chunked<F: JoltField, N: Rep3NetworkWorker>
     )
     .entered();
 
-    let mut do_one_chunk = |chunk: Vec<(usize, usize, Vec<AdditiveShare<F>>)>,
+    let do_one_chunk = |chunk: Vec<(usize, usize, Vec<AdditiveShare<F>>)>,
                             ctx: &mut mpc_core::protocols::rep3::network::IoContext<N>|
      -> eyre::Result<Vec<(usize, usize, AdditiveDensePoly<F>)>> {
         let _chunk_span = trace_span!("reshare_hists_chunk", n = chunk.len(), total_len = chunk.len() * M).entered();

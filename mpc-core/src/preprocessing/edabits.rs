@@ -9,16 +9,13 @@ use super::backing_store;
 use crate::field::PrimeField;
 use crate::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use crate::protocols::rep3::{
-    PartyID, Rep3PrimeFieldShare, arithmetic as rep3_arith,
-    network::{IoContext, Rep3Network},
+    PartyID, Rep3PrimeFieldShare,
+    network::Rep3Network,
 };
-use crate::protocols::rep3_ring::arithmetic as rep3_ring_arith;
-use crate::protocols::rep3_ring::ring::u66::U66;
 use crate::protocols::rep3_ring::{
     Rep3RingShare,
     ring::{int_ring::IntRing2k, ring_impl::RingElement},
 };
-use num_traits::AsPrimitive;
 use rand::distributions::Standard;
 use rand::prelude::Distribution;
 use rand::{RngCore, SeedableRng};
@@ -1034,8 +1031,8 @@ where
         let alpha_path = Self::precache_alpha_path(dir);
         let gamma_path = Self::precache_gamma_path(dir);
         let meta_path = Self::precache_meta_path(dir);
-        let mut alpha_store = backing_store::BackingStore::create_file_backed_sized(&alpha_path, requested * T::K)?;
-        let mut gamma_store = if self.party_id == PartyID::ID0 {
+        let alpha_store = backing_store::BackingStore::create_file_backed_sized(&alpha_path, requested * T::K)?;
+        let gamma_store = if self.party_id == PartyID::ID0 {
             backing_store::BackingStore::create_file_backed_sized(&gamma_path, requested)?
         } else {
             Self::remove_file_if_exists(&gamma_path)?;

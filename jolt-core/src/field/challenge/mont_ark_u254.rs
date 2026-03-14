@@ -3,7 +3,6 @@
 //!
 
 use crate::field::JoltField;
-use crate::impl_field_ops_inline;
 use allocative::Allocative;
 use ark_ff::UniformRand;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};

@@ -1,5 +1,3 @@
-use jolt_core::poly::identity_poly::UnmapRamAddressPolynomial;
-use jolt_core::poly::multilinear_polynomial::PolynomialEvaluation;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::poly::unipoly::UniPoly;
 use jolt_core::zkvm::ram::raf_evaluation::RafEvaluationSumcheck;

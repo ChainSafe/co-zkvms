@@ -22,7 +22,6 @@ use super::{binary, conversion, network::IoContext};
 
 use ark_linear_sumcheck::rng::FeedableRNG;
 use eyre::Context;
-use rand::Rng;
 use rand::RngCore;
 
 use jolt_core::field::FieldExt;
@@ -30,8 +29,6 @@ use jolt_core::field::FieldExt;
 use crate::protocols::additive::AdditiveShare;
 use crate::protocols::rep3::rngs::SSRandom;
 
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 
 /// Type alias for a [`Rep3PrimeFieldShare`]
 pub type FieldShare<F> = Rep3PrimeFieldShare<F>;

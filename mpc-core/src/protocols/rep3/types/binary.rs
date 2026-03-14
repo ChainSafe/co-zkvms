@@ -3,10 +3,8 @@ use itertools::Itertools;
 use std::marker::PhantomData;
 
 use crate::field::PrimeField;
-use ark_ff::Zero;
 use num_bigint::BigUint;
 
-use crate::protocols::rep3;
 
 /// This type represents a packed vector of replicated shared bits. Each additively shared vector is represented as [BigUint]. Thus, this type contains two [BigUint]s.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, CanonicalSerialize, CanonicalDeserialize)]

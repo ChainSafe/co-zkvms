@@ -12,7 +12,7 @@ use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
 use jolt_core::poly::unipoly::CompressedUniPoly;
 #[cfg(feature = "zk")]
 use jolt_core::poly::unipoly::UniPoly;
-use jolt_core::subprotocols::sumcheck::{process_eq_sumcheck_round, SumcheckInstanceProof};
+use jolt_core::subprotocols::sumcheck::SumcheckInstanceProof;
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::instruction_lookups::D as LOOKUP_D;
@@ -58,7 +58,7 @@ impl Rep3SpartanDag {
         let mut eq_poly = GruenSplitEqPolynomial::<F>::new(&tau, BindingOrder::LowToHigh);
 
         let mut r: Vec<F::Challenge> = Vec::with_capacity(num_rounds_x);
-        let mut polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds_x);
+        let _polys: Vec<CompressedUniPoly<F>> = Vec::with_capacity(num_rounds_x);
         let mut claim = F::zero();
         #[cfg(feature = "zk")]
         let pedersen_gens = {

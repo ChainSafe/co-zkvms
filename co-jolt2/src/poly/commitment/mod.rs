@@ -3,7 +3,7 @@ use crate::utils::types::MaybeShared;
 use jolt_core::field::JoltField;
 use jolt_core::transcripts::Transcript;
 use mpc_core::protocols::rep3::network::IoContextPool;
-use mpc_core::protocols::rep3::network::{Rep3NetworkCoordinator, Rep3NetworkWorker};
+use mpc_core::protocols::rep3::network::Rep3NetworkWorker;
 use mpc_core::protocols::rep3::PartyID;
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 use std::borrow::Borrow;

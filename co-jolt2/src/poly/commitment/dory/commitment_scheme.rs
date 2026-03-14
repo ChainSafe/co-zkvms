@@ -10,7 +10,7 @@ use jolt_core::jolt_optimizations;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
-use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkCoordinator, Rep3NetworkWorker};
+use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::PartyID;
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
@@ -860,7 +860,7 @@ pub fn msm_g2_affine(bases_aff: &[G2Affine], scalars: &[Fr]) -> G2Projective {
 type Bn254EllCoeff = (jolt_core::ark_bn254::Fq2, jolt_core::ark_bn254::Fq2, jolt_core::ark_bn254::Fq2);
 
 fn bn254_ell(f: &mut Fq12, coeffs: &Bn254EllCoeff, p: &G1Affine) {
-    let (mut c0, mut c1, mut c2) = *coeffs;
+    let (mut c0, mut c1, c2) = *coeffs;
     // BN254 has D-twist.
     c0.mul_assign_by_fp(&p.y);
     c1.mul_assign_by_fp(&p.x);
@@ -885,7 +885,7 @@ fn multi_pairing_both_affine(ps_aff: &[G1Affine], qs_aff: &[G2Affine]) -> Fq12 {
 
 fn multi_pairing_setup_g2_cached_affine(
     ps_aff: &[G1Affine],
-    setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
+    _setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
     g2_affine_all: &[G2Affine],
 ) -> Fq12 {
     Bn254::multi_pairing(ps_aff, &g2_affine_all[..ps_aff.len()]).0

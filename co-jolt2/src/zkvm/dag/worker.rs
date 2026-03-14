@@ -171,7 +171,7 @@ impl Rep3JoltDagWorker {
     /// Generate witness polynomials, commit shares, send commitments to
     /// coordinator, and open hint shares across parties.
     fn generate_and_commit_polynomials<F, PCS, ProofTranscript, N>(
-        party_id: PartyID,
+        _party_id: PartyID,
         state: &mut StateManagerWorker<'_, F, PCS>,
         io_ctx: &mut IoContextPool<N>,
         preproc: &mut PreprocessingPool<F>,
@@ -193,7 +193,7 @@ impl Rep3JoltDagWorker {
         // Populate the field-domain per-cycle witness cache (used for Spartan Stage1 and later).
         populate_cycle_witness_rep3(state, io_ctx, preproc)?;
 
-        let mut witness_polys = generate_witness_batch_rep3(&poly_keys, state, io_ctx, preproc)?;
+        let witness_polys = generate_witness_batch_rep3(&poly_keys, state, io_ctx, preproc)?;
 
         let instruction_one_hot_polys: [Rep3OneHotPolynomial<F>; D] = std::array::from_fn(|i| {
             let key = CommittedPolynomial::InstructionRa(i);

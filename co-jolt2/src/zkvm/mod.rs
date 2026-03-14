@@ -19,7 +19,7 @@ use jolt_core::field::JoltField;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::commitment::dory::DoryCommitmentScheme;
 use jolt_core::transcripts::{Blake2bTranscript, Transcript};
-use jolt_core::zkvm::{Jolt, JoltProverPreprocessing, JoltRV64IMAC};
+use jolt_core::zkvm::{Jolt, JoltProverPreprocessing};
 
 pub use jolt_core::zkvm::JoltRV32IM;
 
@@ -29,7 +29,6 @@ pub type JoltArch = JoltRV32IM;
 pub type JoltArch = JoltRV64IMAC;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
-use tracer::JoltDevice;
 
 // ---------------------------------------------------------------------------
 // Worker trait

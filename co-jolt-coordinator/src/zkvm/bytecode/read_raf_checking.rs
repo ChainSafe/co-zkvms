@@ -1,7 +1,5 @@
 use jolt_common::constants::REGISTER_COUNT;
 use jolt_core::poly::eq_poly::EqPolynomial;
-#[cfg(feature = "zk")]
-use jolt_core::poly::opening_proof::OpeningId;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::bytecode::read_raf_checking::ReadRafSumcheck;

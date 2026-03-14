@@ -8,16 +8,12 @@ use crate::{
     emulator::cpu::{Cpu, Xlen},
 };
 
-use super::andi::ANDI;
 use super::format::format_load::FormatLoad;
-use super::slli::SLLI;
-use super::srl::SRL;
-use super::virtual_assert_word_alignment::VirtualAssertWordAlignment;
 use super::virtual_lw::VirtualLW;
 #[cfg(feature = "rv64")]
 use super::virtual_sign_extend_word::VirtualSignExtendWord;
 use super::RAMRead;
-use super::{addi::ADDI, Instruction};
+use super::Instruction;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
 use super::{Cycle, RISCVInstruction, RISCVTrace};

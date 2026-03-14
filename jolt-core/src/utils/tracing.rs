@@ -1,12 +1,6 @@
-use std::path::Path;
 
 use tracing::info;
-use tracing_chrome::ChromeLayerBuilder;
-use tracing_forest::ForestLayer;
-use tracing_subscriber::filter::LevelFilter;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::registry::Registry;
-use tracing_subscriber::{EnvFilter, Layer};
+use tracing_subscriber::Layer;
 
 pub struct TracingGuard {
     _guard: Option<tracing_chrome::FlushGuard>,

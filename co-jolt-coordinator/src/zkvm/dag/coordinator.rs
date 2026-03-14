@@ -300,7 +300,7 @@ impl Rep3JoltDag {
         ProofTranscript: Transcript,
     {
         let max_num_rounds = instances.iter().map(BatchedSumcheckInstance::num_rounds).max().unwrap_or(0);
-        let num_instances = instances.len();
+        let _num_instances = instances.len();
 
         for (instance_idx, instance) in instances.iter().enumerate() {
             let constraint = instance.input_claim_constraint();

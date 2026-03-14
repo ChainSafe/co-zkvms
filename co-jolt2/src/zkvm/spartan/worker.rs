@@ -47,7 +47,7 @@ impl Rep3SpartanDagWorker {
         let key = UniformSpartanKey::<F>::new(num_steps);
         let num_constraints = UNIFORM_R1CS.len();
         let padded_num_constraints = key.padded_row_constraint_per_step();
-        let num_chunks =
+        let _num_chunks =
             core::cmp::min(rayon::current_num_threads().next_power_of_two() * 16, core::cmp::max(1, num_steps / 2));
 
         // Precompute Product shares = left_input * right_input for ALL rows.

@@ -10,7 +10,7 @@ use crate::protocols::{
         ring::{bit::Bit, int_ring::IntRing2k, ring_impl::RingElement},
     },
 };
-use ark_ff::{One, Zero};
+use ark_ff::One;
 use itertools::{Itertools, izip};
 use rand::{distributions::Standard, prelude::Distribution};
 use rayon::prelude::*;

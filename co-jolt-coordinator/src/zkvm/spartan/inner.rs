@@ -4,7 +4,7 @@ use jolt_core::poly::opening_proof::{OpeningId, OpeningPoint, SumcheckId, BIG_EN
 use jolt_core::subprotocols::blindfold::InputClaimConstraint;
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
-use jolt_core::zkvm::r1cs::inputs::{JoltR1CSInputs, ALL_R1CS_INPUTS};
+use jolt_core::zkvm::r1cs::inputs::ALL_R1CS_INPUTS;
 use jolt_core::zkvm::r1cs::key::UniformSpartanKey;
 use jolt_core::zkvm::witness::VirtualPolynomial;
 

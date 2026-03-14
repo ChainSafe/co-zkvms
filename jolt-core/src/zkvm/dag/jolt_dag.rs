@@ -13,7 +13,7 @@ use crate::subprotocols::blindfold::{
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance, SumcheckInstanceProof};
 use crate::transcripts::Transcript;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
-use crate::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial};
+use crate::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials};
 use anyhow::Context;
 
 #[cfg(feature = "zk")]
@@ -321,7 +321,7 @@ impl JoltDAG {
             .max()
             .unwrap_or(1)
             .next_power_of_two();
-        let stage_batching_coeffs = [
+        let _stage_batching_coeffs = [
             vec![F::one()],
             stage2_data.batching_coefficients.clone(),
             stage3_data.batching_coefficients.clone(),
@@ -432,7 +432,7 @@ impl JoltDAG {
             input_constraint_challenges: baked_input_challenges,
             extra_constraint_challenges: opening_data.constraint_coeffs.clone(),
         };
-        let oc_block_lens: Vec<usize> = oc_blocks.iter().map(|b| b.len()).collect();
+        let _oc_block_lens: Vec<usize> = oc_blocks.iter().map(|b| b.len()).collect();
         let r1cs =
             VerifierR1CSBuilder::<F>::new_with_extra(&stage_configs, &[extra_constraint], &baked, oc_blocks).build();
         drop(proofs);

@@ -14,7 +14,6 @@ use rayon::prelude::*;
 use std::path::PathBuf;
 #[cfg(feature = "test-utils")]
 use std::sync::OnceLock;
-use std::time::Duration;
 
 #[cfg(feature = "tracy-mem")]
 #[global_allocator]
@@ -33,10 +32,8 @@ use tracing::{info, info_span};
 use co_jolt2::host::jolt_device::Rep3ProgramIOInput;
 use co_jolt2::host::memory::Rep3Memory;
 use co_jolt2::utils::compute_ram_k;
-use co_jolt2::utils::memory::start_jemalloc_monitor;
 #[cfg(feature = "test-utils")]
 use co_jolt2::utils::tracing::start_rss_monitor;
-use co_jolt2::utils::tracing::{init_tracing_bench, worker_trace_file};
 use co_jolt2::zkvm::dag::preproc_budget::compute_edabit_budget;
 use co_jolt2::zkvm::instruction::Rep3Cycle;
 use co_jolt2::zkvm::JoltArch;

@@ -8,7 +8,6 @@
 //! For implementation details and benchmarks, see: *TODO: LINK*
 
 use crate::field::JoltField;
-use crate::impl_field_ops_inline;
 use allocative::Allocative;
 use ark_ff::{BigInt, PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};

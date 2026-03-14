@@ -1,13 +1,12 @@
 use std::sync::Arc;
 
-use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::multilinear_polynomial::BindingOrder;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::instruction_lookups::{D, K_CHUNK, LOG_K_CHUNK};
-use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
+use jolt_core::zkvm::witness::CommittedPolynomial;
 use mpc_core::protocols::additive::AdditiveShare;
 use mpc_core::protocols::rep3::PartyID;
 use mpc_core::protocols::rep3::Rep3PrimeFieldShare;

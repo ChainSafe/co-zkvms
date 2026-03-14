@@ -1,4 +1,3 @@
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use jolt_common::constants::{RAM_START_ADDRESS, RAM_WORD_SIZE};
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::opening_proof::SumcheckId;
@@ -10,7 +9,6 @@ use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{arithmetic as rep3_arith, PartyID, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3_ring::casts::r2f_b2a_many;
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
-use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use rayon::prelude::*;
 
 use crate::host::jolt_device::Rep3ProgramIOInput;

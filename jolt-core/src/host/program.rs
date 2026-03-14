@@ -80,7 +80,7 @@ impl Program {
     }
 
     #[tracing::instrument(skip_all, name = "Program::build")]
-    pub fn build_with_channel(&mut self, target_dir: &str, channel: &str) {
+    pub fn build_with_channel(&mut self, target_dir: &str, _channel: &str) {
         if self.elf.is_none() {
             // Check if a pre-built ELF already exists at the expected path
             #[cfg(feature = "rv64")]

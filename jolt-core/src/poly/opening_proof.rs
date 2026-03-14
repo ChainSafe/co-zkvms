@@ -14,14 +14,13 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use super::{
     commitment::commitment_scheme::CommitmentScheme, eq_poly::EqPolynomial,
-    multilinear_polynomial::MultilinearPolynomial,
 };
 use crate::{
     curve::JoltCurve,
     field::JoltField,
     subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance, SumcheckInstanceProof},
     transcripts::Transcript,
-    utils::{errors::ProofVerifyError, math::Math},
+    utils::errors::ProofVerifyError,
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 

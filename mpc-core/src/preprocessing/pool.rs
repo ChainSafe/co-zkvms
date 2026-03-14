@@ -11,7 +11,6 @@ use crate::protocols::rep3::PartyID;
 use crate::protocols::rep3::network::Rep3RawFieldTransport;
 use crate::protocols::rep3::network::{IoContext, IoContextPool, Rep3Network, Rep3NetworkWorker};
 use crate::protocols::rep3_ring::ring::int_ring::IntRing2k;
-use crate::protocols::rep3_ring::ring::ring_impl::RingElement;
 use crate::protocols::rep3_ring::ring::u34::U34;
 use crate::protocols::rep3_ring::ring::u66::U66;
 use rand::RngCore;
@@ -1284,7 +1283,7 @@ where
     let active_dabit_lanes = 1; // daBits benefit more from intra-chunk rayon parallelism than from lane splitting
 
     // Phase 1: Fork 6 Rep3Rands and snapshot seeds (local, no communication).
-    let mut rands: [Rep3Rand; 6] = std::array::from_fn(|_| io.main().rngs.rand.fork());
+    let rands: [Rep3Rand; 6] = std::array::from_fn(|_| io.main().rngs.rand.fork());
     let snaps: [_; 6] = std::array::from_fn(|i| rands[i].snapshot());
 
     // Helper: compute edaBit α2 for a contiguous item range from seed snapshots.

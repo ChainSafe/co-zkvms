@@ -32,7 +32,7 @@ use tracing::{info_span, trace_span};
 use crate::poly::compact_polynomial::Rep3CompactPolynomial;
 use crate::poly::dense_mlpoly::Rep3DensePolynomial;
 use crate::poly::one_hot_polynomial::Rep3OneHotPolynomial;
-use crate::poly::{Rep3MultilinearPolynomial, Rep3SharedPoly};
+use crate::poly::Rep3MultilinearPolynomial;
 use crate::utils::future_ring::{FutureRep3Ring, Rep3RingFutureExt};
 use crate::utils::memory::maybe_purge_jemalloc;
 use crate::utils::types::Either;

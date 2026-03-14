@@ -12,9 +12,8 @@ use crate::field::PrimeField;
 use crate::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use crate::protocols::rep3::{
     PartyID, Rep3PrimeFieldShare,
-    network::{IoContext, Rep3Network},
+    network::Rep3Network,
 };
-use crate::protocols::rep3_ring::{Rep3RingShare, ring::bit::Bit};
 use rand::{RngCore, SeedableRng};
 use rayon::prelude::*;
 

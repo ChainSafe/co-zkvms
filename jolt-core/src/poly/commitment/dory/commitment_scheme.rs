@@ -4,7 +4,7 @@ use super::dory_globals::{DoryGlobals, DoryLayout};
 use super::jolt_dory_routines::{JoltG1Routines, JoltG2Routines};
 use super::wrappers::{
     ark_to_jolt, jolt_to_ark, ArkDoryProof, ArkFr, ArkG1, ArkGT, ArkworksProverSetup, ArkworksVerifierSetup,
-    JoltG1Wrapper, JoltGTBn254, JoltToDoryTranscript, BN254,
+    JoltG1Wrapper, JoltToDoryTranscript, BN254,
 };
 use crate::{
     curve::JoltCurve,

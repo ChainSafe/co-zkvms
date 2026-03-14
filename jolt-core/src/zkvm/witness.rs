@@ -10,7 +10,7 @@ use strum::IntoEnumIterator;
 
 use crate::{
     utils::math::Math,
-    zkvm::{instruction_lookups, lookup_table::LookupTables},
+    zkvm::lookup_table::LookupTables,
 };
 
 use super::instruction::CircuitFlags;

@@ -3,7 +3,6 @@ use std::collections::BTreeMap;
 use crate::id::PartyID;
 use crate::Result;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use serde::{de::DeserializeOwned, Serialize};
 
 pub trait MpcStarNetCoordinator: Sized {
     fn receive_responses<T: CanonicalSerialize + CanonicalDeserialize>(&mut self) -> Result<Vec<T>>;

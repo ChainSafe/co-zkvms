@@ -23,17 +23,13 @@ use crate::{
     transcripts::Transcript,
     utils::{math::Math, thread::unsafe_allocate_zero_vec},
     zkvm::dag::state_manager::StateManager,
-    zkvm::{
-        ram::remap_address,
-        witness::{CommittedPolynomial, VirtualPolynomial},
-    },
+    zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
-use tracer::instruction::RAMAccess;
 
 /// A collection of vectors that are used in each of the first log(T / num_chunks)
 /// rounds of sumcheck. There is one `DataBuffers` struct per thread/chunk, reused

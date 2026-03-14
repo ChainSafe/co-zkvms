@@ -90,7 +90,7 @@ where
 
         let sigma = DoryGlobals::get_num_columns().log_2();
         let g1_all = setup_g1_projective(setup);
-        let g1_affine_all = G1Projective::normalize_batch(&g1_all[..(1 << sigma)]);
+        let _g1_affine_all = G1Projective::normalize_batch(&g1_all[..(1 << sigma)]);
         let g2_affine_all = G2Projective::normalize_batch(&setup_g2_projective(setup)[..(1 << sigma)]);
         let (row_commitments, row_mask_state, nu, l_vec, r_vec) = {
             let _span = trace_span!("init_receive_reconstruct").entered();

@@ -1,7 +1,6 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 #[cfg(feature = "test-utils")]
 use std::sync::OnceLock;
-use std::time::Duration;
 
 use clap::Parser;
 use co_jolt_coordinator::coordinate::coordinate_once;
@@ -155,7 +154,7 @@ fn coordinate_loop<N: Rep3NetworkCoordinator>(
     #[allow(unused_variables)] trace_dir: Option<PathBuf>,
 ) -> eyre::Result<()> {
     loop {
-        coordinate_once(network, |request| {
+        coordinate_once(network, |_request| {
             #[cfg(feature = "test-utils")]
             if let Some(trace_dir) = trace_dir.as_deref() {
                 init_trace_from_program_id(&request.program_id, trace_dir);

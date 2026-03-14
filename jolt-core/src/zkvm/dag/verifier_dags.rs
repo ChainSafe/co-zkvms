@@ -6,11 +6,9 @@ use crate::curve::JoltCurve;
 use crate::field::JoltField;
 use crate::poly::commitment::commitment_scheme::CommitmentScheme;
 use crate::poly::eq_poly::EqPolynomial;
-use crate::poly::multilinear_polynomial::BindingOrder;
 #[cfg(feature = "zk")]
 use crate::poly::opening_proof::OpeningId;
 use crate::poly::opening_proof::{OpeningPoint, SumcheckId};
-use crate::poly::split_eq_poly::GruenSplitEqPolynomial;
 use crate::subprotocols::sumcheck::SumcheckInstance;
 use crate::transcripts::Transcript;
 use crate::utils::math::Math;
@@ -303,7 +301,7 @@ impl RamDag {
             .borrow()
             .get_virtual_polynomial_opening(VirtualPolynomial::RamAddress, SumcheckId::SpartanOuter)
             .1;
-        let start_address = sm.preprocessing.shared.ram.min_bytecode_address;
+        let _start_address = sm.preprocessing.shared.ram.min_bytecode_address;
         let ra_claim = accumulator
             .borrow()
             .get_virtual_polynomial_opening(VirtualPolynomial::RamRa, SumcheckId::RamRafEvaluation)
@@ -667,12 +665,12 @@ impl BytecodeDag {
 
         // r_cycles from accumulator
         let acc = accumulator.borrow();
-        let r_cycle_1 = acc.get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter).0.r;
+        let _r_cycle_1 = acc.get_virtual_polynomial_opening(VirtualPolynomial::Imm, SumcheckId::SpartanOuter).0.r;
         let r_2 =
             acc.get_virtual_polynomial_opening(VirtualPolynomial::Rs1Ra, SumcheckId::RegistersReadWriteChecking).0;
-        let (_, r_cycle_2) = r_2.split_at_r((common::constants::REGISTER_COUNT as usize).log_2());
+        let (_, _r_cycle_2) = r_2.split_at_r((common::constants::REGISTER_COUNT as usize).log_2());
         let r_3 = acc.get_virtual_polynomial_opening(VirtualPolynomial::RdWa, SumcheckId::RegistersValEvaluation).0;
-        let (_, r_cycle_3) = r_3.split_at_r((common::constants::REGISTER_COUNT as usize).log_2());
+        let (_, _r_cycle_3) = r_3.split_at_r((common::constants::REGISTER_COUNT as usize).log_2());
         drop(acc);
 
         let val_polys = [val_1, val_2, val_3];

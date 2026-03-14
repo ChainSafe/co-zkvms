@@ -13,14 +13,12 @@ pub mod rngs;
 pub mod test_utils;
 pub mod types;
 
-use std::marker::PhantomData;
 
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use num_bigint::BigUint;
 
 use crate::field::PrimeField;
 use ark_ff::One;
-use rand::{CryptoRng, Rng, SeedableRng, distributions::Standard, prelude::Distribution};
+use rand::{CryptoRng, Rng, prelude::Distribution};
 
 pub use crate::network::PartyID;
 pub use arithmetic::Rep3PrimeFieldShare;

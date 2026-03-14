@@ -18,10 +18,7 @@ use crate::{
         math::Math,
         thread::{drop_in_background_thread, unsafe_allocate_zero_vec},
     },
-    zkvm::{
-        ram::remap_address,
-        witness::{compute_d_parameter, CommittedPolynomial, DTH_ROOT_OF_K},
-    },
+    zkvm::witness::{CommittedPolynomial, DTH_ROOT_OF_K},
 };
 
 #[derive(Allocative)]

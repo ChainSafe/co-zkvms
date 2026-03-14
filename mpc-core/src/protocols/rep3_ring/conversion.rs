@@ -15,14 +15,11 @@ use crate::protocols::{
 };
 use crate::{
     IoResult,
-    protocols::{
-        rep3::{
+    protocols::rep3::{
             self,
             conversion::MPCType,
             network::{IoContext, Rep3Network},
         },
-        rep3_ring,
-    },
 };
 use itertools::{Itertools, izip};
 use rand::{distributions::Standard, prelude::Distribution};

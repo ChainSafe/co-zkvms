@@ -3,22 +3,14 @@ use serde::{Deserialize, Serialize};
 use crate::{
     declare_riscv_instr,
     emulator::cpu::{Cpu, Xlen},
-    instruction::{ori::ORI, srli::SRLI},
     utils::inline_helpers::InstrAssembler,
 };
 
-use super::addi::ADDI;
-use super::and::AND;
-use super::andi::ANDI;
 #[cfg(feature = "rv64")]
 use super::ld::LD;
 #[cfg(feature = "rv64")]
 use super::sd::SD;
-use super::sll::SLL;
-use super::slli::SLLI;
-use super::virtual_assert_word_alignment::VirtualAssertWordAlignment;
 use super::virtual_sw::VirtualSW;
-use super::xor::XOR;
 use super::Instruction;
 use super::RAMWrite;
 use crate::utils::virtual_registers::VirtualRegisterAllocator;

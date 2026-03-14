@@ -4,17 +4,13 @@ use futures::{Sink, SinkExt, Stream, StreamExt, TryStreamExt};
 use quinn::{RecvStream, SendStream};
 use std::{
     io,
-    marker::{PhantomData, Unpin},
+    marker::Unpin,
     pin::Pin,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
+    sync::Arc,
     time::Duration,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    runtime::Handle,
     sync::{mpsc, oneshot, Mutex, OwnedSemaphorePermit, Semaphore},
 };
 use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite, LengthDelimitedCodec};

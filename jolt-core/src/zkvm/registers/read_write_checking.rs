@@ -18,7 +18,7 @@ use crate::{
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
     utils::{math::Math, thread::unsafe_allocate_zero_vec},
-    zkvm::{witness::CommittedPolynomial, JoltProverPreprocessing},
+    zkvm::witness::CommittedPolynomial,
 };
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
@@ -28,7 +28,6 @@ use fixedbitset::FixedBitSet;
 use num_traits::Zero;
 use rayon::prelude::*;
 use std::{cell::RefCell, rc::Rc};
-use tracer::instruction::Cycle;
 
 const K: usize = REGISTER_COUNT as usize;
 

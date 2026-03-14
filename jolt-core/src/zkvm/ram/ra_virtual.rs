@@ -2,17 +2,14 @@ use num_traits::Zero;
 use std::cell::RefCell;
 use std::iter::zip;
 use std::rc::Rc;
-use std::sync::Arc;
 
 use crate::poly::multilinear_polynomial::PolynomialEvaluation;
 use crate::poly::opening_proof::{OpeningId, OpeningPoint, SumcheckId, VerifierOpeningAccumulator, BIG_ENDIAN};
 use crate::poly::ra_poly::RaPolynomial;
-use crate::zkvm::ram::remap_address;
-use crate::zkvm::witness::{compute_d_parameter, CommittedPolynomial, VirtualPolynomial, DTH_ROOT_OF_K};
+use crate::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use crate::{
     field::JoltField,
     poly::{
-        dense_mlpoly::DensePolynomial,
         eq_poly::EqPolynomial,
         multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding},
     },

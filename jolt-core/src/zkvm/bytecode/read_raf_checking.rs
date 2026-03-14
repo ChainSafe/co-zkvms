@@ -17,10 +17,10 @@ use crate::{
     },
     subprotocols::sumcheck::SumcheckInstance,
     transcripts::Transcript,
-    utils::{expanding_table::ExpandingTable, math::Math, small_scalar::SmallScalar, thread::unsafe_allocate_zero_vec},
+    utils::{expanding_table::ExpandingTable, math::Math, small_scalar::SmallScalar},
     zkvm::{
         instruction::{CircuitFlags, InstructionFlags, InstructionLookup, InterleavedBitsMarker, NUM_CIRCUIT_FLAGS},
-        lookup_table::{LookupTables, NUM_LOOKUP_TABLES},
+        lookup_table::LookupTables,
         witness::{CommittedPolynomial, VirtualPolynomial},
     },
 };
@@ -94,7 +94,7 @@ impl<F: JoltField> ReadRafSumcheck<F> {
     ) -> Self {
         let log_K_chunk = log_K.div_ceil(d);
         let K_chunk = 1 << log_K_chunk;
-        let K = 1 << log_K;
+        let _K = 1 << log_K;
         let gamma_sqr = gamma.square();
         let gamma_cub = gamma_sqr * gamma;
 

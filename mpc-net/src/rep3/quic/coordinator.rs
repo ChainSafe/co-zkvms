@@ -10,10 +10,10 @@ use bytes::{Bytes, BytesMut};
 use bytesize::ByteSize;
 use color_eyre::eyre::{self, Report};
 use color_eyre::eyre::{bail, Context};
-use quinn::{Connection, Endpoint, IdleTimeout, RecvStream, SendStream, TransportConfig, VarInt};
+use quinn::{Connection, Endpoint, RecvStream, SendStream, VarInt};
 use serde::{de::DeserializeOwned, Serialize};
 use std::io;
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, sync::Arc};
 use tokio::io::AsyncReadExt;
 use tokio_util::codec::{Decoder, Encoder, LengthDelimitedCodec};
 

@@ -16,7 +16,7 @@ use crate::{
 };
 use itertools::izip;
 use num_traits::{One, Zero};
-use rand::{Rng, distributions::Standard, prelude::Distribution};
+use rand::{distributions::Standard, prelude::Distribution};
 
 use rayon::prelude::*;
 

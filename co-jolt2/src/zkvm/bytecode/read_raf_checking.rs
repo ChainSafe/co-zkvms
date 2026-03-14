@@ -1,9 +1,7 @@
-use jolt_common::constants::REGISTER_COUNT;
-use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::poly::unipoly::UniPoly;
 use jolt_core::zkvm::bytecode::read_raf_checking::ReadRafSumcheck;
-use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
+use jolt_core::zkvm::witness::CommittedPolynomial;
 use mpc_core::protocols::rep3::PartyID;
 
 use crate::poly::opening_proof::Rep3OpeningAccumulatorWorker;
