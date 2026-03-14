@@ -87,6 +87,20 @@ impl<T: IntRing2k, F: PrimeField> EdaBitsBatchScratch<T, F> {
     }
 }
 
+pub struct ForkedB2aScratch<T: IntRing2k, F: PrimeField> {
+    pub batch: EdaBitsBatchScratch<T, F>,
+    pub cast: crate::protocols::rep3_ring::casts::R2fB2aScratch<T, F>,
+}
+
+impl<T: IntRing2k, F: PrimeField> Default for ForkedB2aScratch<T, F> {
+    fn default() -> Self {
+        Self {
+            batch: EdaBitsBatchScratch::default(),
+            cast: crate::protocols::rep3_ring::casts::R2fB2aScratch::default(),
+        }
+    }
+}
+
 impl<T: IntRing2k, F: PrimeField> EdaBitsBatch<T, F> {
     pub fn as_ref(&self) -> EdaBitsBatchRef<'_, T, F> {
         EdaBitsBatchRef { gammas: &self.gammas, alphas_flat: &self.alphas_flat }
@@ -127,6 +141,10 @@ impl<'a, T: IntRing2k, F: PrimeField> EdaBitsReservation<'a, T, F> {
         self.root.len
     }
 
+    pub fn is_fully_backed(&self) -> bool {
+        self.root.is_fully_backed()
+    }
+
     pub fn range_view(&self, start: usize, len: usize) -> EdaBitsRangeView<'a, T, F> {
         debug_assert!(start + len <= self.root.len);
         EdaBitsRangeView {
@@ -144,6 +162,20 @@ impl<'a, T: IntRing2k, F: PrimeField> EdaBitsReservation<'a, T, F> {
             seed2: self.root.seed2,
             pos2: self.root.pos2,
         }
+    }
+}
+
+impl<'a, T: IntRing2k, F: PrimeField> EdaBitsRangeView<'a, T, F> {
+    pub fn is_fully_backed(&self) -> bool {
+        if self.len == 0 || self.alpha_view.is_none() {
+            return self.len == 0;
+        }
+        let cached = if self.cached_len == 0 || self.start_cursor < self.cached_start_cursor {
+            0
+        } else {
+            (self.cached_start_cursor + self.cached_len - self.start_cursor).min(self.len)
+        };
+        cached == self.len && (self.party_id != PartyID::ID0 || self.gamma_view.is_some())
     }
 }
 

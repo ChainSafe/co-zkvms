@@ -6,7 +6,7 @@ use mpc_core::protocols::{
     },
     rep3_ring::{
         self,
-        edabits::PreprocessingPool,
+        edabits::{EdaBitsBatchScratch, EdaBitsRangeView, ForkedB2aScratch, PreprocessingPool},
         ring::{bit::Bit, int_ring::IntRing2k},
         Rep3RingShare, Rep3RingSignedShare,
     },
@@ -396,10 +396,30 @@ where
             rep3_ring::conversion::a2b_many(&xs, ctx).map_err(eyre::Error::from)
         })?;
         // Step 2: B2A via edaBits (1 broadcast round)
-        let batch = preproc.take_edabits::<R>(binary.len())?;
-        let shares = io_ctx.par_chunks_preproc(binary, batch, None, |xs, batch, ctx| {
-            casts::r2f_b2a_preproc_many::<R, F, _>(&xs, &batch, ctx)
-        })?;
+        let shares = {
+            let mut session = preproc.begin_forkable_session();
+            let reserved = session.reserve_edabits::<R>(binary.len())?;
+            let mut scratch: Vec<ForkedB2aScratch<R, F>> =
+                (0..io_ctx.max_forks().max(1)).map(|_| ForkedB2aScratch::default()).collect();
+            let shares = io_ctx.par_chunks_preproc(
+                &binary,
+                None,
+                &mut scratch,
+                |start, len| reserved.range_view(start, len),
+                |_, xs, view: EdaBitsRangeView<'_, R, F>, ctx, scratch| {
+                    view.fill_into_par_safe(&mut scratch.batch)?;
+                    casts::r2f_b2a_preproc_many_into::<R, F, _>(
+                        xs,
+                        scratch.batch.as_ref(),
+                        ctx,
+                        &mut scratch.cast,
+                    )?;
+                    Ok::<_, eyre::Report>(scratch.cast.take_output())
+                },
+            )?;
+            session.finalize_success();
+            shares
+        };
         for k in 0..shares.len() {
             out[buckets.cast_idx[k]] = map(shares[k], buckets.cast_args[k]);
         }
@@ -407,10 +427,30 @@ where
 
     // Cast B2A (binary/XOR ring → field) via Protocol Π₂ edaBits — distributed across forks
     if !buckets.b2a_x.is_empty() {
-        let batch = preproc.take_edabits::<R>(buckets.b2a_x.len())?;
-        let shares = io_ctx.par_chunks_preproc(buckets.b2a_x, batch, None, |xs, batch, ctx| {
-            casts::r2f_b2a_preproc_many::<R, F, _>(&xs, &batch, ctx)
-        })?;
+        let shares = {
+            let mut session = preproc.begin_forkable_session();
+            let reserved = session.reserve_edabits::<R>(buckets.b2a_x.len())?;
+            let mut scratch: Vec<ForkedB2aScratch<R, F>> =
+                (0..io_ctx.max_forks().max(1)).map(|_| ForkedB2aScratch::default()).collect();
+            let shares = io_ctx.par_chunks_preproc(
+                &buckets.b2a_x,
+                None,
+                &mut scratch,
+                |start, len| reserved.range_view(start, len),
+                |_, xs, view: EdaBitsRangeView<'_, R, F>, ctx, scratch| {
+                    view.fill_into_par_safe(&mut scratch.batch)?;
+                    casts::r2f_b2a_preproc_many_into::<R, F, _>(
+                        xs,
+                        scratch.batch.as_ref(),
+                        ctx,
+                        &mut scratch.cast,
+                    )?;
+                    Ok::<_, eyre::Report>(scratch.cast.take_output())
+                },
+            )?;
+            session.finalize_success();
+            shares
+        };
         for k in 0..shares.len() {
             out[buckets.b2a_idx[k]] = map(shares[k], buckets.b2a_args[k]);
         }

@@ -54,6 +54,10 @@ impl<T: IntRing2k, F: PrimeField> R2fB2aScratch<T, F> {
     pub fn output(&self) -> &[Rep3PrimeFieldShare<F>] {
         &self.out
     }
+
+    pub fn take_output(&mut self) -> Vec<Rep3PrimeFieldShare<F>> {
+        std::mem::take(&mut self.out)
+    }
 }
 
 /// A downcast of a Rep3RingShare from a larger ring to a smaller ring, truncating the excess bits.

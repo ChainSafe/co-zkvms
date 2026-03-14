@@ -6,7 +6,9 @@
 use crate::utils::types::rep3_value::Rep3Value;
 use jolt_core::field::JoltField;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
-use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
+use mpc_core::protocols::rep3_ring::edabits::{
+    EdaBitsBatchScratch, EdaBitsRangeView, ForkedB2aScratch, PreprocessingPool,
+};
 use mpc_core::protocols::rep3_ring::ring::bit::Bit;
 use mpc_core::protocols::rep3_ring::ring::int_ring::IntRing2k;
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
@@ -209,21 +211,39 @@ impl<F: JoltField> SuffixFutureBatch<F> {
                         let end = (off + b2a_outer_chunk).min(total);
                         let chunk_len = end - off;
 
-                        let batch = pool.take_edabits::<$ring>(chunk_len)?;
                         let _span = tracing::trace_span!("ring_to_field_b2a_many", n = chunk_len).entered();
-
-                        let chunk_vals: Vec<Rep3RingShare<$ring>> = self.$val[off..end].to_vec();
                         let max_forks_cap = b2a_max_forks_cap.unwrap_or(io_ctx.max_forks()).max(1);
                         let forks_by_size = chunk_len.div_ceil(b2a_min_inner_chunk);
                         let forks_effective = forks_by_size.clamp(1, max_forks_cap);
 
                         let fields = if io_ctx.max_forks() == 0 || forks_effective <= 1 {
+                            let batch = pool.take_edabits::<$ring>(chunk_len)?;
+                            let chunk_vals: Vec<Rep3RingShare<$ring>> = self.$val[off..end].to_vec();
                             casts::r2f_b2a_preproc_many::<$ring, F, _>(&chunk_vals, &batch, io_ctx.main())?
                         } else {
                             let inner_chunk_size = chunk_len.div_ceil(forks_effective);
-                            io_ctx.par_chunks_preproc(chunk_vals, batch, Some(inner_chunk_size), |xs, b, ctx| {
-                                casts::r2f_b2a_preproc_many::<$ring, F, _>(&xs, &b, ctx)
-                            })?
+                            let mut session = pool.begin_forkable_session();
+                            let reserved = session.reserve_edabits::<$ring>(chunk_len)?;
+                            let mut scratch: Vec<ForkedB2aScratch<$ring, F>> =
+                                (0..forks_effective).map(|_| ForkedB2aScratch::default()).collect();
+                            let fields = io_ctx.par_chunks_preproc(
+                                &self.$val[off..end],
+                                Some(inner_chunk_size),
+                                &mut scratch,
+                                |start, len| reserved.range_view(start, len),
+                                |_, xs, view: EdaBitsRangeView<'_, $ring, F>, ctx, scratch| {
+                                    view.fill_into_par_safe(&mut scratch.batch)?;
+                                    casts::r2f_b2a_preproc_many_into::<$ring, F, _>(
+                                        xs,
+                                        scratch.batch.as_ref(),
+                                        ctx,
+                                        &mut scratch.cast,
+                                    )?;
+                                    Ok::<_, eyre::Report>(scratch.cast.take_output())
+                                },
+                            )?;
+                            session.finalize_success();
+                            fields
                         };
                         drop(_span);
 
