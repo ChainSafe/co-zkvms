@@ -4,7 +4,8 @@ use std::collections::HashMap;
 use std::mem;
 use std::sync::Arc;
 
-use jolt_common::constants::{LookupIndexInt, XlenInt, XLEN};
+use jolt_common::constants::{ArithmeticWideInt, LookupIndexInt, XlenInt, XLEN};
+use mpc_core::protocols::rep3::PartyID;
 use jolt_core::field::JoltField;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
@@ -18,7 +19,9 @@ use jolt_core::zkvm::{instruction_lookups, JoltProverPreprocessing};
 use mpc_core::protocols::rep3::network::{IoContext, IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{arithmetic::promote_to_trivial_share, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3_ring::casts;
-use mpc_core::protocols::rep3_ring::edabits::{EdaBitsBatchScratch, PreprocessingPool};
+use mpc_core::protocols::rep3_ring::edabits::{EdaBitsBatchScratch, EdaBitsRangeView, PreprocessingPool};
+#[cfg(not(feature = "ring-msm"))]
+use mpc_core::protocols::rep3_ring::conversion as ring_conv;
 use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use rand::distributions::{Distribution, Standard};
@@ -174,7 +177,7 @@ where
             None,
             &mut cast_scratch,
             |start, len| reserved.range_view(start, len),
-            |start, xs, view, ctx, scratch| {
+            |start, xs, view: EdaBitsRangeView<'_, XlenInt, F>, ctx, scratch| {
                 view.fill_into_par_safe(&mut scratch.batch)?;
 
                 casts::r2f_b2a_preproc_many_into::<XlenInt, F, _>(xs, scratch.batch.as_ref(), ctx, &mut scratch.cast)?;
@@ -274,13 +277,13 @@ fn compute_right_operand_public(cycle: &Rep3Cycle) -> Option<u64> {
 
 /// Mirrors vanilla `WitnessData` but uses `Rep3RingShare` for shared fields.
 struct Rep3WitnessData {
-    rd_pre: Vec<Rep3RingShare<XlenInt>>,
-    rd_post: Vec<Rep3RingShare<XlenInt>>,
+    /// Biased rd increment: `post - pre + 2^XLEN` (always non-negative, fits ArithmeticWideInt).
+    rd_biased_inc: Vec<Rep3RingShare<ArithmeticWideInt>>,
+    /// Biased ram increment: `post - pre + 2^XLEN` (always non-negative, fits ArithmeticWideInt).
+    ram_biased_inc: Vec<Rep3RingShare<ArithmeticWideInt>>,
     write_lookup_output_to_rd: Vec<u8>,
     write_pc_to_rd: Vec<u8>,
     should_jump: Vec<u8>,
-    ram_pre: Vec<Rep3RingShare<XlenInt>>,
-    ram_post: Vec<Rep3RingShare<XlenInt>>,
     // Deferred: instruction_ra (needs to_lookup_index_rep3)
     instruction_ra: [Vec<Option<Rep3RingShare<u8>>>; instruction_lookups::D],
     bytecode_ra: Vec<Vec<Option<u8>>>,
@@ -290,13 +293,11 @@ struct Rep3WitnessData {
 impl Rep3WitnessData {
     fn new(trace_len: usize, ram_d: usize, bytecode_d: usize) -> Self {
         Self {
-            rd_pre: vec![Rep3RingShare::default(); trace_len],
-            rd_post: vec![Rep3RingShare::default(); trace_len],
+            rd_biased_inc: vec![Rep3RingShare::default(); trace_len],
+            ram_biased_inc: vec![Rep3RingShare::default(); trace_len],
             write_lookup_output_to_rd: vec![0; trace_len],
             write_pc_to_rd: vec![0; trace_len],
             should_jump: vec![0; trace_len],
-            ram_pre: vec![Rep3RingShare::default(); trace_len],
-            ram_post: vec![Rep3RingShare::default(); trace_len],
 
             instruction_ra: array::from_fn(|_| vec![None; trace_len]),
             bytecode_ra: (0..bytecode_d).map(|_| vec![None; trace_len]).collect(),
@@ -716,10 +717,20 @@ where
                 let cycle = &trace[i];
                 let batch_ref = unsafe { &mut *batch_cell.0.get() };
 
-                // Rd write: (rd_write_flag, pre, post)
+                // Rd write: biased_inc = post - pre + 2^XLEN (arithmetic domain)
                 let (rd_write_flag, pre, post) = cycle.rd_write();
-                batch_ref.rd_pre[i] = pre.as_binary_or_trivial(party_id);
-                batch_ref.rd_post[i] = post.as_binary_or_trivial(party_id);
+                {
+                    let a_post = post.as_arithmetic_or_trivial_wide(party_id);
+                    let a_pre = pre.as_arithmetic_or_trivial_wide(party_id);
+                    let mut biased = a_post - a_pre;
+                    // Add public bias 2^XLEN to one party's share
+                    match party_id {
+                        PartyID::ID0 => biased.a += RingElement(1 << XLEN),
+                        PartyID::ID1 => biased.b += RingElement(1 << XLEN),
+                        PartyID::ID2 => {}
+                    }
+                    batch_ref.rd_biased_inc[i] = biased;
+                }
 
                 let circuit_flags = cycle.instruction().circuit_flags();
 
@@ -739,10 +750,26 @@ where
                 };
                 batch_ref.should_jump[i] = is_jump * (1 - is_next_noop);
 
-                // RAM inc data
+                // RAM inc: biased_inc = post - pre + 2^XLEN (arithmetic domain)
                 if let Rep3RAMAccess::Write(w) = cycle.ram_access() {
-                    batch_ref.ram_pre[i] = w.pre_value.as_binary_or_trivial(party_id);
-                    batch_ref.ram_post[i] = w.post_value.as_binary_or_trivial(party_id);
+                    let a_post = w.post_value.as_arithmetic_or_trivial_wide(party_id);
+                    let a_pre = w.pre_value.as_arithmetic_or_trivial_wide(party_id);
+                    let mut biased = a_post - a_pre;
+                    match party_id {
+                        PartyID::ID0 => biased.a += RingElement(1 << XLEN),
+                        PartyID::ID1 => biased.b += RingElement(1 << XLEN),
+                        PartyID::ID2 => {}
+                    }
+                    batch_ref.ram_biased_inc[i] = biased;
+                } else {
+                    // Non-write cycles: inc = 0, biased = 2^XLEN
+                    let mut biased = Rep3RingShare::<ArithmeticWideInt>::default();
+                    match party_id {
+                        PartyID::ID0 => biased.a += RingElement(1 << XLEN),
+                        PartyID::ID1 => biased.b += RingElement(1 << XLEN),
+                        PartyID::ID2 => {}
+                    }
+                    batch_ref.ram_biased_inc[i] = biased;
                 }
 
                 // BytecodeRa indices
@@ -885,7 +912,7 @@ where
                 #[cfg(feature = "ring-msm")]
                 {
                     let compact = Rep3CompactPolynomial::from_operands(mem::take(&mut left_ops));
-                    results.insert(*poly, Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(compact)));
+                    results.insert(*poly, Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RingScalars(compact)));
                 }
                 #[cfg(not(feature = "ring-msm"))]
                 {
@@ -901,7 +928,7 @@ where
                 #[cfg(feature = "ring-msm")]
                 {
                     let compact = Rep3CompactPolynomial::from_operands(mem::take(&mut right_ops));
-                    results.insert(*poly, Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::CompactRing(compact)));
+                    results.insert(*poly, Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RingScalars(compact)));
                 }
                 #[cfg(not(feature = "ring-msm"))]
                 {
@@ -929,78 +956,98 @@ where
                 results.insert(*poly, Rep3MultilinearPolynomial::Public(MultilinearPolynomial::<F>::from(coeffs)));
             }
             CommittedPolynomial::RdInc => {
-                // rd_inc = rd_post - rd_pre in the field (binary shares → EdaBits B2A)
-                let n = batch.rd_pre.len();
-                let rd_pre: Vec<Rep3RingShare<XlenInt>> = std::mem::take(&mut batch.rd_pre);
-                let rd_post: Vec<Rep3RingShare<XlenInt>> = std::mem::take(&mut batch.rd_post);
-                debug_assert_eq!(rd_pre.len(), n);
-                debug_assert_eq!(rd_post.len(), n);
-
-                let _span =
-                    trace_span!("rd_inc_b2a", n, chunk = inc_b2a_chunk, max_forks = inc_b2a_max_forks).entered();
-                let mut inc: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(n);
-                for off in (0..n).step_by(inc_b2a_chunk) {
-                    let end = (off + inc_b2a_chunk).min(n);
-                    let chunk_len = end - off;
-                    let mut combined: Vec<Rep3RingShare<XlenInt>> = Vec::with_capacity(2 * chunk_len);
-                    combined.extend_from_slice(&rd_pre[off..end]);
-                    combined.extend_from_slice(&rd_post[off..end]);
-
-                    let batch_eda = preproc.take_edabits::<XlenInt>(2 * chunk_len)?;
-                    let field_all: Vec<Rep3PrimeFieldShare<F>> = if inc_b2a_max_forks <= 1 {
-                        casts::r2f_b2a_preproc_many::<XlenInt, F, _>(&combined, &batch_eda, io_ctx.main())?
-                    } else {
-                        let chunk_size = (combined.len()).div_ceil(inc_b2a_max_forks);
-                        io_ctx.par_chunks_preproc(combined, batch_eda, Some(chunk_size), |xs, b, c| {
-                            casts::r2f_b2a_preproc_many::<XlenInt, F, _>(&xs, &b, c)
-                        })?
-                    };
-                    debug_assert_eq!(field_all.len(), 2 * chunk_len);
-                    for i in 0..chunk_len {
-                        inc.push(field_all[chunk_len + i] - field_all[i]);
-                    }
+                let biased_arith = std::mem::take(&mut batch.rd_biased_inc);
+                let n = biased_arith.len();
+                #[cfg(feature = "ring-msm")]
+                {
+                    // Ring-msm: store as IRingScalars, defer field conversion to worker.rs
+                    let coeffs: Vec<Rep3Operand> = biased_arith
+                        .iter()
+                        .map(|a| Rep3Operand::Shared {
+                            binary: Rep3RingShare::default(), // placeholder, IRingScalars MSM uses A2B internally
+                            arithmetic: Some(*a),
+                            public: None,
+                        })
+                        .collect();
+                    let compact = Rep3CompactPolynomial::from_operands(coeffs);
+                    results.insert(*poly, Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::IRingScalars(compact)));
                 }
-                drop(_span);
-                let dense = Rep3DensePolynomial::new(inc);
-                state.prover_state.cycle_witness.set_stage2_incs(Some(dense.clone()), None);
-                results.insert(*poly, Rep3MultilinearPolynomial::shared(dense));
+                #[cfg(not(feature = "ring-msm"))]
+                {
+                    // Non-ring-msm: A2B → r2f_b2a → sub_public(2^XLEN), chunked to limit RSS.
+                    let _span = info_span!("rd_inc_biased_b2a", n, chunk = inc_b2a_chunk).entered();
+                    let bias_f = F::from_u64(1u64 << XLEN);
+                    let mut inc: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(n);
+                    for off in (0..n).step_by(inc_b2a_chunk) {
+                        let end = (off + inc_b2a_chunk).min(n);
+                        let chunk = &biased_arith[off..end];
+                        let biased_bin = ring_conv::a2b_many(chunk, io_ctx.main())?;
+                        let batch_eda = preproc.take_edabits::<ArithmeticWideInt>(chunk.len())?;
+                        let biased_field: Vec<Rep3PrimeFieldShare<F>> = if inc_b2a_max_forks <= 1 {
+                            casts::r2f_b2a_preproc_many::<ArithmeticWideInt, F, _>(
+                                &biased_bin, &batch_eda, io_ctx.main(),
+                            )?
+                        } else {
+                            let chunk_size = biased_bin.len().div_ceil(inc_b2a_max_forks);
+                            io_ctx.par_chunks_preproc(biased_bin, batch_eda, Some(chunk_size), |xs, b, c| {
+                                casts::r2f_b2a_preproc_many::<ArithmeticWideInt, F, _>(&xs, &b, c)
+                            })?
+                        };
+                        inc.extend(biased_field.into_iter().map(|s| {
+                            mpc_core::protocols::rep3::arithmetic::sub_shared_by_public(s, bias_f, party_id)
+                        }));
+                    }
+                    drop(_span);
+                    let dense = Rep3DensePolynomial::new(inc);
+                    state.prover_state.cycle_witness.set_stage2_incs(Some(dense.clone()), None);
+                    results.insert(*poly, Rep3MultilinearPolynomial::shared(dense));
+                }
             }
             CommittedPolynomial::RamInc => {
-                // ram_inc = post_value - pre_value in the field (binary shares → EdaBits B2A)
-                let n = batch.ram_pre.len();
-                let ram_pre: Vec<Rep3RingShare<XlenInt>> = std::mem::take(&mut batch.ram_pre);
-                let ram_post: Vec<Rep3RingShare<XlenInt>> = std::mem::take(&mut batch.ram_post);
-                debug_assert_eq!(ram_pre.len(), n);
-                debug_assert_eq!(ram_post.len(), n);
-
-                let _span =
-                    trace_span!("ram_inc_b2a", n, chunk = inc_b2a_chunk, max_forks = inc_b2a_max_forks).entered();
-                let mut inc: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(n);
-                for off in (0..n).step_by(inc_b2a_chunk) {
-                    let end = (off + inc_b2a_chunk).min(n);
-                    let chunk_len = end - off;
-                    let mut combined: Vec<Rep3RingShare<XlenInt>> = Vec::with_capacity(2 * chunk_len);
-                    combined.extend_from_slice(&ram_pre[off..end]);
-                    combined.extend_from_slice(&ram_post[off..end]);
-
-                    let batch_eda = preproc.take_edabits::<XlenInt>(2 * chunk_len)?;
-                    let field_all: Vec<Rep3PrimeFieldShare<F>> = if inc_b2a_max_forks <= 1 {
-                        casts::r2f_b2a_preproc_many::<XlenInt, F, _>(&combined, &batch_eda, io_ctx.main())?
-                    } else {
-                        let chunk_size = (combined.len()).div_ceil(inc_b2a_max_forks);
-                        io_ctx.par_chunks_preproc(combined, batch_eda, Some(chunk_size), |xs, b, c| {
-                            casts::r2f_b2a_preproc_many::<XlenInt, F, _>(&xs, &b, c)
-                        })?
-                    };
-                    debug_assert_eq!(field_all.len(), 2 * chunk_len);
-                    for i in 0..chunk_len {
-                        inc.push(field_all[chunk_len + i] - field_all[i]);
-                    }
+                let biased_arith = std::mem::take(&mut batch.ram_biased_inc);
+                let n = biased_arith.len();
+                #[cfg(feature = "ring-msm")]
+                {
+                    let coeffs: Vec<Rep3Operand> = biased_arith
+                        .iter()
+                        .map(|a| Rep3Operand::Shared {
+                            binary: Rep3RingShare::default(),
+                            arithmetic: Some(*a),
+                            public: None,
+                        })
+                        .collect();
+                    let compact = Rep3CompactPolynomial::from_operands(coeffs);
+                    results.insert(*poly, Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::IRingScalars(compact)));
                 }
-                drop(_span);
-                let dense = Rep3DensePolynomial::new(inc);
-                state.prover_state.cycle_witness.set_stage2_incs(None, Some(dense.clone()));
-                results.insert(*poly, Rep3MultilinearPolynomial::shared(dense));
+                #[cfg(not(feature = "ring-msm"))]
+                {
+                    let _span = info_span!("ram_inc_biased_b2a", n, chunk = inc_b2a_chunk).entered();
+                    let bias_f = F::from_u64(1u64 << XLEN);
+                    let mut inc: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(n);
+                    for off in (0..n).step_by(inc_b2a_chunk) {
+                        let end = (off + inc_b2a_chunk).min(n);
+                        let chunk = &biased_arith[off..end];
+                        let biased_bin = ring_conv::a2b_many(chunk, io_ctx.main())?;
+                        let batch_eda = preproc.take_edabits::<ArithmeticWideInt>(chunk.len())?;
+                        let biased_field: Vec<Rep3PrimeFieldShare<F>> = if inc_b2a_max_forks <= 1 {
+                            casts::r2f_b2a_preproc_many::<ArithmeticWideInt, F, _>(
+                                &biased_bin, &batch_eda, io_ctx.main(),
+                            )?
+                        } else {
+                            let chunk_size = biased_bin.len().div_ceil(inc_b2a_max_forks);
+                            io_ctx.par_chunks_preproc(biased_bin, batch_eda, Some(chunk_size), |xs, b, c| {
+                                casts::r2f_b2a_preproc_many::<ArithmeticWideInt, F, _>(&xs, &b, c)
+                            })?
+                        };
+                        inc.extend(biased_field.into_iter().map(|s| {
+                            mpc_core::protocols::rep3::arithmetic::sub_shared_by_public(s, bias_f, party_id)
+                        }));
+                    }
+                    drop(_span);
+                    let dense = Rep3DensePolynomial::new(inc);
+                    state.prover_state.cycle_witness.set_stage2_incs(None, Some(dense.clone()));
+                    results.insert(*poly, Rep3MultilinearPolynomial::shared(dense));
+                }
             }
             CommittedPolynomial::InstructionRa(i) => {
                 if *i < instruction_lookups::D {

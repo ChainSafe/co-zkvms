@@ -177,27 +177,44 @@ fn build_dag_fixture(trace_file: &str) -> DagFixture {
                     &pool_dir,
                     [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128],
                     budget.dabits,
-                    budget.wrap_masks,
-                    budget.ring_edabits_u66,
+                    budget.ring_edabits_dory,
                     budget.ring_edabits_u64,
                     budget.ring_edabits_u128,
+                    budget.ring_edabits_iring,
                     &mut io_ctx,
                 )?;
 
-                // Ring MSM preprocessing (daPoints — depend on SRS, not in pool workflow)
+                // Ring MSM preprocessing (wrap masks + daPoints — not in pool)
                 #[cfg(feature = "ring-msm")]
                 {
-                    if budget.dapoints > 0 {
-                        let dory_num_columns = jolt_core::poly::commitment::dory::DoryGlobals::get_num_columns();
-                        let qs = co_jolt2::poly::commitment::dory::precompute_dapoint_qs(
+                    use mpc_core::protocols::rep3_ring::preprocessing::wrap_mask::generate_wrap_masks_lazy;
+                    if budget.wrap_masks > 0 {
+                        pool.set_wrap_masks(generate_wrap_masks_lazy(budget.wrap_masks, io_ctx.main())?);
+                    }
+                    if budget.wrap_masks_iring > 0 {
+                        pool.set_wrap_masks_iring(generate_wrap_masks_lazy(budget.wrap_masks_iring, io_ctx.main())?);
+                    }
+                    let dory_num_columns = jolt_core::poly::commitment::dory::DoryGlobals::get_num_columns();
+                    let (q0_xlen, q1_xlen, q0_64, q1_64) =
+                        co_jolt2::poly::commitment::dory::precompute_dapoint_q_columns(
                             &preprocessing.generators,
-                            budget.dapoints / 2,
                             dory_num_columns,
                         );
+                    if budget.dapoints > 0 {
                         let lazy_dp =
-                            mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints(&qs, &mut io_ctx)?;
+                            mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints_from_columns(
+                                &q0_xlen, &q1_xlen, budget.dapoints / 2, dory_num_columns, io_ctx.main(),
+                            )?;
                         pool.set_dapoints(lazy_dp);
                     }
+                    if budget.dapoints_iring > 0 {
+                        let lazy_dp_iring =
+                            mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints_from_columns(
+                                &q0_64, &q1_64, budget.dapoints_iring / 2, dory_num_columns, io_ctx.main(),
+                            )?;
+                        pool.set_dapoints_iring(lazy_dp_iring);
+                    }
+                    pool.save(&pool_dir).ok();
                 }
                 pool
             };

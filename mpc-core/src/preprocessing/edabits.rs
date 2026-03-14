@@ -1286,7 +1286,10 @@ where
 }
 
 // PreprocessingPool generation/extension moved to `super::pool`.
+#[cfg(not(feature = "ring-msm"))]
 pub use super::pool::{extend_pool_batched, preprocess_pool};
+#[cfg(feature = "ring-msm")]
+pub use super::pool_experimental::{extend_pool_batched, preprocess_pool};
 
 // ring_to_field_many, ring_to_field_b2a, r2f_b2a_preproc_many moved to casts.rs
 // as r2f_preproc_many, r2f_b2a_preproc, r2f_b2a_preproc_many
@@ -1364,6 +1367,30 @@ where
             total,
             cursor: 0,
             alpha2_flat: backing_store::BackingStore::from_vec(alpha2_flat),
+            party_id,
+            meta_path: None,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Construct from RNG seeds + a pre-built BackingStore (e.g. file-backed for P2).
+    pub fn new_with_store(
+        seed1: [u8; crate::SEED_SIZE],
+        pos1: u128,
+        seed2: [u8; crate::SEED_SIZE],
+        pos2: u128,
+        total: usize,
+        alpha2_store: backing_store::BackingStore<RingElement<T>>,
+        party_id: PartyID,
+    ) -> Self {
+        Self {
+            seed1,
+            pos1,
+            seed2,
+            pos2,
+            total,
+            cursor: 0,
+            alpha2_flat: alpha2_store,
             party_id,
             meta_path: None,
             _phantom: PhantomData,
@@ -1571,6 +1598,7 @@ impl<T: IntRing2k> LazyEdaBitsRing<T> {
 /// Mirrors `random_edabits_lazy()` but in ring domain. P0/P1 store only seeds;
 /// P2 stores received alpha₂.
 /// Communication: P0 → P2: `num * K` ring elements (1 round).
+#[tracing::instrument(skip_all, name = "ring_edabits_preprocess", fields(n = num))]
 pub fn random_edabits_ring_lazy<T: IntRing2k, N: Rep3NetworkWorker>(
     num: usize,
     io: &mut IoContextPool<N>,

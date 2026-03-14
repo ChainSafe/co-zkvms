@@ -27,9 +27,18 @@ pub struct PreprocessingBudget {
     pub ring_edabits_u64: usize,
     /// Ring edaBits (u128) for ring-domain upcast B2A (rv64 only).
     pub ring_edabits_u128: usize,
-    /// Ring edaBits (U66) for ring-domain B2A in Dory wrap correction (1 per committed coefficient).
+    /// Ring edaBits for the architecture-selected Dory carry ring (1 per committed coefficient).
     #[cfg(feature = "ring-msm")]
-    pub ring_edabits_u66: usize,
+    pub ring_edabits_dory: usize,
+    /// daPoints for IRingScalars (biased inc) wrap correction (2 per committed coefficient).
+    #[cfg(feature = "ring-msm")]
+    pub dapoints_iring: usize,
+    /// Wrap masks for IRingScalars (1 per committed coefficient).
+    #[cfg(feature = "ring-msm")]
+    pub wrap_masks_iring: usize,
+    /// Ring edaBits (U66) for IRingScalars B2A (1 per committed coefficient).
+    #[cfg(feature = "ring-msm")]
+    pub ring_edabits_iring: usize,
 }
 
 impl std::fmt::Debug for PreprocessingBudget {
@@ -45,8 +54,9 @@ impl std::fmt::Debug for PreprocessingBudget {
         #[cfg(feature = "ring-msm")]
         write!(
             f,
-            "; daPoints: {}; wrapMasks: {}; ringEdaBitsU66: {}",
-            self.dapoints, self.wrap_masks, self.ring_edabits_u66
+            "; daPoints: {}; wrapMasks: {}; ringEdaBitsDory: {}; daPointsIRing: {}; wrapMasksIRing: {}; ringEdaBitsIRing: {}",
+            self.dapoints, self.wrap_masks, self.ring_edabits_dory,
+            self.dapoints_iring, self.wrap_masks_iring, self.ring_edabits_iring
         )?;
         Ok(())
     }
@@ -120,13 +130,18 @@ pub fn compute_edabit_budget(trace_len: usize) -> PreprocessingBudget {
         .max()
         .unwrap_or(0);
     budget.dabits = max_dabits_per_cycle * n;
-    // Dory U64Scalars wrap correction (ring-msm only).
+    // Dory ring-msm preprocessing (ring-msm only).
     #[cfg(feature = "ring-msm")]
     {
         let padded_n = n.next_power_of_two();
+        // RingScalars (instruction inputs, 2 polys): XlenInt scalars, DoryCarryRing
         budget.dapoints = 2 * 2 * padded_n;
         budget.wrap_masks = 2 * padded_n;
-        budget.ring_edabits_u66 = 2 * padded_n;
+        budget.ring_edabits_dory = 2 * padded_n;
+        // IRingScalars (biased inc, 2 polys): u64 scalars, U66 carry ring
+        budget.dapoints_iring = 2 * 2 * padded_n;
+        budget.wrap_masks_iring = 2 * padded_n;
+        budget.ring_edabits_iring = 2 * padded_n;
     }
 
     for phase in 0..PHASES {
@@ -171,15 +186,17 @@ pub fn compute_edabit_budget(trace_len: usize) -> PreprocessingBudget {
         }
     }
 
-    // Witness generation: binary→field B2A for operand columns and inc polynomials.
-    // All three consumers use XlenInt (u32 for rv32, u64 for rv64):
-    // - Sparse operand cast (5 columns × n, worst case): 5n EdaBits
-    // - rd_inc/ram_inc (2 pre + 2 post × n): 4n EdaBits
-    add_to_budget(&mut budget, XLEN, 9 * n);
+    // Witness generation: binary→field B2A for operand columns.
+    // - Sparse operand cast (5 columns × n, worst case): 5n XlenInt EdaBits
+    add_to_budget(&mut budget, XLEN, 5 * n);
 
     // Lookup output fulfill: CastToField + CastToFieldB2A futures use XlenInt ring.
     // Worst case: all n cycles emit CastToField or CastToFieldB2A.
     add_to_budget(&mut budget, XLEN, n);
+
+    // Biased inc field conversion: 2n ArithmeticWideInt (u64 for rv32) EdaBits.
+    // Used in witness.rs (non-ring-msm) or worker.rs (ring-msm) for A2B + r2f_b2a.
+    add_to_budget(&mut budget, 64, 2 * n);
 
     budget
 }

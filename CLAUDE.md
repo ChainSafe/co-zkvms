@@ -10,9 +10,9 @@
 - Integration test:
   - `cargo test -p co-jolt2 --test dag_correct --features test-utils -- --nocapture`
 - Bench:
-  - `cd co-jolt2 && REUSE_PREPROC=1 NUM_ITERS=1 bash examples/run_rep3_jolt.sh`
+  - `REUSE_PREPROC=1 NUM_ITERS=1 bash examples/run_e2e.sh`
 
-## Code organization rules (within each file)
+## Code organization order (within each file)
 1. Core logic types
 2. Core logic impls
 3. Core logic funcs

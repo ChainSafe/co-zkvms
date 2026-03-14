@@ -10,6 +10,7 @@
 //!    d. Preprocess + prove (MPC)
 //!    e. [worker 0] Receive proof from coordinator, relay to user
 
+use rayon::prelude::*;
 use std::path::PathBuf;
 #[cfg(feature = "test-utils")]
 use std::sync::OnceLock;
@@ -222,15 +223,22 @@ fn prove_loop(
 
             match edabits::PreprocessingPool::load(&pool_dir, party_id) {
                 Ok(mut pool) => {
+                    // With reuse-preproc the backing data survives consumption,
+                    // so reset cursors to make the full pool available again.
+                    #[cfg(feature = "reuse-preproc")]
+                    pool.reset_cursors_for_reuse();
+
                     let (rem_eda, rem_da) = pool.remaining_counts();
                     let deficit_counts: [usize; 5] = std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
                     let deficit_dabits = num_dabits.saturating_sub(rem_da);
                     let deficit_re64 = budget.ring_edabits_u64.saturating_sub(pool.remaining_ring_edabits_u64());
                     let deficit_re128 = budget.ring_edabits_u128.saturating_sub(pool.remaining_ring_edabits_u128());
                     #[cfg(feature = "ring-msm")]
-                    let (deficit_wm, deficit_re66) = (
+                    let (deficit_wm, deficit_re_dory, deficit_wm_iring, deficit_re_iring) = (
                         budget.wrap_masks.saturating_sub(pool.remaining_wrap_masks()),
-                        budget.ring_edabits_u66.saturating_sub(pool.remaining_ring_edabits_u66()),
+                        budget.ring_edabits_dory.saturating_sub(pool.remaining_ring_edabits_dory()),
+                        budget.wrap_masks_iring.saturating_sub(pool.remaining_wrap_masks_iring()),
+                        budget.ring_edabits_iring.saturating_sub(pool.remaining_ring_edabits_u66()),
                     );
 
                     let need_extend = deficit_counts.iter().any(|&d| d > 0)
@@ -238,7 +246,8 @@ fn prove_loop(
                         || deficit_re64 > 0
                         || deficit_re128 > 0;
                     #[cfg(feature = "ring-msm")]
-                    let need_extend = need_extend || deficit_wm > 0 || deficit_re66 > 0;
+                    let need_extend =
+                        need_extend || deficit_wm > 0 || deficit_re_dory > 0 || deficit_wm_iring > 0 || deficit_re_iring > 0;
 
                     if need_extend {
                         info!(
@@ -259,10 +268,10 @@ fn prove_loop(
                             &mut pool,
                             deficit_counts,
                             deficit_dabits,
-                            deficit_wm,
-                            deficit_re66,
+                            deficit_re_dory,
                             deficit_re64,
                             deficit_re128,
+                            deficit_re_iring,
                             io_ctx,
                         )?;
                         pool.save(&pool_dir).ok();
@@ -290,10 +299,10 @@ fn prove_loop(
                             &pool_dir,
                             counts,
                             num_dabits,
-                            budget.wrap_masks,
-                            budget.ring_edabits_u66,
+                            budget.ring_edabits_dory,
                             budget.ring_edabits_u64,
                             budget.ring_edabits_u128,
+                            budget.ring_edabits_iring,
                             io_ctx,
                         )?
                     }
@@ -323,17 +332,110 @@ fn prove_loop(
             })?;
         }
 
-        // Ring MSM preprocessing (daPoints only — wrap masks and ring edaBits are in the pool)
+        // Ring MSM preprocessing: wrap masks + daPoints in parallel on forks.
         #[cfg(feature = "ring-msm")]
         {
-            if budget.dapoints > 0 {
-                let qs = co_jolt2::poly::commitment::dory::precompute_dapoint_qs(
-                    &preprocessing.generators,
-                    budget.dapoints / 2,
-                    dory_num_columns,
-                );
-                let lazy_dp = mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints(&qs, io_ctx)?;
-                preproc.set_dapoints(lazy_dp);
+            use mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints_from_columns;
+            use mpc_core::protocols::rep3_ring::preprocessing::wrap_mask::generate_wrap_masks_lazy;
+
+            let (q0_xlen, q1_xlen, q0_64, q1_64) =
+                co_jolt2::poly::commitment::dory::precompute_dapoint_q_columns(&preprocessing.generators, dory_num_columns);
+
+            let need_wm = budget.wrap_masks > 0 && preproc.remaining_wrap_masks() < budget.wrap_masks;
+            let need_wm_iring = budget.wrap_masks_iring > 0 && preproc.remaining_wrap_masks_iring() < budget.wrap_masks_iring;
+            let need_dp = budget.dapoints > 0 && preproc.remaining_dapoints() < budget.dapoints;
+            let need_dp_iring = budget.dapoints_iring > 0 && preproc.remaining_dapoints_iring() < budget.dapoints_iring;
+
+            // Count active tasks and dispatch on forks when >= 2.
+            let active = [need_wm, need_wm_iring, need_dp, need_dp_iring].iter().filter(|&&b| b).count();
+
+            if active >= 2 {
+                let forks = io_ctx.forks(active);
+
+                // Build task closures and run in parallel via rayon.
+                // Each closure returns a tagged result so we can apply them after.
+                let mut task_fns: Vec<Box<dyn FnOnce(&mut mpc_core::protocols::rep3::network::IoContext<_>) -> eyre::Result<Box<dyn std::any::Any + Send>> + Send>> = Vec::new();
+                let mut tags: Vec<u8> = Vec::new();
+
+                if need_wm {
+                    let n = budget.wrap_masks;
+                    tags.push(0);
+                    task_fns.push(Box::new(move |ctx| {
+                        #[cfg(feature = "rv64")]
+                        { Ok(Box::new(generate_wrap_masks_lazy::<mpc_core::protocols::rep3_ring::ring::u66::U66, _>(n, ctx)?) as Box<dyn std::any::Any + Send>) }
+                        #[cfg(not(feature = "rv64"))]
+                        { Ok(Box::new(generate_wrap_masks_lazy::<mpc_core::protocols::rep3_ring::ring::u34::U34, _>(n, ctx)?) as Box<dyn std::any::Any + Send>) }
+                    }));
+                }
+                if need_wm_iring {
+                    let n = budget.wrap_masks_iring;
+                    tags.push(1);
+                    task_fns.push(Box::new(move |ctx| {
+                        Ok(Box::new(generate_wrap_masks_lazy::<mpc_core::protocols::rep3_ring::ring::u66::U66, _>(n, ctx)?) as Box<dyn std::any::Any + Send>)
+                    }));
+                }
+                if need_dp {
+                    let q0 = &q0_xlen;
+                    let q1 = &q1_xlen;
+                    let nc = budget.dapoints / 2;
+                    let ncols = dory_num_columns;
+                    tags.push(2);
+                    task_fns.push(Box::new(move |ctx| {
+                        Ok(Box::new(random_dapoints_from_columns(q0, q1, nc, ncols, ctx)?) as Box<dyn std::any::Any + Send>)
+                    }));
+                }
+                if need_dp_iring {
+                    let q0 = &q0_64;
+                    let q1 = &q1_64;
+                    let nc = budget.dapoints_iring / 2;
+                    let ncols = dory_num_columns;
+                    tags.push(3);
+                    task_fns.push(Box::new(move |ctx| {
+                        Ok(Box::new(random_dapoints_from_columns(q0, q1, nc, ncols, ctx)?) as Box<dyn std::any::Any + Send>)
+                    }));
+                }
+
+                let results: Vec<(u8, eyre::Result<Box<dyn std::any::Any + Send>>)> = tags
+                    .into_iter()
+                    .zip(task_fns)
+                    .zip(forks.iter_mut())
+                    .collect::<Vec<_>>()
+                    .into_par_iter()
+                    .map(|((tag, f), ctx)| (tag, f(ctx)))
+                    .collect();
+
+                for (tag, result) in results {
+                    let val: Box<dyn std::any::Any + Send> = result?;
+                    match tag {
+                        0 => preproc.set_wrap_masks(*val.downcast().unwrap()),
+                        1 => preproc.set_wrap_masks_iring(*val.downcast().unwrap()),
+                        2 => preproc.set_dapoints(*val.downcast().unwrap()),
+                        3 => preproc.set_dapoints_iring(*val.downcast().unwrap()),
+                        _ => unreachable!(),
+                    }
+                }
+                preproc.save(&pool_dir).ok();
+
+                info!(active, "ring-msm material: PARALLEL dispatch");
+            } else {
+                // Sequential fallback (0 or 1 task).
+                if need_wm {
+                    preproc.set_wrap_masks(generate_wrap_masks_lazy(budget.wrap_masks, io_ctx.main())?);
+                }
+                if need_wm_iring {
+                    preproc.set_wrap_masks_iring(generate_wrap_masks_lazy(budget.wrap_masks_iring, io_ctx.main())?);
+                }
+                if need_dp {
+                    preproc.set_dapoints(random_dapoints_from_columns(
+                        &q0_xlen, &q1_xlen, budget.dapoints / 2, dory_num_columns, io_ctx.main(),
+                    )?);
+                }
+                if need_dp_iring {
+                    preproc.set_dapoints_iring(random_dapoints_from_columns(
+                        &q0_64, &q1_64, budget.dapoints_iring / 2, dory_num_columns, io_ctx.main(),
+                    )?);
+                }
+                preproc.save(&pool_dir).ok();
             }
         }
         drop(_span);

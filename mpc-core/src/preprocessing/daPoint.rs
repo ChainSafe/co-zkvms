@@ -37,6 +37,17 @@ pub struct DaPointsBatch<C: CurveGroup> {
 }
 
 impl<C: CurveGroup> DaPointsBatch<C> {
+    /// Extract a contiguous sub-batch `[start..start+len]`.
+    pub fn slice(&self, start: usize, len: usize) -> Self {
+        let gammas = self.gammas[start..start + len].to_vec();
+        let alphas = if self.alphas.is_empty() {
+            Vec::new()
+        } else {
+            self.alphas[start..start + len].to_vec()
+        };
+        Self { gammas, alphas }
+    }
+
     /// Select a subset of entries by index, preserving the given order.
     pub fn select(&self, indices: &[usize]) -> Self {
         let gammas = indices.iter().map(|&i| self.gammas[i]).collect();
@@ -133,7 +144,7 @@ impl<C: CurveGroup> LazyDaPoints<C> {
 ///
 /// **Communication:** 1 round, P0 → P2: `n` curve points.
 /// **P2 does zero curve point generation.**
-#[tracing::instrument(skip_all, name = "dapoints_preprocess")]
+#[tracing::instrument(skip_all, name = "dapoints_preprocess", fields(n = qs.len()))]
 pub fn random_dapoints<C: CurveGroup, N: Rep3NetworkWorker>(
     qs: &[C],
     io: &mut IoContextPool<N>,
@@ -183,6 +194,76 @@ pub fn random_dapoints<C: CurveGroup, N: Rep3NetworkWorker>(
         PartyID::ID2 => {
             // Receive A2 from P0 (no curve point generation at all).
             alphas = io.network().recv_many(PartyID::ID0)?;
+            debug_assert_eq!(alphas.len(), n);
+        }
+    }
+
+    Ok(LazyDaPoints::new(n, gammas, alphas, party_id))
+}
+
+/// Like [`random_dapoints`] but takes column templates instead of a pre-expanded Q array.
+///
+/// Avoids materializing `2 * num_coeffs` Q points in memory. The Q-value ordering
+/// matches [`precompute_dapoint_qs`]: per row `[q0_cols[0..seg], q1_cols[0..seg]]`.
+///
+/// `n_total = 2 * num_coeffs` daPoint tuples are generated.
+///
+/// Accepts a single `IoContext` (not pool) so it can run on a fork for parallelism.
+#[tracing::instrument(skip_all, name = "dapoints_preprocess", fields(n = 2 * num_coeffs))]
+pub fn random_dapoints_from_columns<C: CurveGroup, N: Rep3Network>(
+    q0_cols: &[C],
+    q1_cols: &[C],
+    num_coeffs: usize,
+    num_columns: usize,
+    io: &mut IoContext<N>,
+) -> eyre::Result<LazyDaPoints<C>> {
+    let n = 2 * num_coeffs;
+    let party_id = io.id;
+    if n == 0 {
+        return Ok(LazyDaPoints::empty(party_id));
+    }
+
+    let num_full_rows = num_coeffs / num_columns;
+    let remainder = num_coeffs % num_columns;
+
+    // Fork a dedicated Rep3Rand (all parties must call to keep RNG aligned).
+    let mut forked = io.rngs.rand.fork();
+
+    let mut gammas = Vec::new();
+    let mut alphas = Vec::new();
+
+    match party_id {
+        PartyID::ID0 => {
+            gammas.reserve(n);
+            for _ in 0..n {
+                let g1: u8 = forked.rng1.r#gen();
+                let g2: u8 = forked.rng2.r#gen();
+                gammas.push(Bit::new((g1 ^ g2) & 1 == 1));
+            }
+
+            let a1_points: Vec<C> = (0..n).map(|_| C::rand(&mut forked.rng1)).collect();
+
+            // Iterate Q values from column templates (no full Q array allocation).
+            let q_iter = (0..num_full_rows)
+                .flat_map(|_| q0_cols[..num_columns].iter().chain(q1_cols[..num_columns].iter()))
+                .chain(q0_cols[..remainder].iter().chain(q1_cols[..remainder].iter()));
+
+            let a2_all: Vec<C> = izip!(&gammas, q_iter, &a1_points)
+                .map(|(gamma, q, a1)| {
+                    let gamma_q = if gamma.convert() { *q } else { C::zero() };
+                    gamma_q - a1
+                })
+                .collect();
+            io.network.send_many(PartyID::ID2, &a2_all)?;
+        }
+        PartyID::ID1 => {
+            for _ in 0..n {
+                let _: u8 = forked.rng2.r#gen();
+            }
+            alphas = (0..n).map(|_| C::rand(&mut forked.rng2)).collect();
+        }
+        PartyID::ID2 => {
+            alphas = io.network.recv_many(PartyID::ID0)?;
             debug_assert_eq!(alphas.len(), n);
         }
     }

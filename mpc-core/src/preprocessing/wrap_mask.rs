@@ -1,31 +1,32 @@
 //! Wrap-mask preprocessing for DaBit-based extraction of 2-bit wrap counts.
 //!
 //! Used by Dory U64Scalars commit to extract the wrap count m ∈ {0,1,2} from
-//! diff = m·2^64 in Z_{2^66}, replacing the expensive A2B Kogge-Stone adder
-//! (7 rounds for u128) with a single batched open (1 round).
+//! diff = m·2^(K-2) in Z_{2^K}, replacing the expensive A2B Kogge-Stone adder
+//! with a single batched open (1 round).
 
-use crate::IoResult;
-use crate::protocols::rep3::PartyID;
 use crate::protocols::rep3::network::{IoContext, Rep3Network};
-use crate::protocols::rep3_ring::Rep3RingShare;
+use crate::protocols::rep3::PartyID;
 use crate::protocols::rep3_ring::ring::bit::Bit;
 use crate::protocols::rep3_ring::ring::int_ring::IntRing2k;
 use crate::protocols::rep3_ring::ring::ring_impl::RingElement;
-use crate::protocols::rep3_ring::ring::u66::U66;
+use crate::protocols::rep3_ring::Rep3RingShare;
 use crate::protocols::rep3_ring::{arithmetic, binary, conversion};
+use crate::IoResult;
+use rand::distributions::Standard;
+use rand::prelude::Distribution;
 use rand::{Rng, SeedableRng};
 
 use super::backing_store;
 
 /// Preprocessed wrap masks: 2 correlated random bits per coefficient,
-/// shared in both binary and arithmetic (U66) domains.
-pub struct WrapMaskBatch {
+/// shared in both binary and arithmetic domains.
+pub struct WrapMaskBatch<T: IntRing2k> {
     /// Binary shares of random bit r0 (one per coefficient).
     pub r0_bin: Vec<Rep3RingShare<Bit>>,
     /// Binary shares of random bit r1 (one per coefficient).
     pub r1_bin: Vec<Rep3RingShare<Bit>>,
-    /// Arithmetic U66 shares of R = (r0 + 2·r1) · 2^64.
-    pub mask_arith: Vec<Rep3RingShare<U66>>,
+    /// Arithmetic shares of R = (r0 + 2·r1) · 2^(K-2).
+    pub mask_arith: Vec<Rep3RingShare<T>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -37,7 +38,7 @@ pub struct WrapMaskBatch {
 ///
 /// ALL parties store `mask_arith_flat` (the bit_inject reshare results are not
 /// seed-regenerable). `r0_bin` / `r1_bin` are regenerated from forked RNG seeds.
-pub struct LazyWrapMasks {
+pub struct LazyWrapMasks<T: IntRing2k> {
     seed1: [u8; crate::SEED_SIZE],
     pos1: u128,
     seed2: [u8; crate::SEED_SIZE],
@@ -46,12 +47,12 @@ pub struct LazyWrapMasks {
     cursor: usize,
     /// Interleaved [a₀, b₀, a₁, b₁, ...] for mask_arith shares.
     /// ALL parties store this (bit_inject results not seed-regenerable).
-    mask_arith_flat: backing_store::BackingStore<RingElement<U66>>,
+    mask_arith_flat: backing_store::BackingStore<RingElement<T>>,
     party_id: PartyID,
     meta_path: Option<std::path::PathBuf>,
 }
 
-impl LazyWrapMasks {
+impl<T: IntRing2k> LazyWrapMasks<T> {
     pub fn empty(party_id: PartyID) -> Self {
         Self {
             seed1: [0u8; crate::SEED_SIZE],
@@ -72,7 +73,7 @@ impl LazyWrapMasks {
         seed2: [u8; crate::SEED_SIZE],
         pos2: u128,
         total: usize,
-        mask_arith_flat: Vec<RingElement<U66>>,
+        mask_arith_flat: Vec<RingElement<T>>,
         party_id: PartyID,
     ) -> Self {
         Self {
@@ -94,7 +95,7 @@ impl LazyWrapMasks {
 
     /// Drain `n` wrap masks. Binary shares regenerated from seeds;
     /// arithmetic shares sliced from backing store.
-    pub fn take_batch(&mut self, n: usize) -> eyre::Result<WrapMaskBatch> {
+    pub fn take_batch(&mut self, n: usize) -> eyre::Result<WrapMaskBatch<T>> {
         eyre::ensure!(
             self.cursor + n <= self.total,
             "LazyWrapMasks: need {n}, have {} (cursor={}, total={})",
@@ -152,8 +153,21 @@ impl LazyWrapMasks {
         // Slice mask_arith from backing store (interleaved [a, b, a, b, ...]).
         let flat_start = cursor_base * 2;
         let flat_end = flat_start + n * 2;
-        let flat = &self.mask_arith_flat.as_slice()[flat_start..flat_end];
-        let mask_arith: Vec<Rep3RingShare<U66>> =
+        let flat = {
+            #[cfg(feature = "reuse-preproc")]
+            {
+                self.mask_arith_flat.read_reuse(flat_start, flat_end).unwrap_or_else(|e| {
+                    panic!("LazyWrapMasks: read_reuse({flat_start}..{flat_end}) failed: {e}");
+                })
+            }
+            #[cfg(not(feature = "reuse-preproc"))]
+            {
+                self.mask_arith_flat.read_consume(flat_start, flat_end).unwrap_or_else(|e| {
+                    panic!("LazyWrapMasks: read_consume({flat_start}..{flat_end}) failed: {e}");
+                })
+            }
+        };
+        let mask_arith: Vec<Rep3RingShare<T>> =
             (0..n).map(|i| Rep3RingShare { a: flat[2 * i], b: flat[2 * i + 1] }).collect();
 
         self.cursor += n;
@@ -180,7 +194,7 @@ impl LazyWrapMasks {
                 total: self.total,
                 party_id_byte: backing_store::party_id_to_byte(self.party_id),
                 cursor: self.cursor,
-                field_bytes: std::mem::size_of::<RingElement<U66>>(),
+                field_bytes: std::mem::size_of::<RingElement<T>>(),
             },
         )?;
         self.meta_path = Some(meta_path);
@@ -218,13 +232,26 @@ impl LazyWrapMasks {
             let _ = backing_store::update_cursor(path, self.cursor);
         }
     }
+
+    #[cfg(feature = "reuse-preproc")]
+    pub(crate) fn reset_cursor_for_reuse(&mut self) {
+        self.cursor = 0;
+        self.persist_cursor();
+    }
 }
 
 /// Generate lazy wrap masks for `n` coefficients (offline, 2 rounds for bit_inject).
 ///
 /// Binary shares are generated from a forked RNG (seed-regenerable).
 /// Arithmetic shares are stored in a BackingStore (all parties).
-pub fn generate_wrap_masks_lazy<N: Rep3Network>(n: usize, io: &mut IoContext<N>) -> IoResult<LazyWrapMasks> {
+#[tracing::instrument(skip_all, name = "wrap_masks_preprocess", fields(n))]
+pub fn generate_wrap_masks_lazy<T: IntRing2k, N: Rep3Network>(
+    n: usize,
+    io: &mut IoContext<N>,
+) -> IoResult<LazyWrapMasks<T>>
+where
+    Standard: Distribution<T>,
+{
     let party_id = io.id;
     if n == 0 {
         return Ok(LazyWrapMasks::empty(party_id));
@@ -241,16 +268,16 @@ pub fn generate_wrap_masks_lazy<N: Rep3Network>(n: usize, io: &mut IoContext<N>)
         all_bits.push(Rep3RingShare { a: r1, b: r2 });
     }
 
-    // Convert binary bit shares → arithmetic U66 shares (2 rounds, uses MAIN io RNG).
-    let all_arith: Vec<Rep3RingShare<U66>> = conversion::bit_inject_from_bits_many::<U66, N>(&all_bits, io)?;
+    // Convert binary bit shares → arithmetic shares (2 rounds, uses MAIN io RNG).
+    let all_arith: Vec<Rep3RingShare<T>> = conversion::bit_inject_from_bits_many::<T, N>(&all_bits, io)?;
 
     let r0_arith = &all_arith[..n];
     let r1_arith = &all_arith[n..];
 
-    // R_A[i] = (r0_A[i] + 2·r1_A[i]) * 2^64 in Z_{2^66}
-    let two = RingElement(U66::new(2));
-    let shift = RingElement(U66::new(1u128 << 64));
-    let mask_arith: Vec<Rep3RingShare<U66>> = r0_arith
+    // R_A[i] = (r0_A[i] + 2·r1_A[i]) * 2^(K-2) in Z_{2^K}
+    let two = RingElement(T::try_from(2u128).expect("2 fits in the Dory carry ring"));
+    let shift = RingElement(T::try_from(1u128 << (T::K - 2)).expect("top-bit shift fits in the Dory carry ring"));
+    let mask_arith: Vec<Rep3RingShare<T>> = r0_arith
         .iter()
         .zip(r1_arith.iter())
         .map(|(r0, r1)| {
@@ -261,36 +288,36 @@ pub fn generate_wrap_masks_lazy<N: Rep3Network>(n: usize, io: &mut IoContext<N>)
         .collect();
 
     // Flatten to interleaved [a₀, b₀, a₁, b₁, ...] for BackingStore.
-    let flat: Vec<RingElement<U66>> = mask_arith.iter().flat_map(|s| [s.a, s.b]).collect();
+    let flat: Vec<RingElement<T>> = mask_arith.iter().flat_map(|s| [s.a, s.b]).collect();
 
     Ok(LazyWrapMasks::new(seed1, pos1, seed2, pos2, n, flat, party_id))
 }
 
-/// Extract binary shares of wrap bits m0, m1 from diff_u66 = m·2^64 in Z_{2^66}.
+/// Extract binary shares of wrap bits m0, m1 from diff = m·2^(K-2) in Z_{2^K}.
 ///
 /// Online cost: 1 round (batched open). All other work is local.
-pub fn extract_wrap_m2_from_diff_u66_many<N: Rep3Network>(
-    diff_u66: &[Rep3RingShare<U66>],
-    masks: &WrapMaskBatch,
+pub fn extract_wrap_m2_from_diff_many<T: IntRing2k, N: Rep3Network>(
+    diff: &[Rep3RingShare<T>],
+    masks: &WrapMaskBatch<T>,
     io: &mut IoContext<N>,
 ) -> IoResult<(Vec<Rep3RingShare<Bit>>, Vec<Rep3RingShare<Bit>>)> {
-    let n = diff_u66.len();
+    let n = diff.len();
     assert_eq!(n, masks.r0_bin.len());
     assert_eq!(n, masks.r1_bin.len());
     assert_eq!(n, masks.mask_arith.len());
 
-    // c = diff - R (local, arithmetic in U66)
-    let c: Vec<Rep3RingShare<U66>> = diff_u66.iter().zip(masks.mask_arith.iter()).map(|(d, r)| *d - *r).collect();
+    // c = diff - R (local, arithmetic in Z_{2^K})
+    let c: Vec<Rep3RingShare<T>> = diff.iter().zip(masks.mask_arith.iter()).map(|(d, r)| *d - *r).collect();
 
     // Open c (1 round)
-    let c_open: Vec<RingElement<U66>> = arithmetic::open_vec(&c, io)?;
+    let c_open: Vec<RingElement<T>> = arithmetic::open_vec(&c, io)?;
 
     let party_id = io.id;
     let mut m0_bin = Vec::with_capacity(n);
     let mut m1_bin = Vec::with_capacity(n);
 
     for i in 0..n {
-        let ctop = ((c_open[i].0.inner() >> 64) & 3) as u8;
+        let ctop = ((Into::<u128>::into(c_open[i].0) >> (T::K - 2)) & 3) as u8;
         let (m0, m1) = two_bit_add_public_const_into_binary_share(ctop, masks.r0_bin[i], masks.r1_bin[i], party_id);
         m0_bin.push(m0);
         m1_bin.push(m1);
@@ -330,12 +357,18 @@ fn two_bit_add_public_const_into_binary_share(
 mod tests {
     use super::*;
     use crate::protocols::rep3::network::IoContextPool;
-    use crate::protocols::rep3::test_utils::LocalRep3TestWorkerNet;
     use crate::protocols::rep3::test_utils::run_rep3_local_test_with_coordinator;
+    use crate::protocols::rep3::test_utils::LocalRep3TestWorkerNet;
+    use crate::protocols::rep3_ring::ring::u34::U34;
+    use crate::protocols::rep3_ring::ring::u66::U66;
+    use rand::distributions::Standard;
+    use rand::prelude::Distribution;
 
-    #[test]
-    fn wrap_mask_extraction_correct() {
-        use crate::protocols::rep3_ring::{share_ring_element, share_ring_element_binary};
+    fn wrap_mask_extraction_correct_for<T: IntRing2k>()
+    where
+        Standard: Distribution<T>,
+    {
+        use crate::protocols::rep3_ring::share_ring_element;
         use rand::SeedableRng;
 
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(42);
@@ -344,25 +377,27 @@ mod tests {
         let test_ms: Vec<u8> = vec![0, 1, 2, 0, 1, 2, 1, 0];
         let n = test_ms.len();
 
-        // diff = m * 2^64 in U66
-        let diffs: Vec<RingElement<U66>> = test_ms.iter().map(|&m| RingElement(U66::new((m as u128) << 64))).collect();
+        // diff = m * 2^(K-2) in Z_{2^K}
+        let diffs: Vec<RingElement<T>> = test_ms
+            .iter()
+            .map(|&m| RingElement(T::try_from((m as u128) << (T::K - 2)).expect("test diff fits")))
+            .collect();
 
         // Share each diff arithmetically
-        let diff_shares: Vec<[Rep3RingShare<U66>; 3]> =
-            diffs.iter().map(|d| share_ring_element(*d, &mut rng)).collect();
+        let diff_shares: Vec<[Rep3RingShare<T>; 3]> = diffs.iter().map(|d| share_ring_element(*d, &mut rng)).collect();
 
         let (results, _) = run_rep3_local_test_with_coordinator(
             0,
             |party_idx| {
-                let party_diffs: Vec<Rep3RingShare<U66>> = diff_shares.iter().map(|s| s[party_idx]).collect();
+                let party_diffs: Vec<Rep3RingShare<T>> = diff_shares.iter().map(|s| s[party_idx]).collect();
                 (party_diffs, n)
             },
             || (),
-            |(party_diffs, n): (Vec<Rep3RingShare<U66>>, usize), mut io_ctx: IoContextPool<LocalRep3TestWorkerNet>| {
+            |(party_diffs, n): (Vec<Rep3RingShare<T>>, usize), mut io_ctx: IoContextPool<LocalRep3TestWorkerNet>| {
                 let io = io_ctx.main();
-                let mut lazy_masks = generate_wrap_masks_lazy(n, io)?;
+                let mut lazy_masks = generate_wrap_masks_lazy::<T, _>(n, io)?;
                 let masks = lazy_masks.take_batch(n)?;
-                let (m0_bin, m1_bin) = extract_wrap_m2_from_diff_u66_many(&party_diffs, &masks, io)?;
+                let (m0_bin, m1_bin) = extract_wrap_m2_from_diff_many(&party_diffs, &masks, io)?;
                 Ok((m0_bin, m1_bin))
             },
             |(), _net| Ok(()),
@@ -387,5 +422,15 @@ mod tests {
                 test_ms[i], reconstructed_m
             );
         }
+    }
+
+    #[test]
+    fn wrap_mask_extraction_u34_correct() {
+        wrap_mask_extraction_correct_for::<U34>();
+    }
+
+    #[test]
+    fn wrap_mask_extraction_u66_correct() {
+        wrap_mask_extraction_correct_for::<U66>();
     }
 }

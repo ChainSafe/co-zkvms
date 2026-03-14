@@ -7,21 +7,26 @@ use super::edabits::{
     LazyEdaBits, LazyEdaBitsRing,
 };
 use crate::field::PrimeField;
-use crate::protocols::rep3::PartyID;
 use crate::protocols::rep3::network::Rep3RawFieldTransport;
 use crate::protocols::rep3::network::{IoContext, IoContextPool, Rep3Network, Rep3NetworkWorker};
+use crate::protocols::rep3::PartyID;
 use crate::protocols::rep3_ring::ring::int_ring::IntRing2k;
-use rand::RngCore;
+use crate::protocols::rep3_ring::ring::ring_impl::RingElement;
+use crate::protocols::rep3_ring::ring::u34::U34;
+use crate::protocols::rep3_ring::ring::u66::U66;
 use rand::distributions::Standard;
 use rand::prelude::Distribution;
+use rand::RngCore;
 use rayon::prelude::*;
 use tracing::info_span;
 
-#[cfg(feature = "ring-msm")]
-use crate::protocols::rep3_ring::ring::u66::U66;
-
 #[cfg(not(feature = "ring-msm"))]
 use std::marker::PhantomData;
+
+#[cfg(all(feature = "ring-msm", feature = "rv64"))]
+pub(super) type DoryRingMsmInt = U66;
+#[cfg(all(feature = "ring-msm", not(feature = "rv64")))]
+pub(super) type DoryRingMsmInt = U34;
 
 /// A pool of pre-generated edaBits, daBits, and (optionally) ring-MSM
 /// preprocessing for batched conversions.
@@ -32,7 +37,7 @@ use std::marker::PhantomData;
 /// When the `ring-msm` feature is enabled, also stores:
 /// - DaPoints via [`super::daPoint::LazyDaPoints`]
 /// - Wrap masks via [`super::wrap_mask::LazyWrapMasks`]
-/// - Ring edaBits (U66) via [`LazyEdaBitsRing`]
+/// - Dory carry ring edaBits via [`LazyEdaBitsRing`]
 pub struct PreprocessingPool<F: PrimeField, C: ark_ec::CurveGroup = ark_bn254::G1Projective> {
     pub(crate) edabits_u8: LazyEdaBits<u8, F>,
     pub(crate) edabits_u16: LazyEdaBits<u16, F>,
@@ -43,11 +48,17 @@ pub struct PreprocessingPool<F: PrimeField, C: ark_ec::CurveGroup = ark_bn254::G
     #[cfg(feature = "ring-msm")]
     pub(crate) dapoints: super::daPoint::LazyDaPoints<C>,
     #[cfg(feature = "ring-msm")]
-    pub(crate) wrap_masks: super::wrap_mask::LazyWrapMasks,
+    pub(crate) wrap_masks: super::wrap_mask::LazyWrapMasks<DoryRingMsmInt>,
     pub(crate) ring_edabits_u64: LazyEdaBitsRing<u64>,
     pub(crate) ring_edabits_u128: LazyEdaBitsRing<u128>,
     #[cfg(feature = "ring-msm")]
+    pub(crate) ring_edabits_u34: LazyEdaBitsRing<U34>,
+    #[cfg(feature = "ring-msm")]
     pub(crate) ring_edabits_u66: LazyEdaBitsRing<U66>,
+    #[cfg(feature = "ring-msm")]
+    pub(crate) dapoints_iring: super::daPoint::LazyDaPoints<C>,
+    #[cfg(feature = "ring-msm")]
+    pub(crate) wrap_masks_iring: super::wrap_mask::LazyWrapMasks<U66>,
     #[cfg(not(feature = "ring-msm"))]
     _phantom: PhantomData<C>,
 }
@@ -82,7 +93,13 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             #[cfg(feature = "ring-msm")]
             wrap_masks: super::wrap_mask::LazyWrapMasks::empty(party_id),
             #[cfg(feature = "ring-msm")]
+            ring_edabits_u34: LazyEdaBitsRing::empty(party_id),
+            #[cfg(feature = "ring-msm")]
             ring_edabits_u66: LazyEdaBitsRing::empty(party_id),
+            #[cfg(feature = "ring-msm")]
+            dapoints_iring: super::daPoint::LazyDaPoints::empty(party_id),
+            #[cfg(feature = "ring-msm")]
+            wrap_masks_iring: super::wrap_mask::LazyWrapMasks::empty(party_id),
             #[cfg(not(feature = "ring-msm"))]
             _phantom: PhantomData,
         }
@@ -112,67 +129,16 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             #[cfg(feature = "ring-msm")]
             wrap_masks: super::wrap_mask::LazyWrapMasks::empty(party_id),
             #[cfg(feature = "ring-msm")]
+            ring_edabits_u34: LazyEdaBitsRing::empty(party_id),
+            #[cfg(feature = "ring-msm")]
             ring_edabits_u66: LazyEdaBitsRing::empty(party_id),
+            #[cfg(feature = "ring-msm")]
+            dapoints_iring: super::daPoint::LazyDaPoints::empty(party_id),
+            #[cfg(feature = "ring-msm")]
+            wrap_masks_iring: super::wrap_mask::LazyWrapMasks::empty(party_id),
             #[cfg(not(feature = "ring-msm"))]
             _phantom: PhantomData,
         }
-    }
-
-    pub fn begin_forkable_session(&mut self) -> ForkablePreprocessingSession<'_, F, C> {
-        ForkablePreprocessingSession { pool: self, reserve_ranges: Vec::new() }
-    }
-
-    // --- ring-msm gated methods ---
-
-    /// Inject pre-generated daPoints into this pool.
-    #[cfg(feature = "ring-msm")]
-    pub fn set_dapoints(&mut self, dp: super::daPoint::LazyDaPoints<C>) {
-        self.dapoints = dp;
-    }
-
-    /// Drain `n` daPoint tuples from the lazy source.
-    #[cfg(feature = "ring-msm")]
-    pub fn take_dapoints(&mut self, n: usize) -> eyre::Result<super::daPoint::DaPointsBatch<C>> {
-        self.dapoints.take_batch(n)
-    }
-
-    #[cfg(feature = "ring-msm")]
-    pub fn remaining_dapoints(&self) -> usize {
-        self.dapoints.remaining()
-    }
-
-    /// Inject pre-generated lazy wrap masks into this pool.
-    #[cfg(feature = "ring-msm")]
-    pub fn set_wrap_masks(&mut self, wm: super::wrap_mask::LazyWrapMasks) {
-        self.wrap_masks = wm;
-    }
-
-    /// Drain `n` wrap masks from the lazy source.
-    #[cfg(feature = "ring-msm")]
-    pub fn take_wrap_masks(&mut self, n: usize) -> eyre::Result<super::wrap_mask::WrapMaskBatch> {
-        self.wrap_masks.take_batch(n)
-    }
-
-    #[cfg(feature = "ring-msm")]
-    pub fn remaining_wrap_masks(&self) -> usize {
-        self.wrap_masks.remaining()
-    }
-
-    /// Inject pre-generated lazy ring edaBits (U66) into this pool.
-    #[cfg(feature = "ring-msm")]
-    pub fn set_ring_edabits_u66(&mut self, eb: LazyEdaBitsRing<U66>) {
-        self.ring_edabits_u66 = eb;
-    }
-
-    /// Drain `n` ring edaBits (U66) from the lazy source.
-    #[cfg(feature = "ring-msm")]
-    pub fn take_ring_edabits_u66(&mut self, n: usize) -> eyre::Result<EdaBitsRingBatch<U66>> {
-        self.ring_edabits_u66.take_batch(n)
-    }
-
-    #[cfg(feature = "ring-msm")]
-    pub fn remaining_ring_edabits_u66(&self) -> usize {
-        self.ring_edabits_u66.remaining()
     }
 
     // --- ring edaBits (upcast B2A) ---
@@ -204,9 +170,29 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
         if tid == TypeId::of::<u64>() {
             let v = self.ring_edabits_u64.take_batch(n)?;
             Ok(unsafe { std::mem::transmute::<EdaBitsRingBatch<u64>, EdaBitsRingBatch<T>>(v) })
+        } else if tid == TypeId::of::<U34>() {
+            #[cfg(feature = "ring-msm")]
+            {
+                let v = self.ring_edabits_u34.take_batch(n)?;
+                Ok(unsafe { std::mem::transmute::<EdaBitsRingBatch<U34>, EdaBitsRingBatch<T>>(v) })
+            }
+            #[cfg(not(feature = "ring-msm"))]
+            {
+                eyre::bail!("PreprocessingPool::take_ring_edabits: unsupported ring type u{}", T::K);
+            }
         } else if tid == TypeId::of::<u128>() {
             let v = self.ring_edabits_u128.take_batch(n)?;
             Ok(unsafe { std::mem::transmute::<EdaBitsRingBatch<u128>, EdaBitsRingBatch<T>>(v) })
+        } else if tid == TypeId::of::<U66>() {
+            #[cfg(feature = "ring-msm")]
+            {
+                let v = self.ring_edabits_u66.take_batch(n)?;
+                Ok(unsafe { std::mem::transmute::<EdaBitsRingBatch<U66>, EdaBitsRingBatch<T>>(v) })
+            }
+            #[cfg(not(feature = "ring-msm"))]
+            {
+                eyre::bail!("PreprocessingPool::take_ring_edabits: unsupported ring type u{}", T::K);
+            }
         } else {
             eyre::bail!("PreprocessingPool::take_ring_edabits: unsupported ring type u{}", T::K);
         }
@@ -245,6 +231,10 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             ],
             self.dabits.remaining(),
         )
+    }
+
+    pub fn begin_forkable_session(&mut self) -> ForkablePreprocessingSession<'_, F, C> {
+        ForkablePreprocessingSession { pool: self, reserve_ranges: Vec::new() }
     }
 
     #[tracing::instrument(skip_all, name = "Preprocessing::prepare_edabits_precache")]
@@ -291,6 +281,14 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
         self.dabits.reset_cursor_for_reuse();
         self.ring_edabits_u64.reset_cursor_for_reuse();
         self.ring_edabits_u128.reset_cursor_for_reuse();
+        #[cfg(feature = "ring-msm")]
+        self.wrap_masks.reset_cursor_for_reuse();
+        #[cfg(feature = "ring-msm")]
+        self.ring_edabits_u34.reset_cursor_for_reuse();
+        #[cfg(feature = "ring-msm")]
+        self.ring_edabits_u66.reset_cursor_for_reuse();
+        #[cfg(feature = "ring-msm")]
+        self.wrap_masks_iring.reset_cursor_for_reuse();
     }
 
     /// Generic edaBits drain as flat batch, dispatched by `TypeId`.
@@ -381,10 +379,6 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
         let da = &mut self.dabits;
         let r64 = &mut self.ring_edabits_u64;
         let r128 = &mut self.ring_edabits_u128;
-        #[cfg(feature = "ring-msm")]
-        let wm = &mut self.wrap_masks;
-        #[cfg(feature = "ring-msm")]
-        let r66 = &mut self.ring_edabits_u66;
         std::thread::scope(|s| -> std::io::Result<()> {
             let h0 = s.spawn(|| e0.save(dir));
             let h1 = s.spawn(|| e1.save(dir));
@@ -395,9 +389,13 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             let h_r64 = s.spawn(|| r64.save(dir));
             let h_r128 = s.spawn(|| r128.save(dir));
             #[cfg(feature = "ring-msm")]
-            let h6 = s.spawn(|| wm.save(dir));
+            let h_r34 = s.spawn(|| self.ring_edabits_u34.save(dir));
             #[cfg(feature = "ring-msm")]
-            let h7 = s.spawn(|| r66.save(dir));
+            let h6 = s.spawn(|| self.wrap_masks.save(dir));
+            #[cfg(feature = "ring-msm")]
+            let h7 = s.spawn(|| self.ring_edabits_u66.save(dir));
+            #[cfg(feature = "ring-msm")]
+            let h8 = s.spawn(|| self.wrap_masks_iring.save(&dir.join("iring")));
             h0.join().unwrap()?;
             h1.join().unwrap()?;
             h2.join().unwrap()?;
@@ -407,9 +405,13 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             h_r64.join().unwrap()?;
             h_r128.join().unwrap()?;
             #[cfg(feature = "ring-msm")]
+            h_r34.join().unwrap()?;
+            #[cfg(feature = "ring-msm")]
             h6.join().unwrap()?;
             #[cfg(feature = "ring-msm")]
             h7.join().unwrap()?;
+            #[cfg(feature = "ring-msm")]
+            h8.join().unwrap()?;
             std::result::Result::Ok(())
         })
     }
@@ -433,7 +435,13 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             #[cfg(feature = "ring-msm")]
             wrap_masks: super::wrap_mask::LazyWrapMasks::load(dir, party_id)?,
             #[cfg(feature = "ring-msm")]
+            ring_edabits_u34: LazyEdaBitsRing::<U34>::load(dir, party_id)?,
+            #[cfg(feature = "ring-msm")]
             ring_edabits_u66: LazyEdaBitsRing::<U66>::load(dir, party_id)?,
+            #[cfg(feature = "ring-msm")]
+            dapoints_iring: super::daPoint::LazyDaPoints::empty(party_id),
+            #[cfg(feature = "ring-msm")]
+            wrap_masks_iring: super::wrap_mask::LazyWrapMasks::load(&dir.join("iring"), party_id)?,
             #[cfg(not(feature = "ring-msm"))]
             _phantom: PhantomData,
         })
@@ -494,8 +502,9 @@ impl<'a, F: PrimeField, C: ark_ec::CurveGroup> ForkablePreprocessingSession<'a, 
 // ---------------------------------------------------------------------------
 // Pool generation / extension functions (moved from edabits.rs)
 // ---------------------------------------------------------------------------
+// Ring-MSM free functions (ring_edabit_alpha2_seed_chunk, stream_ring_edabits,
+// preprocess_ring_edabits) have been moved to pool_experimental.rs.
 
-/// Batched preprocessing (in-memory): generate all edaBits + daBits in **2 network rounds**
 /// instead of 7 sequential rounds (5 edaBit + 2 daBit).
 ///
 /// Round 1: P0→P2 sends all edaBit α₂ + daBit α₂; P1→P2 sends daBit s₁₂.
@@ -795,7 +804,7 @@ fn env_usize(name: &str, default: usize) -> usize {
     std::env::var(name).ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(default)
 }
 
-fn preproc_max_msg_mb() -> usize {
+pub(super) fn preproc_max_msg_mb() -> usize {
     env_usize("PREPROC_MAX_MSG_MB", 2)
 }
 
@@ -803,15 +812,15 @@ fn preproc_store_batch_mb() -> usize {
     env_usize("PREPROC_STORE_BATCH_MB", 16)
 }
 
-fn preproc_lanes() -> usize {
+pub(super) fn preproc_lanes() -> usize {
     env_usize("PREPROC_LANES", 8)
 }
 
-fn preproc_segment_mb() -> usize {
+pub(super) fn preproc_segment_mb() -> usize {
     env_usize("PREPROC_SEGMENT_MB", 64)
 }
 
-fn configured_transport_lanes() -> usize {
+pub(super) fn configured_transport_lanes() -> usize {
     std::env::var("MPC_QUIC_CONN_LANES")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
@@ -1253,7 +1262,7 @@ fn read_file_backed_range<F: PrimeField + Copy>(
 /// monolithic `Vec<F>` buffers for all α₂ values at once, and for P2 it writes
 /// α₂/stored data directly to file-backed stores under `dir`.
 #[tracing::instrument(skip_all, name = "preprocess_pool")]
-fn preprocess_pool_base<F, N>(
+pub(super) fn preprocess_pool_base<F, N>(
     dir: &Path,
     counts: [usize; 5], // [u8, u16, u32, u64, u128]
     num_dabits: usize,
@@ -2049,7 +2058,7 @@ where
 /// **Communication:** P0→P2 (combined alpha2 for deficit items), P1→P2 (daBit s₁₂),
 /// P2→P0 (daBit s₂₀).
 #[tracing::instrument(skip_all, name = "extend_pool_batched")]
-fn extend_pool_batched_base<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTransport>(
+pub(super) fn extend_pool_batched_base<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTransport>(
     pool: &mut PreprocessingPool<F>,
     deficit_counts: [usize; 5],
     deficit_dabits: usize,
@@ -2401,40 +2410,12 @@ where
     Ok(pool)
 }
 
-/// File-backed preprocessing: generate edaBits + daBits + wrap masks + ring edaBits into `dir`.
-#[cfg(feature = "ring-msm")]
-pub fn preprocess_pool<F, N>(
-    dir: &Path,
-    counts: [usize; 5],
-    num_dabits: usize,
-    num_wrap_masks: usize,
-    num_ring_edabits_u66: usize,
-    num_ring_edabits_u64: usize,
-    num_ring_edabits_u128: usize,
-    io: &mut IoContextPool<N>,
-) -> eyre::Result<PreprocessingPool<F>>
-where
-    F: PrimeField + Copy,
-    N: Rep3NetworkWorker + Rep3RawFieldTransport,
-{
-    let mut pool = preprocess_pool_base(dir, counts, num_dabits, io)?;
-    if num_wrap_masks > 0 {
-        pool.set_wrap_masks(super::wrap_mask::generate_wrap_masks_lazy(num_wrap_masks, io.main())?);
-    }
-    if num_ring_edabits_u66 > 0 {
-        pool.set_ring_edabits_u66(super::edabits::random_edabits_ring_lazy::<U66, _>(num_ring_edabits_u66, io)?);
-    }
-    if num_ring_edabits_u64 > 0 {
-        pool.set_ring_edabits_u64(super::edabits::random_edabits_ring_lazy::<u64, _>(num_ring_edabits_u64, io)?);
-    }
-    if num_ring_edabits_u128 > 0 {
-        pool.set_ring_edabits_u128(super::edabits::random_edabits_ring_lazy::<u128, _>(num_ring_edabits_u128, io)?);
-    }
-    pool.save(dir)?;
-    Ok(pool)
-}
-
 /// Extend an existing pool with additional edaBits + daBits + ring edaBits.
+///
+/// Regular edaBits + daBits are *appended* to existing data (cursor preserved).
+/// Ring edaBits are *replaced* — the old source is discarded and a fresh source
+/// of size `deficit + remaining` (= budget) is generated so the full budget is
+/// available from cursor 0.
 #[cfg(not(feature = "ring-msm"))]
 pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTransport>(
     pool: &mut PreprocessingPool<F>,
@@ -2445,39 +2426,14 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTra
     io: &mut IoContextPool<N>,
 ) -> eyre::Result<()> {
     extend_pool_batched_base(pool, deficit_counts, deficit_dabits, io)?;
+    // set_* replaces the entire source, so generate deficit + remaining = budget.
     if deficit_ring_edabits_u64 > 0 {
-        pool.set_ring_edabits_u64(super::edabits::random_edabits_ring_lazy::<u64, _>(deficit_ring_edabits_u64, io)?);
+        let total = deficit_ring_edabits_u64 + pool.remaining_ring_edabits_u64();
+        pool.set_ring_edabits_u64(super::edabits::random_edabits_ring_lazy::<u64, _>(total, io)?);
     }
     if deficit_ring_edabits_u128 > 0 {
-        pool.set_ring_edabits_u128(super::edabits::random_edabits_ring_lazy::<u128, _>(deficit_ring_edabits_u128, io)?);
-    }
-    Ok(())
-}
-
-/// Extend an existing pool with additional edaBits + daBits + wrap masks + ring edaBits.
-#[cfg(feature = "ring-msm")]
-pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTransport>(
-    pool: &mut PreprocessingPool<F>,
-    deficit_counts: [usize; 5],
-    deficit_dabits: usize,
-    deficit_wrap_masks: usize,
-    deficit_ring_edabits_u66: usize,
-    deficit_ring_edabits_u64: usize,
-    deficit_ring_edabits_u128: usize,
-    io: &mut IoContextPool<N>,
-) -> eyre::Result<()> {
-    extend_pool_batched_base(pool, deficit_counts, deficit_dabits, io)?;
-    if deficit_wrap_masks > 0 {
-        pool.set_wrap_masks(super::wrap_mask::generate_wrap_masks_lazy(deficit_wrap_masks, io.main())?);
-    }
-    if deficit_ring_edabits_u66 > 0 {
-        pool.set_ring_edabits_u66(super::edabits::random_edabits_ring_lazy::<U66, _>(deficit_ring_edabits_u66, io)?);
-    }
-    if deficit_ring_edabits_u64 > 0 {
-        pool.set_ring_edabits_u64(super::edabits::random_edabits_ring_lazy::<u64, _>(deficit_ring_edabits_u64, io)?);
-    }
-    if deficit_ring_edabits_u128 > 0 {
-        pool.set_ring_edabits_u128(super::edabits::random_edabits_ring_lazy::<u128, _>(deficit_ring_edabits_u128, io)?);
+        let total = deficit_ring_edabits_u128 + pool.remaining_ring_edabits_u128();
+        pool.set_ring_edabits_u128(super::edabits::random_edabits_ring_lazy::<u128, _>(total, io)?);
     }
     Ok(())
 }
