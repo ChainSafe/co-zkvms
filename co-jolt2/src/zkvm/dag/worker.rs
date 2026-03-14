@@ -14,7 +14,6 @@ use crate::utils::memory::maybe_purge_jemalloc;
 use crate::utils::types::MaybeShared;
 use crate::zkvm::dag::stage::{Rep3JoltDagStagesWorker, SumcheckStagesWorker};
 use crate::zkvm::dag::state_manager::StateManagerWorker;
-#[cfg(feature = "ring-msm")]
 use crate::zkvm::inc_biased_b2a::biased_inc_b2a_many;
 use crate::zkvm::spartan::Rep3SpartanDagWorker;
 use crate::zkvm::witness::{generate_witness_batch_rep3, populate_cycle_witness_rep3};
@@ -195,7 +194,7 @@ impl Rep3JoltDagWorker {
         // Populate the field-domain per-cycle witness cache (used for Spartan Stage1 and later).
         populate_cycle_witness_rep3(state, io_ctx, preproc)?;
 
-        let witness_polys = generate_witness_batch_rep3(&poly_keys, state, io_ctx, preproc)?;
+        let mut witness_polys = generate_witness_batch_rep3(&poly_keys, state, io_ctx, preproc)?;
 
         let instruction_one_hot_polys: [Rep3OneHotPolynomial<F>; D] = std::array::from_fn(|i| {
             let key = CommittedPolynomial::InstructionRa(i);
@@ -243,8 +242,7 @@ impl Rep3JoltDagWorker {
         // for opening proof evaluation. Ring variants cannot evaluate in the field.
         #[cfg(feature = "ring-msm")]
         {
-            use jolt_common::constants::{ArithmeticWideInt, XLEN};
-            use mpc_core::protocols::rep3_ring::{casts, conversion as ring_conv};
+            use jolt_common::constants::ArithmeticWideInt;
 
             let n = state.prover_state.cycle_witness.len();
 
@@ -254,7 +252,8 @@ impl Rep3JoltDagWorker {
                     if matches!(poly, Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::RingScalars(_))) {
                         let mut field_shares: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(n);
                         for t in 0..n {
-                            let (l, r) = state.prover_state.cycle_witness.row_stage1(t).to_instruction_inputs(party_id);
+                            let (l, r) =
+                                state.prover_state.cycle_witness.row_stage1(t).to_instruction_inputs(_party_id);
                             field_shares.push(if key == CommittedPolynomial::LeftInstructionInput { l } else { r });
                         }
                         witness_polys.insert(key, Rep3MultilinearPolynomial::from(field_shares));
@@ -263,9 +262,9 @@ impl Rep3JoltDagWorker {
             }
 
             // IRingScalars (biased inc) → Dense field via A2B + r2f_b2a - bias
-                        for key in [CommittedPolynomial::RdInc, CommittedPolynomial::RamInc] {
-                            if let Some(poly) = witness_polys.get(&key) {
-                                if matches!(poly, Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::IRingScalars(_))) {
+            for key in [CommittedPolynomial::RdInc, CommittedPolynomial::RamInc] {
+                if let Some(poly) = witness_polys.get(&key) {
+                    if matches!(poly, Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::IRingScalars(_))) {
                         let _span = info_span!("iring_to_dense", ?key).entered();
                         // Extract arithmetic u64 shares
                         let inc_poly = match witness_polys.remove(&key).unwrap() {

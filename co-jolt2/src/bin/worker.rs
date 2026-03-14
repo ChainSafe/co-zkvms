@@ -232,6 +232,10 @@ fn prove_loop(
                     #[cfg(feature = "reuse-preproc")]
                     pool.reset_cursors_for_reuse();
 
+                    // Validate cached daPoints match current SRS (num_columns).
+                    #[cfg(feature = "ring-msm")]
+                    pool.validate_dapoints_num_columns(dory_num_columns, party_id);
+
                     let (rem_eda, rem_da) = pool.remaining_counts();
                     let deficit_counts: [usize; 5] = std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
                     let deficit_dabits = num_dabits.saturating_sub(rem_da);

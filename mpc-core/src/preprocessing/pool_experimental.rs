@@ -43,6 +43,35 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
         self.dapoints.remaining()
     }
 
+    /// Discard cached daPoints if `num_columns` doesn't match.
+    /// Returns `true` if daPoints were invalidated.
+    pub fn validate_dapoints_num_columns(&mut self, num_columns: usize, party_id: PartyID) -> bool {
+        let mut invalidated = false;
+        if self.dapoints.num_columns() != Some(num_columns) && self.dapoints.remaining() > 0 {
+            tracing::info!(
+                stored = ?self.dapoints.num_columns(),
+                current = num_columns,
+                "daPoints num_columns mismatch; discarding cached daPoints"
+            );
+            self.dapoints = super::daPoint::LazyDaPoints::empty(party_id);
+            invalidated = true;
+        } else if self.dapoints.num_columns() != Some(num_columns) {
+            self.dapoints = super::daPoint::LazyDaPoints::empty(party_id);
+        }
+        if self.dapoints_iring.num_columns() != Some(num_columns) && self.dapoints_iring.remaining() > 0 {
+            tracing::info!(
+                stored = ?self.dapoints_iring.num_columns(),
+                current = num_columns,
+                "daPoints_iring num_columns mismatch; discarding cached daPoints"
+            );
+            self.dapoints_iring = super::daPoint::LazyDaPoints::empty(party_id);
+            invalidated = true;
+        } else if self.dapoints_iring.num_columns() != Some(num_columns) {
+            self.dapoints_iring = super::daPoint::LazyDaPoints::empty(party_id);
+        }
+        invalidated
+    }
+
     /// Inject pre-generated lazy wrap masks into this pool.
     pub fn set_wrap_masks(&mut self, wm: super::wrap_mask::LazyWrapMasks<DoryRingMsmInt>) {
         self.wrap_masks = wm;
