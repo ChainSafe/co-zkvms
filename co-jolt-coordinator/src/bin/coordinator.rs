@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 #[cfg(feature = "test-utils")]
-use std::sync::OnceLock;
+use std::{path::Path, sync::OnceLock};
 
 use clap::Parser;
 use co_jolt_coordinator::coordinate::coordinate_once;
@@ -46,6 +46,8 @@ fn init_trace_from_program_id(program_id: &str, trace_dir: &Path) {
 fn main() -> eyre::Result<()> {
     #[cfg(feature = "test-utils")]
     let _tracy = if std::env::var("TRACY").is_ok() {
+        use std::time::Duration;
+
         let client = tracy_client::Client::start();
         start_rss_monitor(Duration::from_millis(10));
         Some(client)
@@ -157,7 +159,7 @@ fn coordinate_loop<N: Rep3NetworkCoordinator>(
         coordinate_once(network, |_request| {
             #[cfg(feature = "test-utils")]
             if let Some(trace_dir) = trace_dir.as_deref() {
-                init_trace_from_program_id(&request.program_id, trace_dir);
+                init_trace_from_program_id(&_request.program_id, trace_dir);
             }
         })?;
     }

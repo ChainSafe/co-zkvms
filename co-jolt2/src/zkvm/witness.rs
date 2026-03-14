@@ -21,7 +21,9 @@ use mpc_core::protocols::rep3::{arithmetic::promote_to_trivial_share, Rep3PrimeF
 use mpc_core::protocols::rep3_ring::casts;
 #[cfg(not(feature = "ring-msm"))]
 use mpc_core::protocols::rep3_ring::conversion as ring_conv;
-use mpc_core::protocols::rep3_ring::edabits::{EdaBitsBatchScratch, EdaBitsRangeView, PreprocessingPool};
+use mpc_core::protocols::rep3_ring::edabits::{
+    EdaBitsBatchScratch, EdaBitsRangeView, ForkedB2aScratch, PreprocessingPool,
+};
 use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
 use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use rand::distributions::{Distribution, Standard};
@@ -172,7 +174,7 @@ where
         let chunk_targets = &targets[start_idx..start_idx + chunk_shares.len()];
         let mut session = preproc.begin_forkable_session();
         let reserved = session.reserve_edabits::<XlenInt>(chunk_shares.len())?;
-        io_ctx.par_chunks_forked_apply(
+        io_ctx.par_chunks_preproc_into(
             chunk_shares,
             None,
             &mut cast_scratch,
@@ -982,8 +984,8 @@ where
                         let end = (off + inc_b2a_chunk).min(n);
                         let chunk = &biased_arith[off..end];
                         let biased_bin = ring_conv::a2b_many(chunk, io_ctx.main())?;
-                        let batch_eda = preproc.take_edabits::<ArithmeticWideInt>(chunk.len())?;
                         let biased_field: Vec<Rep3PrimeFieldShare<F>> = if inc_b2a_max_forks <= 1 {
+                            let batch_eda = preproc.take_edabits::<ArithmeticWideInt>(chunk.len())?;
                             casts::r2f_b2a_preproc_many::<ArithmeticWideInt, F, _>(
                                 &biased_bin,
                                 &batch_eda,
@@ -991,9 +993,28 @@ where
                             )?
                         } else {
                             let chunk_size = biased_bin.len().div_ceil(inc_b2a_max_forks);
-                            io_ctx.par_chunks_preproc(biased_bin, batch_eda, Some(chunk_size), |xs, b, c| {
-                                casts::r2f_b2a_preproc_many::<ArithmeticWideInt, F, _>(&xs, &b, c)
-                            })?
+                            let mut session = preproc.begin_forkable_session();
+                            let reserved = session.reserve_edabits::<ArithmeticWideInt>(chunk.len())?;
+                            let mut scratch: Vec<ForkedB2aScratch<ArithmeticWideInt, F>> =
+                                (0..inc_b2a_max_forks).map(|_| ForkedB2aScratch::default()).collect();
+                            let biased_field = io_ctx.par_chunks_preproc(
+                                &biased_bin,
+                                Some(chunk_size),
+                                &mut scratch,
+                                |start, len| reserved.range_view(start, len),
+                                |_, xs, view: EdaBitsRangeView<'_, ArithmeticWideInt, F>, c, scratch| {
+                                    view.fill_into_par_safe(&mut scratch.batch)?;
+                                    casts::r2f_b2a_preproc_many_into::<ArithmeticWideInt, F, _>(
+                                        xs,
+                                        scratch.batch.as_ref(),
+                                        c,
+                                        &mut scratch.cast,
+                                    )?;
+                                    Ok::<_, eyre::Report>(scratch.cast.take_output())
+                                },
+                            )?;
+                            session.finalize_success();
+                            biased_field
                         };
                         inc.extend(
                             biased_field.into_iter().map(|s| {
@@ -1032,8 +1053,8 @@ where
                         let end = (off + inc_b2a_chunk).min(n);
                         let chunk = &biased_arith[off..end];
                         let biased_bin = ring_conv::a2b_many(chunk, io_ctx.main())?;
-                        let batch_eda = preproc.take_edabits::<ArithmeticWideInt>(chunk.len())?;
                         let biased_field: Vec<Rep3PrimeFieldShare<F>> = if inc_b2a_max_forks <= 1 {
+                            let batch_eda = preproc.take_edabits::<ArithmeticWideInt>(chunk.len())?;
                             casts::r2f_b2a_preproc_many::<ArithmeticWideInt, F, _>(
                                 &biased_bin,
                                 &batch_eda,
@@ -1041,9 +1062,28 @@ where
                             )?
                         } else {
                             let chunk_size = biased_bin.len().div_ceil(inc_b2a_max_forks);
-                            io_ctx.par_chunks_preproc(biased_bin, batch_eda, Some(chunk_size), |xs, b, c| {
-                                casts::r2f_b2a_preproc_many::<ArithmeticWideInt, F, _>(&xs, &b, c)
-                            })?
+                            let mut session = preproc.begin_forkable_session();
+                            let reserved = session.reserve_edabits::<ArithmeticWideInt>(chunk.len())?;
+                            let mut scratch: Vec<ForkedB2aScratch<ArithmeticWideInt, F>> =
+                                (0..inc_b2a_max_forks).map(|_| ForkedB2aScratch::default()).collect();
+                            let biased_field = io_ctx.par_chunks_preproc(
+                                &biased_bin,
+                                Some(chunk_size),
+                                &mut scratch,
+                                |start, len| reserved.range_view(start, len),
+                                |_, xs, view: EdaBitsRangeView<'_, ArithmeticWideInt, F>, c, scratch| {
+                                    view.fill_into_par_safe(&mut scratch.batch)?;
+                                    casts::r2f_b2a_preproc_many_into::<ArithmeticWideInt, F, _>(
+                                        xs,
+                                        scratch.batch.as_ref(),
+                                        c,
+                                        &mut scratch.cast,
+                                    )?;
+                                    Ok::<_, eyre::Report>(scratch.cast.take_output())
+                                },
+                            )?;
+                            session.finalize_success();
+                            biased_field
                         };
                         inc.extend(
                             biased_field.into_iter().map(|s| {

@@ -18,7 +18,6 @@ use std::sync::{Arc, OnceLock};
 
 use crate::preprocessing::backing_store::assert_field_layout;
 use crate::protocols::rep3_ring::dabits::DaBitBatch;
-use crate::protocols::rep3_ring::edabits::{EdaBitsBatch, EdaBitsBatchRef};
 
 use itertools::Itertools;
 use mpc_net::topology::{MpcStarNetCoordinator, MpcStarNetWorker};
@@ -680,87 +679,27 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
             .collect::<Result<Vec<_>, _>>()
     }
 
-    /// Like `par_chunks` but also splits an `EdaBitsBatch` in lockstep with inputs.
-    /// Each fork receives a sub-batch with matching gammas (1:1 with inputs) and
-    /// alphas_flat (K:1 with inputs, where K = T::K bits per ring element).
-    // NOTE: Chunking boilerplate is intentionally duplicated from `par_chunks` because
-    // abstracting the batch co-splitting across EdaBitsBatch/DaBitBatch would add
-    // trait complexity for minimal gain.
-    pub fn par_chunks_preproc<T, R, F, MapFn, Err>(
+    pub fn par_chunks_preproc<T, V, S, R, MakeView, MapFn, Err>(
         &mut self,
-        inputs: Vec<Rep3RingShare<T>>,
-        batch: EdaBitsBatch<T, F>,
+        inputs: &[Rep3RingShare<T>],
         chunk_size: Option<usize>,
+        scratch: &mut [S],
+        make_view: MakeView,
         map: MapFn,
     ) -> eyre::Result<Vec<R>>
     where
         T: IntRing2k + Send + Sync,
-        F: PrimeField + Send + Sync,
-        MapFn:
-            Fn(Vec<Rep3RingShare<T>>, EdaBitsBatch<T, F>, &mut IoContext<Network>) -> Result<Vec<R>, Err> + Sync + Send,
-        R: Sync + Send + Clone,
-        eyre::Report: From<Err>,
-        Err: Send + Sync,
-    {
-        let len = inputs.len();
-
-        if self.forks.is_empty() || len == 0 {
-            return Ok(map(inputs, batch, self.main())?);
-        }
-
-        let chunk_size = chunk_size.unwrap_or(len.div_ceil(self.forks.len()));
-        assert!(chunk_size != 0);
-        if len <= chunk_size {
-            return Ok(map(inputs, batch, self.main())?);
-        }
-        let num_forks = len.div_ceil(chunk_size);
-        let k = T::K;
-
-        inputs
-            .into_par_iter()
-            .chunks(chunk_size)
-            .zip_eq(batch.gammas.into_par_iter().chunks(chunk_size))
-            .zip_eq(batch.alphas_flat.into_par_iter().chunks(chunk_size * k))
-            .zip_eq(self.forks(num_forks).par_iter_mut())
-            .flat_map(|(((inputs, gammas), alphas), ctx)| {
-                let sub_batch = EdaBitsBatch { gammas, alphas_flat: alphas };
-                match map(inputs, sub_batch, ctx) {
-                    Ok(r) => Either::Left(r.into_par_iter().map(eyre::Ok)),
-                    Err(e) => Either::Right(rayon::iter::once(Err(eyre::Error::from(e)))),
-                }
-            })
-            .collect::<Result<Vec<_>, _>>()
-    }
-
-    /// Like `par_chunks_preproc`, but borrows both inputs and preprocessing data
-    /// and applies a side-effecting callback per chunk.
-    pub fn par_chunks_preproc_apply<T, F, S, MapFn, Err>(
-        &mut self,
-        inputs: &[Rep3RingShare<T>],
-        batch: EdaBitsBatchRef<'_, T, F>,
-        chunk_size: Option<usize>,
-        scratch: &mut [S],
-        map: MapFn,
-    ) -> eyre::Result<()>
-    where
-        T: IntRing2k + Send + Sync,
-        F: PrimeField + Send + Sync,
+        V: Send,
         S: Send,
-        MapFn: Fn(
-                usize,
-                &[Rep3RingShare<T>],
-                EdaBitsBatchRef<'_, T, F>,
-                &mut IoContext<Network>,
-                &mut S,
-            ) -> Result<(), Err>
-            + Sync
-            + Send,
+        R: Send,
+        MakeView: Fn(usize, usize) -> V + Sync + Send,
+        MapFn: Fn(usize, &[Rep3RingShare<T>], V, &mut IoContext<Network>, &mut S) -> Result<Vec<R>, Err> + Sync + Send,
         eyre::Report: From<Err>,
         Err: Send + Sync,
     {
         let len = inputs.len();
         if len == 0 {
-            return Ok(());
+            return Ok(Vec::new());
         }
 
         let chunk_size =
@@ -769,36 +708,38 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
 
         if self.forks.is_empty() || len <= chunk_size {
             let Some(first_scratch) = scratch.first_mut() else {
-                eyre::bail!("par_chunks_preproc_apply requires at least one scratch slot");
+                eyre::bail!("par_chunks_preproc requires at least one scratch slot");
             };
-            return Ok(map(0, inputs, batch, self.main(), first_scratch)?);
+            return Ok(map(0, inputs, make_view(0, len), self.main(), first_scratch)?);
         }
 
         let num_forks = len.div_ceil(chunk_size);
         eyre::ensure!(
             scratch.len() >= num_forks,
-            "par_chunks_preproc_apply: need {} scratch slots, got {}",
+            "par_chunks_preproc: need {} scratch slots, got {}",
             num_forks,
             scratch.len()
         );
 
-        inputs
+        let chunk_results: Vec<Vec<R>> = inputs
             .par_chunks(chunk_size)
-            .zip_eq(batch.gammas.par_chunks(chunk_size))
-            .zip_eq(batch.alphas_flat.par_chunks(chunk_size * T::K))
             .enumerate()
             .zip_eq(self.forks(num_forks).par_iter_mut().zip_eq(scratch[..num_forks].par_iter_mut()))
-            .map(|((chunk_idx, ((xs, gammas), alphas)), (ctx, scratch))| {
+            .map(|((chunk_idx, xs), (ctx, scratch))| {
                 let start = chunk_idx * chunk_size;
-                let sub_batch = EdaBitsBatchRef { gammas, alphas_flat: alphas };
-                map(start, xs, sub_batch, ctx, scratch).map_err(eyre::Error::from)
+                let view = make_view(start, xs.len());
+                map(start, xs, view, ctx, scratch).map_err(eyre::Error::from)
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(())
+        let mut out = Vec::new();
+        for chunk in chunk_results {
+            out.extend(chunk);
+        }
+        Ok(out)
     }
 
-    pub fn par_chunks_forked_apply<T, V, S, MakeView, MapFn, Err>(
+    pub fn par_chunks_preproc_into<T, V, S, MakeView, MapFn, Err>(
         &mut self,
         inputs: &[Rep3RingShare<T>],
         chunk_size: Option<usize>,
@@ -826,7 +767,7 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
 
         if self.forks.is_empty() || len <= chunk_size {
             let Some(first_scratch) = scratch.first_mut() else {
-                eyre::bail!("par_chunks_forked_apply requires at least one scratch slot");
+                eyre::bail!("par_chunks_preproc_into requires at least one scratch slot");
             };
             return Ok(map(0, inputs, make_view(0, len), self.main(), first_scratch)?);
         }
@@ -834,7 +775,7 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
         let num_forks = len.div_ceil(chunk_size);
         eyre::ensure!(
             scratch.len() >= num_forks,
-            "par_chunks_forked_apply: need {} scratch slots, got {}",
+            "par_chunks_preproc_into: need {} scratch slots, got {}",
             num_forks,
             scratch.len()
         );
