@@ -2,15 +2,17 @@ use std::path::Path;
 
 use super::backing_store;
 use super::dabits::{DaBitBatch, LazyDaBits};
-use super::edabits::{EdaBitsBatch, EdaBitsRingBatch, LazyEdaBits, LazyEdaBitsRing};
+use super::edabits::{
+    EdaBitsBatch, EdaBitsBatchScratch, EdaBitsRingBatch, EdaBitsStorageMode, LazyEdaBits, LazyEdaBitsRing,
+};
 use crate::field::PrimeField;
 use crate::protocols::rep3::network::Rep3RawFieldTransport;
 use crate::protocols::rep3::network::{IoContext, IoContextPool, Rep3Network, Rep3NetworkWorker};
 use crate::protocols::rep3::PartyID;
 use crate::protocols::rep3_ring::ring::int_ring::IntRing2k;
+use crate::protocols::rep3_ring::ring::ring_impl::RingElement;
 use crate::protocols::rep3_ring::ring::u34::U34;
 use crate::protocols::rep3_ring::ring::u66::U66;
-use eyre::Ok;
 use rand::distributions::Standard;
 use rand::prelude::Distribution;
 use rand::RngCore;
@@ -331,6 +333,16 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
         )
     }
 
+    #[tracing::instrument(skip_all, name = "Preprocessing::prepare_edabits_precache")]
+    pub fn prepare_edabits_precache(&mut self, dir: &Path, counts: [usize; 5]) -> std::io::Result<()> {
+        self.edabits_u64.prepare_precache(dir, counts[3])?;
+        self.edabits_u128.prepare_precache(dir, counts[4])?;
+        self.edabits_u32.prepare_precache(dir, counts[2])?;
+        self.edabits_u16.prepare_precache(dir, counts[1])?;
+        self.edabits_u8.prepare_precache(dir, counts[0])?;
+        Ok(())
+    }
+
     /// Reset all internal cursors to 0 in `reuse-preproc` mode.
     ///
     /// This makes the pool re-usable across multiple proof iterations in a single process.
@@ -391,22 +403,68 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
         }
     }
 
+    /// Generic edaBits drain into a reusable flat batch scratch buffer.
+    #[tracing::instrument(skip(self, scratch), level = "trace", name = "take_edabits_into")]
+    pub fn take_edabits_into<T: IntRing2k>(
+        &mut self,
+        n: usize,
+        scratch: &mut EdaBitsBatchScratch<T, F>,
+    ) -> eyre::Result<()>
+    where
+        Standard: Distribution<T>,
+    {
+        use std::any::TypeId;
+        let tid = TypeId::of::<T>();
+        if tid == TypeId::of::<u8>() {
+            // SAFETY: T == u8 confirmed by TypeId check.
+            let scratch =
+                unsafe { &mut *(scratch as *mut EdaBitsBatchScratch<T, F> as *mut EdaBitsBatchScratch<u8, F>) };
+            self.edabits_u8.take_batch_into(n, scratch)
+        } else if tid == TypeId::of::<u16>() {
+            let scratch =
+                unsafe { &mut *(scratch as *mut EdaBitsBatchScratch<T, F> as *mut EdaBitsBatchScratch<u16, F>) };
+            self.edabits_u16.take_batch_into(n, scratch)
+        } else if tid == TypeId::of::<u32>() {
+            let scratch =
+                unsafe { &mut *(scratch as *mut EdaBitsBatchScratch<T, F> as *mut EdaBitsBatchScratch<u32, F>) };
+            self.edabits_u32.take_batch_into(n, scratch)
+        } else if tid == TypeId::of::<u64>() {
+            let scratch =
+                unsafe { &mut *(scratch as *mut EdaBitsBatchScratch<T, F> as *mut EdaBitsBatchScratch<u64, F>) };
+            self.edabits_u64.take_batch_into(n, scratch)
+        } else if tid == TypeId::of::<u128>() {
+            let scratch =
+                unsafe { &mut *(scratch as *mut EdaBitsBatchScratch<T, F> as *mut EdaBitsBatchScratch<u128, F>) };
+            self.edabits_u128.take_batch_into(n, scratch)
+        } else {
+            eyre::bail!("EdaBitsPool::take_edabits_into: unsupported ring type u{}", T::K);
+        }
+    }
+
     /// Write all lazy sources to `dir` concurrently.
     ///
     /// All data+meta pairs are written in parallel via `thread::scope`.
     /// Each save writes the large data file first (page-cache, no fsync), then
     /// fsyncs the tiny 117-byte meta file as the durability barrier.
     #[tracing::instrument(skip_all, name = "Preprocessing::save")]
-    pub fn save(&self, dir: &std::path::Path) -> std::io::Result<()> {
+    pub fn save(&mut self, dir: &std::path::Path) -> std::io::Result<()> {
+        let e0 = &mut self.edabits_u8;
+        let e1 = &mut self.edabits_u16;
+        let e2 = &mut self.edabits_u32;
+        let e3 = &mut self.edabits_u64;
+        let e4 = &mut self.edabits_u128;
+        let da = &mut self.dabits;
+        let r64 = &mut self.ring_edabits_u64;
+        let r128 = &mut self.ring_edabits_u128;
         std::thread::scope(|s| -> std::io::Result<()> {
-            let h0 = s.spawn(|| self.edabits_u8.save(dir));
-            let h1 = s.spawn(|| self.edabits_u16.save(dir));
-            let h2 = s.spawn(|| self.edabits_u32.save(dir));
-            let h3 = s.spawn(|| self.edabits_u64.save(dir));
-            let h4 = s.spawn(|| self.edabits_u128.save(dir));
-            let h5 = s.spawn(|| self.dabits.save(dir));
-            let h_r64 = s.spawn(|| self.ring_edabits_u64.save(dir));
-            let h_r128 = s.spawn(|| self.ring_edabits_u128.save(dir));
+            let h0 = s.spawn(|| e0.save(dir));
+            let h1 = s.spawn(|| e1.save(dir));
+            let h2 = s.spawn(|| e2.save(dir));
+            let h3 = s.spawn(|| e3.save(dir));
+            let h4 = s.spawn(|| e4.save(dir));
+            let h5 = s.spawn(|| da.save(dir));
+            let h_r64 = s.spawn(|| r64.save(dir));
+            let h_r128 = s.spawn(|| r128.save(dir));
             #[cfg(feature = "ring-msm")]
             let h_r34 = s.spawn(|| self.ring_edabits_u34.save(dir));
             #[cfg(feature = "ring-msm")]
@@ -472,6 +530,282 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
 // ---------------------------------------------------------------------------
 
 /// Batched preprocessing (in-memory): generate all edaBits + daBits in **2 network rounds**
+/// Compute α₂ for a contiguous range of ring edaBits from seed snapshots.
+///
+/// Analogous to `edabit_alpha2_seed_chunk` but returns `Vec<RingElement<T>>` (ring domain).
+/// rng1 stride = `(1+K)*t_bytes` (interleaved gamma + K alphas).
+/// rng2 stride = `(1+K)*t_bytes` (same as rng1, both rngs advance equally).
+#[cfg(feature = "ring-msm")]
+fn ring_edabit_alpha2_seed_chunk<T: IntRing2k>(
+    seed1: [u8; crate::SEED_SIZE],
+    pos1: u128,
+    seed2: [u8; crate::SEED_SIZE],
+    pos2: u128,
+    start_item: usize,
+    num: usize,
+    parallel: bool,
+) -> Vec<RingElement<T>>
+where
+    Standard: Distribution<T>,
+{
+    use super::dabits;
+
+    if num == 0 {
+        return Vec::new();
+    }
+    let t_bytes = std::mem::size_of::<T>();
+    let k = T::K;
+    let stride = (1 + k) * t_bytes;
+    let _span = tracing::trace_span!(
+        "ring_edabit_alpha2_p0_chunk",
+        ring_bits = k,
+        items = num,
+        start_item,
+        elems = num * k,
+    )
+    .entered();
+
+    let all1 = dabits::seek_and_generate(seed1, pos1, start_item * stride, num * stride);
+    let g2 = dabits::seek_and_generate(seed2, pos2, start_item * stride, num * stride);
+
+    let mut out = vec![RingElement(T::zero()); num * k];
+    let fill_chunk = |(i, chunk): (usize, &mut [RingElement<T>])| {
+        let base = i * stride;
+        let g1v = T::from_le_bytes(&all1[base..base + t_bytes]);
+        let g2v = T::from_le_bytes(&g2[base..base + t_bytes]);
+        let gamma = g1v ^ g2v;
+        for j in 0..k {
+            let a_start = base + t_bytes + j * t_bytes;
+            let alpha_1 = RingElement(T::from_le_bytes(&all1[a_start..a_start + t_bytes]));
+            let gamma_bit = ((gamma >> j) & T::one()) == T::one();
+            chunk[j] = RingElement(T::from(gamma_bit)) - alpha_1;
+        }
+    };
+    if parallel {
+        out.par_chunks_mut(k).enumerate().with_min_len(256).for_each(fill_chunk);
+    } else {
+        out.chunks_mut(k).enumerate().for_each(fill_chunk);
+    }
+    out
+}
+
+/// Stream ring edaBits for one ring type: P0 computes α₂ in segments and sends to P2.
+#[cfg(feature = "ring-msm")]
+fn stream_ring_edabits<T: IntRing2k, N: Rep3Network>(
+    seeds: ([u8; crate::SEED_SIZE], u128, [u8; crate::SEED_SIZE], u128),
+    num: usize,
+    store_path: &Path,
+    party_id: PartyID,
+    io: &mut IoContext<N>,
+) -> eyre::Result<LazyEdaBitsRing<T>>
+where
+    Standard: Distribution<T>,
+{
+    let _span = tracing::info_span!("ring_edabits_stream", ring_bits = T::K, n = num).entered();
+    let (seed1, pos1, seed2, pos2) = seeds;
+    if num == 0 {
+        return eyre::Result::Ok(LazyEdaBitsRing::empty(party_id));
+    }
+    let k = T::K;
+    let elem_bytes = std::mem::size_of::<RingElement<T>>();
+    // Items per message: target ~2MB of α₂ per message.
+    let max_alpha2_per_msg = (preproc_max_msg_mb() * 1024 * 1024 / (k * elem_bytes).max(1)).max(1);
+    // Items per segment for P0 computation: target ~64MB.
+    let t_bytes = std::mem::size_of::<T>();
+    let stride = (1 + k) * t_bytes;
+    let segment_items = (preproc_segment_mb() * 1024 * 1024 / (stride).max(1)).max(max_alpha2_per_msg);
+
+    match party_id {
+        PartyID::ID0 => {
+            let mut done = 0usize;
+            while done < num {
+                let seg_items = (num - done).min(segment_items);
+                let alpha2 = ring_edabit_alpha2_seed_chunk::<T>(seed1, pos1, seed2, pos2, done, seg_items, true);
+                // Send in bounded chunks.
+                let mut offset = 0usize;
+                let total_elems = alpha2.len();
+                let max_elems = max_alpha2_per_msg * k;
+                while offset < total_elems {
+                    let chunk_len = (total_elems - offset).min(max_elems);
+                    io.network.send_many(PartyID::ID2, &alpha2[offset..offset + chunk_len])?;
+                    offset += chunk_len;
+                }
+                done += seg_items;
+            }
+        }
+        PartyID::ID2 => {
+            let total_elems = num * k;
+            let mut store =
+                backing_store::BackingStore::<RingElement<T>>::create_file_backed_sized(store_path, total_elems)?;
+            let max_elems = max_alpha2_per_msg * k;
+            let mut received = 0usize;
+            while received < total_elems {
+                let expect = (total_elems - received).min(max_elems);
+                let chunk: Vec<RingElement<T>> = io.network.recv_many(PartyID::ID0)?;
+                debug_assert_eq!(chunk.len(), expect);
+                store.write_at(received, &chunk)?;
+                received += chunk.len();
+            }
+            return eyre::Result::Ok(LazyEdaBitsRing::new_with_store(seed1, pos1, seed2, pos2, num, store, party_id));
+        }
+        PartyID::ID1 => {} // P1: seeds only, no IO.
+    }
+    eyre::Result::Ok(LazyEdaBitsRing::new(seed1, pos1, seed2, pos2, num, Vec::new(), party_id))
+}
+
+/// Orchestrate ring-edaBit generation: fork rngs upfront, dispatch in parallel when possible.
+#[cfg(feature = "ring-msm")]
+#[tracing::instrument(skip_all, name = "preprocess_ring_edabits")]
+fn preprocess_ring_edabits<F, N>(
+    pool: &mut PreprocessingPool<F>,
+    dir: &Path,
+    num_ring_edabits_u64: usize,
+    num_ring_edabits_u128: usize,
+    num_ring_edabits_dory: usize,
+    num_ring_edabits_iring: usize,
+    io: &mut IoContextPool<N>,
+) -> eyre::Result<()>
+where
+    F: PrimeField + Copy,
+    N: Rep3NetworkWorker + Rep3RawFieldTransport,
+{
+    let party_id = io.party_id();
+
+    // Fork rngs from io.main() for each ring type (deterministic order across parties).
+    // Must match the ordering in the sequential preprocess_pool so seeds are identical.
+    let snap_u64 = io.main().rngs.rand.fork().snapshot();
+    let snap_u128 = io.main().rngs.rand.fork().snapshot();
+    #[cfg(feature = "rv64")]
+    let combined_dory = num_ring_edabits_dory + num_ring_edabits_iring;
+    #[cfg(feature = "rv64")]
+    let snap_dory = io.main().rngs.rand.fork().snapshot();
+    #[cfg(not(feature = "rv64"))]
+    let snap_dory = io.main().rngs.rand.fork().snapshot();
+    #[cfg(not(feature = "rv64"))]
+    let snap_iring = io.main().rngs.rand.fork().snapshot();
+
+    // Collect active ring-edabit types: (tag, count, seeds).
+    type Seeds = ([u8; crate::SEED_SIZE], u128, [u8; crate::SEED_SIZE], u128);
+    let mut tasks: Vec<(u8, usize, Seeds)> = Vec::new();
+    if num_ring_edabits_u64 > 0 {
+        tasks.push((0, num_ring_edabits_u64, snap_u64));
+    }
+    if num_ring_edabits_u128 > 0 {
+        tasks.push((1, num_ring_edabits_u128, snap_u128));
+    }
+    {
+        #[cfg(feature = "rv64")]
+        if combined_dory > 0 {
+            tasks.push((2, combined_dory, snap_dory));
+        }
+        #[cfg(not(feature = "rv64"))]
+        {
+            if num_ring_edabits_dory > 0 {
+                tasks.push((2, num_ring_edabits_dory, snap_dory));
+            }
+            if num_ring_edabits_iring > 0 {
+                tasks.push((3, num_ring_edabits_iring, snap_iring));
+            }
+        }
+    }
+
+    if tasks.is_empty() {
+        return eyre::Result::Ok(());
+    }
+
+    let active_lanes = preproc_lanes().max(1).min(io.max_forks().max(1)).min(configured_transport_lanes().max(1));
+
+    tracing::info!(
+        tasks = tasks.len(),
+        active_lanes,
+        "ring edabits dispatch: {}",
+        if tasks.len() > 1 && active_lanes >= tasks.len() { "PARALLEL" } else { "sequential" }
+    );
+
+    // Dispatch: one ring type per fork when enough lanes; sequential fallback otherwise.
+    let mut dispatch = |tag: u8,
+                    count: usize,
+                    seeds: Seeds,
+                    ctx: &mut IoContext<N>|
+     -> eyre::Result<()> {
+        match tag {
+            0 => {
+                let path = dir.join(format!("ring_edabits_{}.alpha2", u64::K));
+                pool.set_ring_edabits_u64(stream_ring_edabits::<u64, _>(seeds, count, &path, party_id, ctx)?);
+            }
+            1 => {
+                let path = dir.join(format!("ring_edabits_{}.alpha2", u128::K));
+                pool.set_ring_edabits_u128(stream_ring_edabits::<u128, _>(seeds, count, &path, party_id, ctx)?);
+            }
+            2 => {
+                let path = dir.join(format!("ring_edabits_{}.alpha2", DoryRingMsmInt::K));
+                pool.set_ring_edabits_dory(stream_ring_edabits::<DoryRingMsmInt, _>(
+                    seeds, count, &path, party_id, ctx,
+                )?);
+            }
+            #[cfg(not(feature = "rv64"))]
+            3 => {
+                let path = dir.join(format!("ring_edabits_{}.alpha2", U66::K));
+                pool.ring_edabits_u66 = stream_ring_edabits::<U66, _>(seeds, count, &path, party_id, ctx)?;
+            }
+            _ => unreachable!(),
+        }
+        eyre::Result::Ok(())
+    };
+
+    if tasks.len() > 1 && active_lanes >= tasks.len() {
+        // Parallel: one ring type per fork.
+        let forks = io.forks(tasks.len());
+        // Cannot use par_iter because dispatch borrows pool mutably.
+        // Instead, collect results with Box<dyn Any> and apply sequentially.
+        let results: Vec<(u8, eyre::Result<_>)> = tasks
+            .into_par_iter()
+            .zip(forks.par_iter_mut())
+            .map(|((tag, count, seeds), ctx)| {
+                let result = match tag {
+                    0 => {
+                        let path = dir.join(format!("ring_edabits_{}.alpha2", u64::K));
+                        stream_ring_edabits::<u64, _>(seeds, count, &path, party_id, ctx).map(|r| Box::new(r) as Box<dyn std::any::Any + Send>)
+                    }
+                    1 => {
+                        let path = dir.join(format!("ring_edabits_{}.alpha2", u128::K));
+                        stream_ring_edabits::<u128, _>(seeds, count, &path, party_id, ctx).map(|r| Box::new(r) as Box<dyn std::any::Any + Send>)
+                    }
+                    2 => {
+                        let path = dir.join(format!("ring_edabits_{}.alpha2", DoryRingMsmInt::K));
+                        stream_ring_edabits::<DoryRingMsmInt, _>(seeds, count, &path, party_id, ctx).map(|r| Box::new(r) as Box<dyn std::any::Any + Send>)
+                    }
+                    #[cfg(not(feature = "rv64"))]
+                    3 => {
+                        let path = dir.join(format!("ring_edabits_{}.alpha2", U66::K));
+                        stream_ring_edabits::<U66, _>(seeds, count, &path, party_id, ctx).map(|r| Box::new(r) as Box<dyn std::any::Any + Send>)
+                    }
+                    _ => unreachable!(),
+                };
+                (tag, result)
+            })
+            .collect::<Vec<_>>();
+
+        for (tag, result) in results {
+            let val = result?;
+            match tag {
+                0 => pool.set_ring_edabits_u64(*val.downcast::<LazyEdaBitsRing<u64>>().unwrap()),
+                1 => pool.set_ring_edabits_u128(*val.downcast::<LazyEdaBitsRing<u128>>().unwrap()),
+                2 => pool.set_ring_edabits_dory(*val.downcast::<LazyEdaBitsRing<DoryRingMsmInt>>().unwrap()),
+                #[cfg(not(feature = "rv64"))]
+                3 => pool.ring_edabits_u66 = *val.downcast::<LazyEdaBitsRing<U66>>().unwrap(),
+                _ => unreachable!(),
+            }
+        }
+    } else {
+        // Sequential fallback.
+        for (tag, count, seeds) in tasks {
+            dispatch(tag, count, seeds, io.main())?;
+        }
+    }
+    eyre::Result::Ok(())
+}
+
 /// instead of 7 sequential rounds (5 edaBit + 2 daBit).
 ///
 /// Round 1: P0→P2 sends all edaBit α₂ + daBit α₂; P1→P2 sends daBit s₁₂.
@@ -1393,9 +1727,9 @@ where
     match party_id {
         PartyID::ID0 => {
             // Round 1: P0 → P2 sends edaBit α₂ streams per type, then daBit α₂.
-            let mut send_edabit_type = |idx: usize, num: usize| {
+            let mut send_edabit_type = |idx: usize, num: usize| -> eyre::Result<()> {
                 if num == 0 {
-                    return Ok(());
+                    return eyre::Result::<()>::Ok(());
                 }
                 let _span = info_span!("edabits_send_alphas", k = idx, n = num).entered();
                 let k = [u8::K, u16::K, u32::K, u64::K, u128::K][idx];
@@ -1467,7 +1801,7 @@ where
                             send_field_superchunk_ctx(alpha2, PartyID::ID2, ctx, max_msg_elems)?;
                             done += items;
                         }
-                        Ok(())
+                        eyre::Result::<()>::Ok(())
                     })?;
                 } else {
                     let mut done = 0usize;
@@ -1531,7 +1865,7 @@ where
                         done += items;
                     }
                 }
-                Ok(())
+                eyre::Result::<()>::Ok(())
             };
 
             // Collect active (non-zero) edaBit types.
@@ -1621,7 +1955,7 @@ where
                                 )?;
                                 offset += items;
                             }
-                            Ok(())
+                            eyre::Result::<()>::Ok(())
                         })?;
                     } else {
                         let mut offset = 0usize;
@@ -1658,7 +1992,7 @@ where
             let e4 = LazyEdaBits::<u128, F>::new(s1, p1, s2, p2, counts[4], Vec::new(), party_id);
 
             let d = LazyDaBits::new_with_store(ds1, dp1, ds2, dp2, num_dabits, dabits_store, party_id);
-            let pool = PreprocessingPool::new(party_id, e0, e1, e2, e3, e4, d);
+            let mut pool = PreprocessingPool::new(party_id, e0, e1, e2, e3, e4, d);
             pool.save(dir)?;
             Ok(pool)
         }
@@ -1692,7 +2026,7 @@ where
                             send_field_superchunk_ctx(s12, PartyID::ID2, ctx, max_msg_elems)?;
                             offset += items;
                         }
-                        Ok(())
+                        eyre::Result::<()>::Ok(())
                     })?;
                 } else {
                     let mut offset = 0usize;
@@ -1727,7 +2061,7 @@ where
             let e4 = LazyEdaBits::<u128, F>::new(s1, p1, s2, p2, counts[4], Vec::new(), party_id);
             let (ds1, dp1, ds2, dp2) = snaps[5];
             let d = LazyDaBits::new(ds1, dp1, ds2, dp2, num_dabits, Vec::new(), party_id);
-            let pool = PreprocessingPool::new(party_id, e0, e1, e2, e3, e4, d);
+            let mut pool = PreprocessingPool::new(party_id, e0, e1, e2, e3, e4, d);
             pool.save(dir)?;
             Ok(pool)
         }
@@ -1947,19 +2281,69 @@ where
             let [a0, a1, a2, a3, a4] = eda_stores;
             let mk = |i: usize| snaps[i];
             let (s1, p1, s2, p2) = mk(0);
-            let e0 = LazyEdaBits::<u8, F>::new_with_store(s1, p1, s2, p2, counts[0], a0, party_id);
+            let e0 = LazyEdaBits::<u8, F>::new_with_store(
+                s1,
+                p1,
+                s2,
+                p2,
+                counts[0],
+                a0,
+                if party_id == PartyID::ID2 { EdaBitsStorageMode::P2Authoritative } else { EdaBitsStorageMode::None },
+                backing_store::BackingStore::Empty,
+                party_id,
+            );
             let (s1, p1, s2, p2) = mk(1);
-            let e1 = LazyEdaBits::<u16, F>::new_with_store(s1, p1, s2, p2, counts[1], a1, party_id);
+            let e1 = LazyEdaBits::<u16, F>::new_with_store(
+                s1,
+                p1,
+                s2,
+                p2,
+                counts[1],
+                a1,
+                if party_id == PartyID::ID2 { EdaBitsStorageMode::P2Authoritative } else { EdaBitsStorageMode::None },
+                backing_store::BackingStore::Empty,
+                party_id,
+            );
             let (s1, p1, s2, p2) = mk(2);
-            let e2 = LazyEdaBits::<u32, F>::new_with_store(s1, p1, s2, p2, counts[2], a2, party_id);
+            let e2 = LazyEdaBits::<u32, F>::new_with_store(
+                s1,
+                p1,
+                s2,
+                p2,
+                counts[2],
+                a2,
+                if party_id == PartyID::ID2 { EdaBitsStorageMode::P2Authoritative } else { EdaBitsStorageMode::None },
+                backing_store::BackingStore::Empty,
+                party_id,
+            );
             let (s1, p1, s2, p2) = mk(3);
-            let e3 = LazyEdaBits::<u64, F>::new_with_store(s1, p1, s2, p2, counts[3], a3, party_id);
+            let e3 = LazyEdaBits::<u64, F>::new_with_store(
+                s1,
+                p1,
+                s2,
+                p2,
+                counts[3],
+                a3,
+                if party_id == PartyID::ID2 { EdaBitsStorageMode::P2Authoritative } else { EdaBitsStorageMode::None },
+                backing_store::BackingStore::Empty,
+                party_id,
+            );
             let (s1, p1, s2, p2) = mk(4);
-            let e4 = LazyEdaBits::<u128, F>::new_with_store(s1, p1, s2, p2, counts[4], a4, party_id);
+            let e4 = LazyEdaBits::<u128, F>::new_with_store(
+                s1,
+                p1,
+                s2,
+                p2,
+                counts[4],
+                a4,
+                if party_id == PartyID::ID2 { EdaBitsStorageMode::P2Authoritative } else { EdaBitsStorageMode::None },
+                backing_store::BackingStore::Empty,
+                party_id,
+            );
             let (ds1, dp1, ds2, dp2) = snaps[5];
             let d = LazyDaBits::new_with_store(ds1, dp1, ds2, dp2, num_dabits, dabits_store, party_id);
 
-            let pool = PreprocessingPool::new(party_id, e0, e1, e2, e3, e4, d);
+            let mut pool = PreprocessingPool::new(party_id, e0, e1, e2, e3, e4, d);
             pool.save(dir)?;
             Ok(pool)
         }
@@ -2186,11 +2570,11 @@ fn extend_pool_batched_base<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTr
             for &(ty, k, _old_total, _seeds) in &active_types {
                 let deficit = deficit_counts[ty];
                 let bs = match ty {
-                    0 => &mut pool.edabits_u8.alpha2_flat,
-                    1 => &mut pool.edabits_u16.alpha2_flat,
-                    2 => &mut pool.edabits_u32.alpha2_flat,
-                    3 => &mut pool.edabits_u64.alpha2_flat,
-                    4 => &mut pool.edabits_u128.alpha2_flat,
+                    0 => &mut pool.edabits_u8.alphas_flat_store,
+                    1 => &mut pool.edabits_u16.alphas_flat_store,
+                    2 => &mut pool.edabits_u32.alphas_flat_store,
+                    3 => &mut pool.edabits_u64.alphas_flat_store,
+                    4 => &mut pool.edabits_u128.alphas_flat_store,
                     _ => unreachable!(),
                 };
                 let old_len = bs.len();
@@ -2321,6 +2705,8 @@ where
     if num_ring_edabits_u128 > 0 {
         pool.set_ring_edabits_u128(super::edabits::random_edabits_ring_lazy::<u128, _>(num_ring_edabits_u128, io)?);
     }
+    // Re-save so ring edaBits also get meta_path set (base pool was already saved
+    // inside preprocess_pool_base, but ring edaBits were added after).
     pool.save(dir)?;
     Ok(pool)
 }
@@ -2344,43 +2730,21 @@ where
     N: Rep3NetworkWorker + Rep3RawFieldTransport,
 {
     let mut pool = preprocess_pool_base(dir, counts, num_dabits, io)?;
-    // Shared types first — must match non-ring-msm ordering so seeds are identical
-    // regardless of feature set (cross-feature cache compatibility).
-    if num_ring_edabits_u64 > 0 {
-        pool.set_ring_edabits_u64(super::edabits::random_edabits_ring_lazy::<u64, _>(num_ring_edabits_u64, io)?);
-    }
-    if num_ring_edabits_u128 > 0 {
-        pool.set_ring_edabits_u128(super::edabits::random_edabits_ring_lazy::<u128, _>(num_ring_edabits_u128, io)?);
-    }
-    // ring-msm-only types after shared types.
+
+    // Ring edaBits: segmented + lane-parallel.
+    preprocess_ring_edabits(
+        &mut pool,
+        dir,
+        num_ring_edabits_u64,
+        num_ring_edabits_u128,
+        num_ring_edabits_dory,
+        num_ring_edabits_iring,
+        io,
+    )?;
+
+    // Wrap masks: sequential (2 IO rounds for bit_inject).
     if num_wrap_masks > 0 {
         pool.set_wrap_masks(super::wrap_mask::generate_wrap_masks_lazy(num_wrap_masks, io.main())?);
-    }
-    // For rv64: DoryRingMsmInt=U66, combine dory + iring U66 ring edaBits together.
-    // For rv32: DoryRingMsmInt=U34, so ring_edabits_u66 is free for IRingScalars only.
-    #[cfg(feature = "rv64")]
-    {
-        let combined_u66 = num_ring_edabits_dory + num_ring_edabits_iring;
-        if combined_u66 > 0 {
-            pool.set_ring_edabits_dory(super::edabits::random_edabits_ring_lazy::<DoryRingMsmInt, _>(
-                combined_u66,
-                io,
-            )?);
-        }
-    }
-    #[cfg(not(feature = "rv64"))]
-    {
-        if num_ring_edabits_dory > 0 {
-            pool.set_ring_edabits_dory(super::edabits::random_edabits_ring_lazy::<DoryRingMsmInt, _>(
-                num_ring_edabits_dory,
-                io,
-            )?);
-        }
-        if num_ring_edabits_iring > 0 {
-            // IRingScalars always uses U66 carry ring, even on rv32.
-            pool.ring_edabits_u66 =
-                super::edabits::random_edabits_ring_lazy::<U66, _>(num_ring_edabits_iring, io)?;
-        }
     }
     if num_wrap_masks_iring > 0 {
         pool.set_wrap_masks_iring(super::wrap_mask::generate_wrap_masks_lazy(num_wrap_masks_iring, io.main())?);

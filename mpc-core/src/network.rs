@@ -18,7 +18,7 @@ use std::sync::{Arc, OnceLock};
 
 use crate::preprocessing::backing_store::assert_field_layout;
 use crate::protocols::rep3_ring::dabits::DaBitBatch;
-use crate::protocols::rep3_ring::edabits::EdaBitsBatch;
+use crate::protocols::rep3_ring::edabits::{EdaBitsBatch, EdaBitsBatchRef};
 
 use itertools::Itertools;
 use mpc_net::topology::{MpcStarNetCoordinator, MpcStarNetWorker};
@@ -730,6 +730,72 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
                 }
             })
             .collect::<Result<Vec<_>, _>>()
+    }
+
+    /// Like `par_chunks_preproc`, but borrows both inputs and preprocessing data
+    /// and applies a side-effecting callback per chunk.
+    pub fn par_chunks_preproc_apply<T, F, S, MapFn, Err>(
+        &mut self,
+        inputs: &[Rep3RingShare<T>],
+        batch: EdaBitsBatchRef<'_, T, F>,
+        chunk_size: Option<usize>,
+        scratch: &mut [S],
+        map: MapFn,
+    ) -> eyre::Result<()>
+    where
+        T: IntRing2k + Send + Sync,
+        F: PrimeField + Send + Sync,
+        S: Send,
+        MapFn: Fn(
+                usize,
+                &[Rep3RingShare<T>],
+                EdaBitsBatchRef<'_, T, F>,
+                &mut IoContext<Network>,
+                &mut S,
+            ) -> Result<(), Err>
+            + Sync
+            + Send,
+        eyre::Report: From<Err>,
+        Err: Send + Sync,
+    {
+        let len = inputs.len();
+        if len == 0 {
+            return Ok(());
+        }
+
+        let chunk_size =
+            chunk_size.unwrap_or_else(|| if self.forks.is_empty() { len } else { len.div_ceil(self.forks.len()) });
+        assert!(chunk_size != 0);
+
+        if self.forks.is_empty() || len <= chunk_size {
+            let Some(first_scratch) = scratch.first_mut() else {
+                eyre::bail!("par_chunks_preproc_apply requires at least one scratch slot");
+            };
+            return Ok(map(0, inputs, batch, self.main(), first_scratch)?);
+        }
+
+        let num_forks = len.div_ceil(chunk_size);
+        eyre::ensure!(
+            scratch.len() >= num_forks,
+            "par_chunks_preproc_apply: need {} scratch slots, got {}",
+            num_forks,
+            scratch.len()
+        );
+
+        inputs
+            .par_chunks(chunk_size)
+            .zip_eq(batch.gammas.par_chunks(chunk_size))
+            .zip_eq(batch.alphas_flat.par_chunks(chunk_size * T::K))
+            .enumerate()
+            .zip_eq(self.forks(num_forks).par_iter_mut().zip_eq(scratch[..num_forks].par_iter_mut()))
+            .map(|((chunk_idx, ((xs, gammas), alphas)), (ctx, scratch))| {
+                let start = chunk_idx * chunk_size;
+                let sub_batch = EdaBitsBatchRef { gammas, alphas_flat: alphas };
+                map(start, xs, sub_batch, ctx, scratch).map_err(eyre::Error::from)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(())
     }
 
     /// Like `par_chunks` but also splits a `DaBitBatch` in lockstep with inputs.

@@ -10,10 +10,12 @@ use crate::subprotocols::blindfold::{
     pedersen_generator_count_for_r1cs, BakedPublicInputs, BlindFoldVerifier, BlindFoldVerifierInput,
     InputClaimConstraint, OutputClaimConstraint, StageConfig, ValueSource, VerifierR1CSBuilder,
 };
+use crate::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 use crate::subprotocols::sumcheck::{BatchedSumcheck, SumcheckInstance, SumcheckInstanceProof};
 use crate::transcripts::Transcript;
+use crate::utils::math::Math;
 use crate::zkvm::dag::state_manager::{ProofData, ProofKeys, StateManager};
-use crate::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial};
+use crate::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials, CommittedPolynomial, VirtualPolynomial};
 use anyhow::Context;
 
 #[cfg(feature = "zk")]
@@ -639,6 +641,34 @@ impl JoltDAG {
     ) -> Result<(), anyhow::Error> {
         let untrusted_advice_commitment = state_manager.untrusted_advice_commitment.as_ref().unwrap();
         let accumulator = state_manager.get_verifier_accumulator();
+
+        // Reconstruct the advice opening point from the RamVal sumcheck point.
+        // The serialized proof only stores the claim (scalar), not the opening
+        // point, so the verifier must recompute it.
+        let ws = common::constants::RAM_WORD_SIZE as usize;
+        let max_size = state_manager.program_io.memory_layout.max_untrusted_advice_size as usize / ws;
+        let log_advice_size = max_size.next_power_of_two().log_2();
+        let total_memory_vars = state_manager.ram_K.log_2();
+        let (r_val_point, _) = accumulator
+            .borrow()
+            .get_virtual_polynomial_opening(VirtualPolynomial::RamVal, SumcheckId::RamReadWriteChecking);
+        let r_address = &r_val_point.r[..total_memory_vars];
+        let high_bits = total_memory_vars - log_advice_size;
+        let advice_opening_point = OpeningPoint::<BIG_ENDIAN, F>::new(r_address[high_bits..].to_vec());
+
+        // Directly populate the opening point in the accumulator without touching
+        // the Fiat-Shamir transcript.  The prover (coordinator) inserts into
+        // `openings` directly and never calls `append_untrusted_advice`, so the
+        // verifier must match.
+        {
+            use crate::poly::opening_proof::OpeningId;
+            let mut acc = accumulator.borrow_mut();
+            if let Some((point, _)) = acc.openings.get_mut(&OpeningId::UntrustedAdvice) {
+                *point = advice_opening_point;
+            } else {
+                acc.openings.insert(OpeningId::UntrustedAdvice, (advice_opening_point, F::zero()));
+            }
+        }
 
         let (point, eval) = accumulator.borrow().get_untrusted_advice_opening().unwrap();
         let proof = match state_manager.proofs.borrow().get(&ProofKeys::UntrustedAdviceProof) {

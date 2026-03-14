@@ -153,15 +153,8 @@ fn prove_loop(
         let payload_bytes = user_conn.recv()?;
         let payload: WorkerPayload = bincode::deserialize(&payload_bytes).context("deserializing WorkerPayload")?;
 
-        let WorkerPayload {
-            trace,
-            memory,
-            program_io_share,
-            bytecode,
-            memory_init,
-            program_id,
-            preprocess_trace_len,
-        } = payload;
+        let WorkerPayload { trace, memory, program_io_share, bytecode, memory_init, program_id, preprocess_trace_len } =
+            payload;
 
         // Trace is already padded to next power of 2 by the client.
         let padded_len = trace.len();
@@ -220,13 +213,13 @@ fn prove_loop(
 
         let budget = compute_edabit_budget(trace.len());
         info!(?budget, "edabit budget");
+        let counts = [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128];
+        let pool_dir = args.preproc_dir.join(format!("party_{}", my_id));
 
         let mut preproc = {
             use mpc_core::protocols::rep3_ring::edabits;
-            let counts = [budget.u8, budget.u16, budget.u32, budget.u64, budget.u128];
             let num_dabits = budget.dabits;
 
-            let pool_dir = args.preproc_dir.join(format!("party_{}", my_id));
             match edabits::PreprocessingPool::load(&pool_dir, party_id) {
                 Ok(mut pool) => {
                     // With reuse-preproc the backing data survives consumption,
@@ -319,6 +312,23 @@ fn prove_loop(
                 }
             }
         };
+        let precache_t_log2 =
+            std::env::var("EDABITS_PRECACHE_T_LOG2").ok().and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
+        if precache_t_log2 > 0 {
+            let precache_trace_len = 1usize
+                .checked_shl(precache_t_log2 as u32)
+                .ok_or_else(|| eyre::eyre!("EDABITS_PRECACHE_T_LOG2={} is too large", precache_t_log2))?;
+            let precache_budget = compute_edabit_budget(precache_trace_len);
+            let precache_counts = [
+                precache_budget.u8,
+                precache_budget.u16,
+                precache_budget.u32,
+                precache_budget.u64,
+                precache_budget.u128,
+            ];
+            info!(precache_t_log2, precache_trace_len, ?precache_budget, "building P0/P1 edabits precache");
+            preproc.prepare_edabits_precache(&pool_dir, precache_counts)?;
+        }
 
         // Ring MSM preprocessing (daPoints only — wrap masks and ring edaBits are in the pool)
         #[cfg(feature = "ring-msm")]

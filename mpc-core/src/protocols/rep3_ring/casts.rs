@@ -4,7 +4,7 @@
 
 use super::conversion;
 use crate::field::PrimeField;
-use crate::preprocessing::edabits::{DaRing, EdaBits, EdaBitsBatch};
+use crate::preprocessing::edabits::{DaRing, EdaBits, EdaBitsBatch, EdaBitsBatchRef};
 use crate::protocols::rep3::{
     self, PartyID, Rep3PrimeFieldShare, arithmetic as rep3_arith,
     conversion::MPCType,
@@ -22,6 +22,39 @@ use num_traits::AsPrimitive;
 use rand::{distributions::Standard, prelude::Distribution};
 use rayon::prelude::*;
 use std::any::TypeId;
+
+pub struct R2fB2aScratch<T: IntRing2k, F: PrimeField> {
+    ms: Vec<RingElement<T>>,
+    maskings: Vec<F>,
+    s_selfs: Vec<F>,
+    out: Vec<Rep3PrimeFieldShare<F>>,
+    pow2: Vec<F>,
+}
+
+impl<T: IntRing2k, F: PrimeField> Default for R2fB2aScratch<T, F> {
+    fn default() -> Self {
+        Self { ms: Vec::new(), maskings: Vec::new(), s_selfs: Vec::new(), out: Vec::new(), pow2: Vec::new() }
+    }
+}
+
+impl<T: IntRing2k, F: PrimeField> R2fB2aScratch<T, F> {
+    fn ensure_pow2(&mut self) {
+        if self.pow2.len() == T::K {
+            return;
+        }
+        self.pow2.clear();
+        self.pow2.reserve(T::K);
+        let mut cur = F::one();
+        for _ in 0..T::K {
+            self.pow2.push(cur);
+            cur = cur + cur;
+        }
+    }
+
+    pub fn output(&self) -> &[Rep3PrimeFieldShare<F>] {
+        &self.out
+    }
+}
 
 /// A downcast of a Rep3RingShare from a larger ring to a smaller ring, truncating the excess bits.
 /// Does not require network interaction
@@ -284,75 +317,95 @@ pub fn r2f_b2a_preproc_many<T: IntRing2k, F: PrimeField, N: Rep3Network>(
 where
     Standard: Distribution<T>,
 {
+    let mut scratch = R2fB2aScratch::default();
+    r2f_b2a_preproc_many_into(x_binary, batch.as_ref(), io, &mut scratch)?;
+    Ok(std::mem::take(&mut scratch.out))
+}
+
+#[tracing::instrument(skip_all, level = "trace", name = "r2f_b2a_preproc_many_into")]
+pub fn r2f_b2a_preproc_many_into<T: IntRing2k, F: PrimeField, N: Rep3Network>(
+    x_binary: &[Rep3RingShare<T>],
+    batch: EdaBitsBatchRef<'_, T, F>,
+    io: &mut IoContext<N>,
+    scratch: &mut R2fB2aScratch<T, F>,
+) -> eyre::Result<()>
+where
+    Standard: Distribution<T>,
+{
     let n = x_binary.len();
+    scratch.out.clear();
     if n == 0 {
-        return Ok(Vec::new());
+        return Ok(());
     }
     debug_assert_eq!(batch.gammas.len(), n);
     debug_assert_eq!(batch.alphas_flat.len(), n * T::K);
 
-    // Precompute powers of 2 in Fp.
+    scratch.ensure_pow2();
     let k = T::K;
-    let pow2 = {
-        let mut pow2 = Vec::with_capacity(k);
-        let mut cur = F::one();
-        for _ in 0..k {
-            pow2.push(cur);
-            cur = cur + cur;
-        }
-        pow2
-    };
 
     // --- Round 1: P0 broadcasts masked values ---
-    let ms: Vec<RingElement<T>> = if io.id == PartyID::ID0 {
-        let ms: Vec<_> = x_binary.iter().zip(&batch.gammas).map(|(x, gamma)| x.a ^ x.b ^ *gamma).collect();
-        io.network.send_many(PartyID::ID1, &ms)?;
-        io.network.send_many(PartyID::ID2, &ms)?;
-        ms
+    if io.id == PartyID::ID0 {
+        scratch.ms.clear();
+        scratch.ms.extend(x_binary.iter().zip(batch.gammas.iter()).map(|(x, gamma)| x.a ^ x.b ^ *gamma));
+        io.network.send_many(PartyID::ID1, &scratch.ms)?;
+        io.network.send_many(PartyID::ID2, &scratch.ms)?;
     } else {
-        io.network.recv_many(PartyID::ID0)?
-    };
+        scratch.ms = io.network.recv_many(PartyID::ID0)?;
+    }
 
     // --- Local computation: fused v_component + masking → s_selfs ---
-    let maskings: Vec<F> = (0..n).map(|_| io.masking_field_element::<F>()).collect();
+    scratch.maskings.clear();
+    scratch.maskings.extend((0..n).map(|_| io.masking_field_element::<F>()));
+
+    scratch.s_selfs.clear();
+    scratch.s_selfs.resize(n, F::zero());
+
     let party_id = io.id;
+    let ms = &scratch.ms;
+    let maskings = &scratch.maskings;
+    let pow2 = &scratch.pow2;
+    let alphas_flat = batch.alphas_flat;
+    scratch.s_selfs.par_iter_mut().enumerate().with_min_len(256).for_each(|(idx, s_self)| {
+        let z = maskings[idx];
+        if party_id == PartyID::ID0 {
+            *s_self = z;
+            return;
+        }
 
-    let s_selfs: Vec<F> = ms
-        .par_iter()
-        .zip(x_binary.par_iter())
-        .zip(maskings.par_iter())
-        .enumerate()
-        .with_min_len(256)
-        .map(|(idx, ((m, x), z))| {
-            if party_id == PartyID::ID0 {
-                return *z;
-            }
+        let x = x_binary[idx];
+        let m = ms[idx];
+        let beta = match party_id {
+            PartyID::ID0 => unreachable!(),
+            PartyID::ID1 => m ^ x.a,
+            PartyID::ID2 => m ^ x.b,
+        };
 
-            let beta = match party_id {
-                PartyID::ID0 => unreachable!(),
-                PartyID::ID1 => *m ^ x.a,
-                PartyID::ID2 => *m ^ x.b,
-            };
+        let mut v = F::zero();
+        let alpha_base = idx * k;
+        for i in 0..k {
+            let beta_bit = ((beta.0 >> i) & T::one()) == T::one();
+            let alpha = alphas_flat[alpha_base + i];
+            let signed_alpha = if beta_bit { -alpha } else { alpha };
+            v += pow2[i] * signed_alpha;
+        }
 
-            let mut v = F::zero();
-            let alpha_base = idx * k;
-            for i in 0..k {
-                let beta_bit = ((beta.0 >> i) & T::one()) == T::one();
-                let alpha = batch.alphas_flat[alpha_base + i];
-                let signed_alpha = if beta_bit { -alpha } else { alpha };
-                v += pow2[i] * signed_alpha;
-            }
+        if party_id == PartyID::ID1 {
+            v += F::from(Into::<u128>::into(beta.0));
+        }
 
-            if party_id == PartyID::ID1 {
-                v += F::from(Into::<u128>::into(beta.0));
-            }
+        *s_self = v + z;
+    });
 
-            v + *z
-        })
-        .collect();
-    let s_prevs = io.network.reshare_many(&s_selfs)?;
-
-    Ok(s_selfs.into_iter().zip(s_prevs).map(|(s_self, s_prev)| Rep3PrimeFieldShare::new(s_self, s_prev)).collect())
+    let s_prevs = io.network.reshare_many(&scratch.s_selfs)?;
+    scratch.out.extend(
+        scratch
+            .s_selfs
+            .iter()
+            .copied()
+            .zip(s_prevs.into_iter())
+            .map(|(s_self, s_prev)| Rep3PrimeFieldShare::new(s_self, s_prev)),
+    );
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

@@ -28,12 +28,7 @@ pub fn generate_trace_shares<R: RngCore + CryptoRng>(
     untrusted_advice: &[u8],
     trusted_advice: &[u8],
     rng: &mut R,
-) -> (
-    Vec<tracer::instruction::Instruction>,
-    Vec<(u64, u8)>,
-    tracer::JoltDevice,
-    [Rep3ShareBundle; 3],
-) {
+) -> (Vec<tracer::instruction::Instruction>, Vec<(u64, u8)>, tracer::JoltDevice, [Rep3ShareBundle; 3]) {
     let (bytecode, memory_init, _) = program.decode();
     let (mut trace, memory, mut program_io) = program.trace(inputs, untrusted_advice, trusted_advice);
     program_io.outputs.truncate(program_io.outputs.iter().rposition(|&byte| byte != 0).map_or(0, |idx| idx + 1));

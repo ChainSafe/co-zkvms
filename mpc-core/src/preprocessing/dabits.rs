@@ -254,7 +254,7 @@ impl<F: PrimeField> LazyDaBits<F> {
     /// Write this lazy source to `dir`.
     ///
     /// Creates `dabits.meta` (all parties) and `dabits.stored` (P0/P2 only).
-    pub fn save(&self, dir: &std::path::Path) -> std::io::Result<()> {
+    pub fn save(&mut self, dir: &std::path::Path) -> std::io::Result<()> {
         const { backing_store::assert_field_layout::<F>() };
         std::fs::create_dir_all(dir)?;
 
@@ -262,8 +262,9 @@ impl<F: PrimeField> LazyDaBits<F> {
         if !self.stored.is_empty() {
             self.stored.save_to_file(&dir.join("dabits.stored"))?;
         }
+        let meta_path = dir.join("dabits.meta");
         backing_store::write_meta(
-            &dir.join("dabits.meta"),
+            &meta_path,
             &backing_store::MetaData {
                 seed1: self.seed1,
                 pos1: self.pos1,
@@ -275,6 +276,7 @@ impl<F: PrimeField> LazyDaBits<F> {
                 field_bytes: self.field_bytes,
             },
         )?;
+        self.meta_path = Some(meta_path);
         std::result::Result::Ok(())
     }
 

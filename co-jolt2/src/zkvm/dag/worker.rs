@@ -130,6 +130,20 @@ impl Rep3JoltDagWorker {
         // Stage 2-4 DAG state can be dropped before the opening reduction.
         drop(stages);
         maybe_purge_jemalloc();
+
+        // -------------------------------------------------------------------
+        // Untrusted advice opening proof (if advice is non-empty)
+        // -------------------------------------------------------------------
+        if state.prover_state.untrusted_advice_polynomial.is_some() {
+            Self::prove_untrusted_advice_opening::<F, PCS, ProofTranscript, N>(&mut state, &mut io_ctx)?;
+        }
+
+        // In-process tests share DoryGlobals across all 3 worker threads.
+        // Barrier ensures all workers finish the advice opening proof (which uses
+        // UntrustedAdvice DoryContext) before any worker enters stage5 (Main context).
+        #[cfg(feature = "test-utils")]
+        io_ctx.sync_with_parties()?;
+
         // -------------------------------------------------------------------
         // Stage 5: opening proof reduction
         // -------------------------------------------------------------------
@@ -347,6 +361,21 @@ impl Rep3JoltDagWorker {
         state.prover_state.untrusted_advice_polynomial = Some(poly);
 
         Ok(())
+    }
+
+    /// Prove the untrusted advice opening (after stage 4, before stage 5).
+    /// TODO: implement once untrusted advice is used in MPC prover.
+    fn prove_untrusted_advice_opening<F, PCS, ProofTranscript, N>(
+        _state: &mut StateManagerWorker<'_, F, PCS>,
+        _io_ctx: &mut IoContextPool<N>,
+    ) -> eyre::Result<()>
+    where
+        F: JoltField,
+        PCS: CommitmentScheme<Field = F>,
+        ProofTranscript: Transcript,
+        N: Rep3NetworkWorker,
+    {
+        unimplemented!("prove_untrusted_advice_opening not yet implemented for MPC worker")
     }
 
     /// Compute the trusted advice polynomial (if non-empty) from Rep3 shares.

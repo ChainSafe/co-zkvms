@@ -8,8 +8,8 @@ use crate::{
     curve::Bn254Curve,
     field::JoltField,
     poly::commitment::{
-        dory::DoryGlobals,
         commitment_scheme::{CommitmentScheme, ZkEvalCommitment},
+        dory::DoryGlobals,
         pedersen::PedersenGenerators,
     },
     transcripts::Transcript,
@@ -286,13 +286,7 @@ where
             return Err(ProofVerifyError::OutputTooLarge);
         }
 
-        program_io.outputs.truncate(
-            program_io
-                .outputs
-                .iter()
-                .rposition(|&b| b != 0)
-                .map_or(0, |pos| pos + 1),
-        );
+        program_io.outputs.truncate(program_io.outputs.iter().rposition(|&b| b != 0).map_or(0, |pos| pos + 1));
 
         let mut state_manager = proof.to_verifier_state_manager(preprocessing, program_io);
         state_manager.trusted_advice_commitment = trusted_advice_commitment;

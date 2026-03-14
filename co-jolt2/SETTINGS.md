@@ -15,6 +15,7 @@ All knobs that control preprocessing and network performance in Rep3 Jolt.
 | `PREPROC_STORE_BATCH_MB` | `16` | Target batch size for grouped store writes to file-backed preprocessing artifacts. |
 | `PREPROC_MAX_MSG_MB` | `2` | Target maximum preprocessing wire-message size. Smaller values reduce allocation pressure on localhost. |
 | `PREPROC_WARN_GB` | `10` | Warn threshold (in GB) for very large preprocessing artifact files. |
+| `EDABITS_PRECACHE_T_LOG2` | `0` | If non-zero, derive a one-proof P0/P1 edaBits precache budget from `trace_len = 2^value` and build sidecars for that derived preprocessing budget. `0` disables precache. |
 | `PREPROC_MIN_FORK_ELEMS` | (internal) | Minimum work size before preprocessing/fork chunking is considered worthwhile. |
 | `PREPROC_DABIT_WINDOW` | (internal) | daBit pipeline lead/window size; keeps parties from running too far ahead. |
 
