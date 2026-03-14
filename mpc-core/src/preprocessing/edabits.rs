@@ -159,7 +159,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "edabits::fill_into", level = "trace")]
-    pub fn fill_into(&self, scratch: &mut EdaBitsBatchScratch<T, F>) -> std::io::Result<()> {
+    pub fn fill_into_par_safe(&self, scratch: &mut EdaBitsBatchScratch<T, F>) -> std::io::Result<()> {
         let n = self.len;
         let k = T::K;
         scratch.gammas.clear();
@@ -213,7 +213,7 @@ where
                     ),
                 ));
             }
-            generate_into_from_state(
+            generate_into_from_state_with_min_par_len(
                 self.seed1,
                 self.pos1,
                 self.seed2,
@@ -224,6 +224,7 @@ where
                 n - cached,
                 scratch,
                 cached,
+                (n - cached) * T::K,
             );
         } else {
             scratch.interleaved_bytes.clear();
@@ -369,7 +370,7 @@ pub struct LazyEdaBits<T: IntRing2k, F: PrimeField> {
     _phantom: PhantomData<(T, F)>,
 }
 
-fn generate_into_from_state<T: IntRing2k, F: PrimeField>(
+fn generate_into_from_state_with_min_par_len<T: IntRing2k, F: PrimeField>(
     seed1: [u8; crate::SEED_SIZE],
     pos1: u128,
     seed2: [u8; crate::SEED_SIZE],
@@ -380,6 +381,7 @@ fn generate_into_from_state<T: IntRing2k, F: PrimeField>(
     n: usize,
     scratch: &mut EdaBitsBatchScratch<T, F>,
     item_offset: usize,
+    min_par_len: usize,
 ) {
     if n == 0 {
         return;
@@ -439,17 +441,20 @@ fn generate_into_from_state<T: IntRing2k, F: PrimeField>(
         scratch.gammas[item_offset..item_offset + n].fill(RingElement(T::zero()));
     }
 
+    let _span = tracing::trace_span!("alphas").entered();
     let interleaved = &scratch.interleaved_bytes;
-    scratch.alphas_flat[item_offset * k..(item_offset + n) * k].par_iter_mut().enumerate().with_min_len(256).for_each(
-        |(idx, alpha)| {
+    scratch.alphas_flat[item_offset * k..(item_offset + n) * k]
+        .par_iter_mut()
+        .enumerate()
+        .with_min_len(min_par_len)
+        .for_each(|(idx, alpha)| {
             let item = idx / k;
             let bit = idx % k;
             let a_start = item * stride + t_bytes + bit * fb;
             let lo = u64::from_le_bytes(interleaved[a_start..a_start + 8].try_into().unwrap());
             let hi = u64::from_le_bytes(interleaved[a_start + 8..a_start + 16].try_into().unwrap());
             *alpha = F::from((hi as u128) << 64 | lo as u128);
-        },
-    );
+        });
 }
 
 impl<T: IntRing2k, F: PrimeField> LazyEdaBits<T, F>
@@ -825,7 +830,7 @@ where
     }
 
     fn generate_into(&self, cursor_base: usize, n: usize, scratch: &mut EdaBitsBatchScratch<T, F>, item_offset: usize) {
-        generate_into_from_state(
+        generate_into_from_state_with_min_par_len(
             self.seed1,
             self.pos1,
             self.seed2,
@@ -836,6 +841,7 @@ where
             n,
             scratch,
             item_offset,
+            256,
         );
     }
 

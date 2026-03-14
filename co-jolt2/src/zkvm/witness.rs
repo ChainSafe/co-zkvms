@@ -175,7 +175,7 @@ where
             &mut cast_scratch,
             |start, len| reserved.range_view(start, len),
             |start, xs, view, ctx, scratch| {
-                view.fill_into(&mut scratch.batch)?;
+                view.fill_into_par_safe(&mut scratch.batch)?;
 
                 casts::r2f_b2a_preproc_many_into::<XlenInt, F, _>(xs, scratch.batch.as_ref(), ctx, &mut scratch.cast)?;
                 debug_assert_eq!(scratch.cast.output().len(), xs.len());
