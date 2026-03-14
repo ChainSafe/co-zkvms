@@ -96,6 +96,9 @@ struct WorkerPayload {
 fn main() -> eyre::Result<()> {
     #[cfg(feature = "test-utils")]
     let _tracy = if std::env::var("TRACY").is_ok() {
+        use co_jolt2::utils::memory::start_jemalloc_monitor;
+        use std::time::Duration;
+
         let client = tracy_client::Client::start();
         start_rss_monitor(Duration::from_millis(10));
         start_jemalloc_monitor(Duration::from_millis(50));
@@ -159,9 +162,13 @@ fn prove_loop(
 
         #[cfg(feature = "test-utils")]
         {
+            use co_jolt2::utils::tracing::worker_trace_file;
+
             static TRACING_INIT: OnceLock<()> = OnceLock::new();
             let file = worker_trace_file(my_id, &program_id);
             let _ = TRACING_INIT.get_or_init(|| {
+                use co_jolt2::utils::tracing::init_tracing_bench;
+
                 let guard = init_tracing_bench(&file, &args.trace_dir);
                 let _ = Box::leak(Box::new(guard));
             });
