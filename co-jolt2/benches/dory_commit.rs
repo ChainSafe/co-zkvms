@@ -100,7 +100,6 @@ fn main() {
                 total_coeffs,
                 total_coeffs,
                 0,
-                0,
                 &mut io_ctx,
             )?;
 

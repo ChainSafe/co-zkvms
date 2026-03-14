@@ -207,16 +207,18 @@ pub fn random_dapoints<C: CurveGroup, N: Rep3NetworkWorker>(
 /// matches [`precompute_dapoint_qs`]: per row `[q0_cols[0..seg], q1_cols[0..seg]]`.
 ///
 /// `n_total = 2 * num_coeffs` daPoint tuples are generated.
+///
+/// Accepts a single `IoContext` (not pool) so it can run on a fork for parallelism.
 #[tracing::instrument(skip_all, name = "dapoints_preprocess", fields(n = 2 * num_coeffs))]
-pub fn random_dapoints_from_columns<C: CurveGroup, N: Rep3NetworkWorker>(
+pub fn random_dapoints_from_columns<C: CurveGroup, N: Rep3Network>(
     q0_cols: &[C],
     q1_cols: &[C],
     num_coeffs: usize,
     num_columns: usize,
-    io: &mut IoContextPool<N>,
+    io: &mut IoContext<N>,
 ) -> eyre::Result<LazyDaPoints<C>> {
     let n = 2 * num_coeffs;
-    let party_id = io.party_id();
+    let party_id = io.id;
     if n == 0 {
         return Ok(LazyDaPoints::empty(party_id));
     }
@@ -224,8 +226,8 @@ pub fn random_dapoints_from_columns<C: CurveGroup, N: Rep3NetworkWorker>(
     let num_full_rows = num_coeffs / num_columns;
     let remainder = num_coeffs % num_columns;
 
-    // Fork a dedicated Rep3Rand (all parties must call to keep main RNG aligned).
-    let mut forked = io.main().rngs.rand.fork();
+    // Fork a dedicated Rep3Rand (all parties must call to keep RNG aligned).
+    let mut forked = io.rngs.rand.fork();
 
     let mut gammas = Vec::new();
     let mut alphas = Vec::new();
@@ -252,7 +254,7 @@ pub fn random_dapoints_from_columns<C: CurveGroup, N: Rep3NetworkWorker>(
                     gamma_q - a1
                 })
                 .collect();
-            io.network().send_many(PartyID::ID2, &a2_all)?;
+            io.network.send_many(PartyID::ID2, &a2_all)?;
         }
         PartyID::ID1 => {
             for _ in 0..n {
@@ -261,7 +263,7 @@ pub fn random_dapoints_from_columns<C: CurveGroup, N: Rep3NetworkWorker>(
             alphas = (0..n).map(|_| C::rand(&mut forked.rng2)).collect();
         }
         PartyID::ID2 => {
-            alphas = io.network().recv_many(PartyID::ID0)?;
+            alphas = io.network.recv_many(PartyID::ID0)?;
             debug_assert_eq!(alphas.len(), n);
         }
     }

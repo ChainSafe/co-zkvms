@@ -3,4 +3,6 @@ pub mod daPoint;
 pub mod dabits;
 pub mod edabits;
 pub mod pool;
+#[cfg(feature = "ring-msm")]
+pub(crate) mod pool_experimental;
 pub mod wrap_mask;

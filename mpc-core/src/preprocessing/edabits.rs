@@ -1011,7 +1011,10 @@ where
 }
 
 // PreprocessingPool generation/extension moved to `super::pool`.
+#[cfg(not(feature = "ring-msm"))]
 pub use super::pool::{extend_pool_batched, preprocess_pool};
+#[cfg(feature = "ring-msm")]
+pub use super::pool_experimental::{extend_pool_batched, preprocess_pool};
 
 // ring_to_field_many, ring_to_field_b2a, r2f_b2a_preproc_many moved to casts.rs
 // as r2f_preproc_many, r2f_b2a_preproc, r2f_b2a_preproc_many

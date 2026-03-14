@@ -426,11 +426,9 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                             &mut pool,
                             deficit_counts,
                             deficit_dabits,
-                            deficit_wm,
                             deficit_re,
                             deficit_re64,
                             deficit_re128,
-                            deficit_wm_iring,
                             deficit_re_iring,
                             &mut io_ctx,
                         )?;
@@ -462,17 +460,28 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                             &pool_dir,
                             counts,
                             num_dabits,
-                            budget.wrap_masks,
                             budget.ring_edabits_dory,
                             budget.ring_edabits_u64,
                             budget.ring_edabits_u128,
-                            budget.wrap_masks_iring,
                             budget.ring_edabits_iring,
                             &mut io_ctx,
                         )?
                     }
                 }
             };
+
+            // Wrap masks (moved out of pool for parallel dispatch)
+            #[cfg(feature = "ring-msm")]
+            {
+                use mpc_core::protocols::rep3_ring::preprocessing::wrap_mask::generate_wrap_masks_lazy;
+                if budget.wrap_masks > 0 {
+                    pool.set_wrap_masks(generate_wrap_masks_lazy(budget.wrap_masks, io_ctx.main())?);
+                }
+                if budget.wrap_masks_iring > 0 {
+                    pool.set_wrap_masks_iring(generate_wrap_masks_lazy(budget.wrap_masks_iring, io_ctx.main())?);
+                }
+                pool.save(&pool_dir).ok();
+            }
 
             io_ctx.sync_with_parties()?;
             io_ctx.sync_with_coordinator()?;
@@ -598,11 +607,9 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                         &mut pool,
                         deficit_counts,
                         deficit_dabits,
-                        deficit_wm,
                         deficit_re,
                         deficit_re64,
                         deficit_re128,
-                        deficit_wm_iring,
                         deficit_re_iring,
                         &mut io_ctx,
                     )?;
@@ -636,11 +643,9 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
                         &pool_dir,
                         counts,
                         num_dabits,
-                        budget.wrap_masks,
                         budget.ring_edabits_dory,
                         budget.ring_edabits_u64,
                         budget.ring_edabits_u128,
-                        budget.wrap_masks_iring,
                         budget.ring_edabits_iring,
                         &mut io_ctx,
                     )?
@@ -649,6 +654,19 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
         }
     };
 
+    // Wrap masks (moved out of pool for parallel dispatch)
+    #[cfg(feature = "ring-msm")]
+    {
+        use mpc_core::protocols::rep3_ring::preprocessing::wrap_mask::generate_wrap_masks_lazy;
+        if budget.wrap_masks > 0 {
+            preproc.set_wrap_masks(generate_wrap_masks_lazy(budget.wrap_masks, io_ctx.main())?);
+        }
+        if budget.wrap_masks_iring > 0 {
+            preproc.set_wrap_masks_iring(generate_wrap_masks_lazy(budget.wrap_masks_iring, io_ctx.main())?);
+        }
+        preproc.save(&pool_dir).ok();
+    }
+
     // Ring MSM preprocessing (daPoints only — wrap masks and ring edaBits are in the pool)
     #[cfg(feature = "ring-msm")]
     {
@@ -656,14 +674,14 @@ fn run_worker(args: Args, config: NetworkConfig) -> eyre::Result<()> {
             co_jolt2::poly::commitment::dory::precompute_dapoint_q_columns(&preprocessing.generators, dory_num_columns);
         if budget.dapoints > 0 {
             let lazy_dp = mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints_from_columns(
-                &q0_xlen, &q1_xlen, budget.dapoints / 2, dory_num_columns, &mut io_ctx,
+                &q0_xlen, &q1_xlen, budget.dapoints / 2, dory_num_columns, io_ctx.main(),
             )?;
             preproc.set_dapoints(lazy_dp);
         }
         if budget.dapoints_iring > 0 {
             let lazy_dp_iring =
                 mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints_from_columns(
-                    &q0_64, &q1_64, budget.dapoints_iring / 2, dory_num_columns, &mut io_ctx,
+                    &q0_64, &q1_64, budget.dapoints_iring / 2, dory_num_columns, io_ctx.main(),
                 )?;
             preproc.set_dapoints_iring(lazy_dp_iring);
         }
