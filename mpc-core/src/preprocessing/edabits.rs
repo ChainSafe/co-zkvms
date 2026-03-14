@@ -189,6 +189,12 @@ pub(crate) enum EdaBitsStorageMode {
 }
 
 struct EdaBitsPrecacheMeta {
+    seed1: [u8; crate::SEED_SIZE],
+    pos1: u128,
+    seed2: [u8; crate::SEED_SIZE],
+    pos2: u128,
+    field_bytes: usize,
+    total: usize,
     start_cursor: usize,
     len: usize,
     party_id_byte: u8,
@@ -335,18 +341,47 @@ where
 
     fn read_precache_meta(path: &Path) -> std::io::Result<EdaBitsPrecacheMeta> {
         let mut file = File::open(path)?;
+        let mut seed1 = [0u8; crate::SEED_SIZE];
+        file.read_exact(&mut seed1)?;
+        let mut buf16 = [0u8; 16];
+        file.read_exact(&mut buf16)?;
+        let pos1 = u128::from_le_bytes(buf16);
+        let mut seed2 = [0u8; crate::SEED_SIZE];
+        file.read_exact(&mut seed2)?;
+        file.read_exact(&mut buf16)?;
+        let pos2 = u128::from_le_bytes(buf16);
         let mut buf8 = [0u8; 8];
+        file.read_exact(&mut buf8)?;
+        let field_bytes = u64::from_le_bytes(buf8) as usize;
+        file.read_exact(&mut buf8)?;
+        let total = u64::from_le_bytes(buf8) as usize;
         file.read_exact(&mut buf8)?;
         let start_cursor = u64::from_le_bytes(buf8) as usize;
         file.read_exact(&mut buf8)?;
         let len = u64::from_le_bytes(buf8) as usize;
         let mut buf1 = [0u8; 1];
         file.read_exact(&mut buf1)?;
-        Ok(EdaBitsPrecacheMeta { start_cursor, len, party_id_byte: buf1[0] })
+        Ok(EdaBitsPrecacheMeta {
+            seed1,
+            pos1,
+            seed2,
+            pos2,
+            field_bytes,
+            total,
+            start_cursor,
+            len,
+            party_id_byte: buf1[0],
+        })
     }
 
     fn write_precache_meta(path: &Path, meta: &EdaBitsPrecacheMeta) -> std::io::Result<()> {
         let mut file = File::create(path)?;
+        file.write_all(&meta.seed1)?;
+        file.write_all(&meta.pos1.to_le_bytes())?;
+        file.write_all(&meta.seed2)?;
+        file.write_all(&meta.pos2.to_le_bytes())?;
+        file.write_all(&(meta.field_bytes as u64).to_le_bytes())?;
+        file.write_all(&(meta.total as u64).to_le_bytes())?;
         file.write_all(&(meta.start_cursor as u64).to_le_bytes())?;
         file.write_all(&(meta.len as u64).to_le_bytes())?;
         file.write_all(&[meta.party_id_byte])?;
@@ -362,6 +397,60 @@ where
         }
     }
 
+    fn current_precache_meta(&self, start_cursor: usize, len: usize) -> EdaBitsPrecacheMeta {
+        EdaBitsPrecacheMeta {
+            seed1: self.seed1,
+            pos1: self.pos1,
+            seed2: self.seed2,
+            pos2: self.pos2,
+            field_bytes: self.field_bytes,
+            total: self.total,
+            start_cursor,
+            len,
+            party_id_byte: backing_store::party_id_to_byte(self.party_id),
+        }
+    }
+
+    fn precache_meta_matches(&self, meta: &EdaBitsPrecacheMeta, requested: usize, cursor: usize) -> bool {
+        meta.party_id_byte == backing_store::party_id_to_byte(self.party_id)
+            && meta.seed1 == self.seed1
+            && meta.pos1 == self.pos1
+            && meta.seed2 == self.seed2
+            && meta.pos2 == self.pos2
+            && meta.field_bytes == self.field_bytes
+            && meta.total == self.total
+            && meta.start_cursor == cursor
+            && meta.len >= requested
+    }
+
+    fn expected_precache_alpha_len(requested: usize) -> usize {
+        requested.saturating_mul(T::K)
+    }
+
+    fn has_matching_precache(&self, requested: usize) -> bool {
+        let requested = requested.min(self.remaining());
+        if requested == 0 {
+            return false;
+        }
+        let EdaBitsStorageMode::P01Precache { start_cursor, len } = self.storage_mode else {
+            return false;
+        };
+        if start_cursor != self.cursor || len < requested {
+            return false;
+        }
+        if self.alphas_flat_store.len() < Self::expected_precache_alpha_len(requested) {
+            return false;
+        }
+        if self.party_id == PartyID::ID0 && self.gamma_store.len() < requested {
+            return false;
+        }
+        true
+    }
+
+    fn current_precache_dir(&self) -> Option<&Path> {
+        self.meta_path.as_deref().and_then(Path::parent)
+    }
+
     fn load_precache(&mut self, dir: &Path) -> std::io::Result<()> {
         if self.party_id == PartyID::ID2 {
             return Ok(());
@@ -370,21 +459,40 @@ where
         if !meta_path.exists() {
             return Ok(());
         }
-        let meta = Self::read_precache_meta(&meta_path)?;
-        if meta.party_id_byte != backing_store::party_id_to_byte(self.party_id) || meta.len == 0 {
+        let meta = match Self::read_precache_meta(&meta_path) {
+            Ok(meta) => meta,
+            Err(_) => {
+                self.clear_precache_files(dir)?;
+                return Ok(());
+            }
+        };
+        if !self.precache_meta_matches(&meta, meta.len, self.cursor) {
+            self.clear_precache_files(dir)?;
             return Ok(());
         }
         let alpha_path = Self::precache_alpha_path(dir);
         if !alpha_path.exists() {
+            self.clear_precache_files(dir)?;
             return Ok(());
         }
-        self.alphas_flat_store = backing_store::BackingStore::load_from_file(&alpha_path)?;
+        let alphas_flat_store = backing_store::BackingStore::load_from_file(&alpha_path)?;
+        if alphas_flat_store.len() < Self::expected_precache_alpha_len(meta.len) {
+            self.clear_precache_files(dir)?;
+            return Ok(());
+        }
+        self.alphas_flat_store = alphas_flat_store;
         self.gamma_store = if self.party_id == PartyID::ID0 {
             let gamma_path = Self::precache_gamma_path(dir);
             if gamma_path.exists() {
-                backing_store::BackingStore::load_from_file(&gamma_path)?
+                let gamma_store = backing_store::BackingStore::load_from_file(&gamma_path)?;
+                if gamma_store.len() < meta.len {
+                    self.clear_precache_files(dir)?;
+                    return Ok(());
+                }
+                gamma_store
             } else {
-                backing_store::BackingStore::Empty
+                self.clear_precache_files(dir)?;
+                return Ok(());
             }
         } else {
             backing_store::BackingStore::Empty
@@ -413,6 +521,14 @@ where
         Self::remove_file_if_exists(&Self::precache_meta_path(dir))?;
         self.clear_precache_runtime();
         Ok(())
+    }
+
+    fn clear_precache_files_if_present(&mut self) {
+        if let Some(dir) = self.current_precache_dir().map(Path::to_path_buf) {
+            let _ = self.clear_precache_files(&dir);
+        } else {
+            self.clear_precache_runtime();
+        }
     }
 
     fn take_store_range_into<S: Copy>(
@@ -476,7 +592,9 @@ where
                     gamma_end,
                     &mut scratch.gammas[..cached],
                 )
-                .unwrap_or_else(|e| panic!("LazyEdaBits(precache): gamma read({gamma_start}..{gamma_end}) failed: {e}"));
+                .unwrap_or_else(|e| {
+                    panic!("LazyEdaBits(precache): gamma read({gamma_start}..{gamma_end}) failed: {e}")
+                });
             }
             PartyID::ID1 => scratch.gammas[..cached].fill(RingElement(T::zero())),
             PartyID::ID2 => {}
@@ -485,13 +603,7 @@ where
         cached
     }
 
-    fn generate_into(
-        &self,
-        cursor_base: usize,
-        n: usize,
-        scratch: &mut EdaBitsBatchScratch<T, F>,
-        item_offset: usize,
-    ) {
+    fn generate_into(&self, cursor_base: usize, n: usize, scratch: &mut EdaBitsBatchScratch<T, F>, item_offset: usize) {
         if n == 0 {
             return;
         }
@@ -546,16 +658,13 @@ where
         if party_id == PartyID::ID0 {
             let interleaved = &scratch.interleaved_bytes;
             let g2_bytes = &scratch.gamma_bytes;
-            scratch.gammas[item_offset..item_offset + n]
-                .par_iter_mut()
-                .enumerate()
-                .for_each(|(i, gamma)| {
-                    let g1_off = i * stride;
-                    let g2_off = i * t_bytes;
-                    let g1_val = T::from_le_bytes(&interleaved[g1_off..g1_off + t_bytes]);
-                    let g2_val = T::from_le_bytes(&g2_bytes[g2_off..g2_off + t_bytes]);
-                    *gamma = RingElement(g1_val ^ g2_val);
-                });
+            scratch.gammas[item_offset..item_offset + n].par_iter_mut().enumerate().for_each(|(i, gamma)| {
+                let g1_off = i * stride;
+                let g2_off = i * t_bytes;
+                let g1_val = T::from_le_bytes(&interleaved[g1_off..g1_off + t_bytes]);
+                let g2_val = T::from_le_bytes(&g2_bytes[g2_off..g2_off + t_bytes]);
+                *gamma = RingElement(g1_val ^ g2_val);
+            });
         } else {
             scratch.gammas[item_offset..item_offset + n].fill(RingElement(T::zero()));
         }
@@ -649,6 +758,9 @@ where
             self.clear_precache_files(dir)?;
             return Ok(());
         }
+        if self.has_matching_precache(cached) {
+            return Ok(());
+        }
 
         let start_cursor = self.cursor;
         let alpha_path = Self::precache_alpha_path(dir);
@@ -661,8 +773,16 @@ where
             Self::remove_file_if_exists(&gamma_path)?;
             backing_store::BackingStore::Empty
         };
-
-        let chunk_len = cached.min(16 * 1024);
+        let alpha_writer = alpha_store.writer()?.expect("file-backed alpha precache store");
+        let gamma_writer = if self.party_id == PartyID::ID0 {
+            Some(gamma_store.writer()?.expect("file-backed gamma precache store"))
+        } else {
+            None
+        };
+        const PRECACHE_TARGET_ALPHA_BYTES: usize = 96 * 1024 * 1024;
+        let alpha_bytes_per_item = T::K.saturating_mul(std::mem::size_of::<F>()).max(1);
+        let target_items = PRECACHE_TARGET_ALPHA_BYTES / alpha_bytes_per_item;
+        let chunk_len = cached.min(target_items.max(16 * 1024).max(1));
         let mut scratch = EdaBitsBatchScratch::<T, F>::default();
         for offset in (0..cached).step_by(chunk_len) {
             let len = (cached - offset).min(chunk_len);
@@ -671,20 +791,14 @@ where
             scratch.alphas_flat.clear();
             scratch.alphas_flat.resize(len * T::K, F::zero());
             self.generate_into(start_cursor + offset, len, &mut scratch, 0);
-            alpha_store.write_at(offset * T::K, &scratch.alphas_flat)?;
-            if self.party_id == PartyID::ID0 {
-                gamma_store.write_at(offset, &scratch.gammas)?;
+            alpha_writer.write_at(offset * T::K, &scratch.alphas_flat)?;
+            if let Some(writer) = gamma_writer.as_ref() {
+                writer.write_at(offset, &scratch.gammas)?;
             }
         }
 
-        Self::write_precache_meta(
-            &meta_path,
-            &EdaBitsPrecacheMeta {
-                start_cursor,
-                len: cached,
-                party_id_byte: backing_store::party_id_to_byte(self.party_id),
-            },
-        )?;
+        let meta = self.current_precache_meta(start_cursor, cached);
+        Self::write_precache_meta(&meta_path, &meta)?;
 
         self.alphas_flat_store = alpha_store;
         self.gamma_store = gamma_store;
@@ -793,7 +907,7 @@ where
         }
         self.total += deficit;
         if self.party_id != PartyID::ID2 {
-            self.clear_precache_runtime();
+            self.clear_precache_files_if_present();
         }
     }
 }
@@ -1763,7 +1877,8 @@ mod tests {
             std::array::from_fn(|pid| per.iter().map(|s| s[pid]).collect())
         };
 
-        let base_dir = std::env::temp_dir().join(format!("co_jolt2_preproc_precache_{}_{}", cached_items, rng.next_u64()));
+        let base_dir =
+            std::env::temp_dir().join(format!("co_jolt2_preproc_precache_{}_{}", cached_items, rng.next_u64()));
         let base_dir_for_workers = base_dir.clone();
         std::fs::create_dir_all(&base_dir).expect("failed to create temp dir");
 
@@ -1795,6 +1910,182 @@ mod tests {
         let combined = combine_field_elements(&outputs[0], &outputs[1], &outputs[2]);
         let expected: Vec<Fr> = xs.iter().map(|&x| Fr::from(x)).collect();
         assert_eq!(combined, expected, "precache B2A mismatch for cached_items={cached_items}");
+
+        let _ = std::fs::remove_dir_all(&base_dir);
+    }
+
+    fn file_mtime(path: &Path) -> std::time::SystemTime {
+        std::fs::metadata(path).expect("metadata").modified().expect("modified time")
+    }
+
+    fn temp_test_dir(prefix: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("unix epoch").as_nanos();
+        std::env::temp_dir().join(format!("{prefix}_{nanos}"))
+    }
+
+    #[test]
+    fn preprocess_pool_precache_exact_match_reused_without_rebuild() {
+        const NUM_U64: usize = 8;
+
+        let base_dir = temp_test_dir("co_jolt2_preproc_precache_exact");
+        let base_dir_for_workers = base_dir.clone();
+        std::fs::create_dir_all(&base_dir).expect("failed to create temp dir");
+
+        run_rep3_local_test_with_coordinator(
+            1,
+            |_| (),
+            || (),
+            move |(), mut io_ctx| {
+                let party_id = io_ctx.party_id();
+                let pool_dir = base_dir_for_workers.join(format!("party_{}", usize::from(party_id)));
+                std::fs::create_dir_all(&pool_dir)?;
+
+                let counts = [0, 0, 0, NUM_U64, 0];
+                #[cfg(not(feature = "ring-msm"))]
+                let mut pool = preprocess_pool::<Fr, _>(&pool_dir, counts, 0, 0, 0, &mut io_ctx)?;
+                #[cfg(feature = "ring-msm")]
+                let mut pool = preprocess_pool::<Fr, _>(&pool_dir, counts, 0, 0, 0, 0, 0, &mut io_ctx)?;
+                let precache_counts = [0, 0, 0, NUM_U64, 0];
+                pool.prepare_edabits_precache(&pool_dir, precache_counts)?;
+
+                let mut loaded = PreprocessingPool::<Fr>::load(&pool_dir, party_id)?;
+                if party_id != PartyID::ID2 {
+                    let alpha_path = LazyEdaBits::<u64, Fr>::precache_alpha_path(&pool_dir);
+                    let meta_path = LazyEdaBits::<u64, Fr>::precache_meta_path(&pool_dir);
+                    let alpha_before = file_mtime(&alpha_path);
+                    let meta_before = file_mtime(&meta_path);
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                    loaded.prepare_edabits_precache(&pool_dir, precache_counts)?;
+                    assert_eq!(file_mtime(&alpha_path), alpha_before);
+                    assert_eq!(file_mtime(&meta_path), meta_before);
+                }
+                Ok::<(), eyre::Report>(())
+            },
+            |(), _net| Ok(()),
+        );
+
+        let _ = std::fs::remove_dir_all(&base_dir);
+    }
+
+    #[test]
+    fn preprocess_pool_precache_superset_reused_for_smaller_request() {
+        const NUM_U64: usize = 8;
+
+        let base_dir = temp_test_dir("co_jolt2_preproc_precache_superset");
+        let base_dir_for_workers = base_dir.clone();
+        std::fs::create_dir_all(&base_dir).expect("failed to create temp dir");
+
+        run_rep3_local_test_with_coordinator(
+            1,
+            |_| (),
+            || (),
+            move |(), mut io_ctx| {
+                let party_id = io_ctx.party_id();
+                let pool_dir = base_dir_for_workers.join(format!("party_{}", usize::from(party_id)));
+                std::fs::create_dir_all(&pool_dir)?;
+
+                let counts = [0, 0, 0, NUM_U64, 0];
+                #[cfg(not(feature = "ring-msm"))]
+                let mut pool = preprocess_pool::<Fr, _>(&pool_dir, counts, 0, 0, 0, &mut io_ctx)?;
+                #[cfg(feature = "ring-msm")]
+                let mut pool = preprocess_pool::<Fr, _>(&pool_dir, counts, 0, 0, 0, 0, 0, &mut io_ctx)?;
+                pool.prepare_edabits_precache(&pool_dir, [0, 0, 0, NUM_U64, 0])?;
+
+                let mut loaded = PreprocessingPool::<Fr>::load(&pool_dir, party_id)?;
+                loaded.prepare_edabits_precache(&pool_dir, [0, 0, 0, NUM_U64 / 2, 0])?;
+
+                if party_id != PartyID::ID2 {
+                    assert_eq!(
+                        loaded.edabits_u64.storage_mode,
+                        EdaBitsStorageMode::P01Precache { start_cursor: 0, len: NUM_U64 }
+                    );
+                }
+                Ok::<(), eyre::Report>(())
+            },
+            |(), _net| Ok(()),
+        );
+
+        let _ = std::fs::remove_dir_all(&base_dir);
+    }
+
+    #[test]
+    fn preprocess_pool_precache_stale_sidecar_rejected_on_load() {
+        const NUM_U64: usize = 8;
+
+        let base_dir = temp_test_dir("co_jolt2_preproc_precache_stale");
+        let base_dir_for_workers = base_dir.clone();
+        std::fs::create_dir_all(&base_dir).expect("failed to create temp dir");
+
+        run_rep3_local_test_with_coordinator(
+            1,
+            |_| (),
+            || (),
+            move |(), mut io_ctx| {
+                let party_id = io_ctx.party_id();
+                let pool_dir = base_dir_for_workers.join(format!("party_{}", usize::from(party_id)));
+                std::fs::create_dir_all(&pool_dir)?;
+
+                let counts = [0, 0, 0, NUM_U64, 0];
+                #[cfg(not(feature = "ring-msm"))]
+                let mut pool = preprocess_pool::<Fr, _>(&pool_dir, counts, 0, 0, 0, &mut io_ctx)?;
+                #[cfg(feature = "ring-msm")]
+                let mut pool = preprocess_pool::<Fr, _>(&pool_dir, counts, 0, 0, 0, 0, 0, &mut io_ctx)?;
+                pool.prepare_edabits_precache(&pool_dir, [0, 0, 0, NUM_U64, 0])?;
+
+                let meta_path = pool_dir.join("edabits_64.meta");
+                let mut meta = backing_store::read_meta(&meta_path)?;
+                meta.total += 1;
+                backing_store::write_meta(&meta_path, &meta)?;
+
+                let loaded = PreprocessingPool::<Fr>::load(&pool_dir, party_id)?;
+                if party_id != PartyID::ID2 {
+                    assert_eq!(loaded.edabits_u64.storage_mode, EdaBitsStorageMode::None);
+                    assert!(!LazyEdaBits::<u64, Fr>::precache_meta_path(&pool_dir).exists());
+                }
+                Ok::<(), eyre::Report>(())
+            },
+            |(), _net| Ok(()),
+        );
+
+        let _ = std::fs::remove_dir_all(&base_dir);
+    }
+
+    #[test]
+    fn preprocess_pool_precache_invalidated_on_extension() {
+        const NUM_U64: usize = 8;
+
+        let base_dir = temp_test_dir("co_jolt2_preproc_precache_extend");
+        let base_dir_for_workers = base_dir.clone();
+        std::fs::create_dir_all(&base_dir).expect("failed to create temp dir");
+
+        run_rep3_local_test_with_coordinator(
+            1,
+            |_| (),
+            || (),
+            move |(), mut io_ctx| {
+                let party_id = io_ctx.party_id();
+                let pool_dir = base_dir_for_workers.join(format!("party_{}", usize::from(party_id)));
+                std::fs::create_dir_all(&pool_dir)?;
+
+                let counts = [0, 0, 0, NUM_U64, 0];
+                #[cfg(not(feature = "ring-msm"))]
+                let mut pool = preprocess_pool::<Fr, _>(&pool_dir, counts, 0, 0, 0, &mut io_ctx)?;
+                #[cfg(feature = "ring-msm")]
+                let mut pool = preprocess_pool::<Fr, _>(&pool_dir, counts, 0, 0, 0, 0, 0, &mut io_ctx)?;
+                pool.prepare_edabits_precache(&pool_dir, [0, 0, 0, NUM_U64, 0])?;
+
+                let mut loaded = PreprocessingPool::<Fr>::load(&pool_dir, party_id)?;
+                loaded.edabits_u64.apply_extension(1, Vec::new());
+
+                assert!(!LazyEdaBits::<u64, Fr>::precache_meta_path(&pool_dir).exists());
+                assert!(!LazyEdaBits::<u64, Fr>::precache_alpha_path(&pool_dir).exists());
+                if party_id == PartyID::ID0 {
+                    assert!(!LazyEdaBits::<u64, Fr>::precache_gamma_path(&pool_dir).exists());
+                }
+                Ok::<(), eyre::Report>(())
+            },
+            |(), _net| Ok(()),
+        );
 
         let _ = std::fs::remove_dir_all(&base_dir);
     }

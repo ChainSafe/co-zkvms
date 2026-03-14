@@ -2,7 +2,9 @@ use std::path::Path;
 
 use super::backing_store;
 use super::dabits::{DaBitBatch, LazyDaBits};
-use super::edabits::{EdaBitsBatch, EdaBitsBatchScratch, EdaBitsRingBatch, EdaBitsStorageMode, LazyEdaBits, LazyEdaBitsRing};
+use super::edabits::{
+    EdaBitsBatch, EdaBitsBatchScratch, EdaBitsRingBatch, EdaBitsStorageMode, LazyEdaBits, LazyEdaBitsRing,
+};
 use crate::field::PrimeField;
 use crate::protocols::rep3::PartyID;
 use crate::protocols::rep3::network::Rep3RawFieldTransport;

@@ -315,13 +315,15 @@ impl<F> BackingStore<F> {
                     );
                 }
                 let (byte_offset, byte_len) = Self::byte_range(start, end);
-                let out_bytes =
-                    unsafe { std::slice::from_raw_parts_mut(out.as_mut_ptr() as *mut u8, byte_len) };
+                let out_bytes = unsafe { std::slice::from_raw_parts_mut(out.as_mut_ptr() as *mut u8, byte_len) };
                 Self::file_read_exact_at(file, byte_offset, out_bytes)
             }
             BackingStore::Empty => {
                 if !out.is_empty() {
-                    return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "attempted to read from empty backing store"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "attempted to read from empty backing store",
+                    ));
                 }
                 Ok(())
             }
@@ -414,13 +416,15 @@ impl<F> BackingStore<F> {
                     );
                 }
                 let (byte_offset, byte_len) = Self::byte_range(start, end);
-                let out_bytes =
-                    unsafe { std::slice::from_raw_parts_mut(out.as_mut_ptr() as *mut u8, byte_len) };
+                let out_bytes = unsafe { std::slice::from_raw_parts_mut(out.as_mut_ptr() as *mut u8, byte_len) };
                 Self::file_read_exact_at(file, byte_offset, out_bytes)
             }
             BackingStore::Empty => {
                 if !out.is_empty() {
-                    return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "attempted to read from empty backing store"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "attempted to read from empty backing store",
+                    ));
                 }
                 Ok(())
             }

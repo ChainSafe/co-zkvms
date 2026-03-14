@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::mem;
 use std::sync::Arc;
 
-use jolt_common::constants::{LookupIndexInt, XLEN, XlenInt};
+use jolt_common::constants::{LookupIndexInt, XlenInt, XLEN};
 use jolt_core::field::JoltField;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
@@ -14,13 +14,13 @@ use jolt_core::zkvm::instruction::{CircuitFlags, InstructionFlags, InstructionLo
 use jolt_core::zkvm::lookup_table::LookupTables;
 use jolt_core::zkvm::ram::remap_address;
 use jolt_core::zkvm::witness::{CommittedPolynomial, DTH_ROOT_OF_K};
-use jolt_core::zkvm::{JoltProverPreprocessing, instruction_lookups};
+use jolt_core::zkvm::{instruction_lookups, JoltProverPreprocessing};
 use mpc_core::protocols::rep3::network::{IoContext, IoContextPool, Rep3NetworkWorker};
-use mpc_core::protocols::rep3::{Rep3PrimeFieldShare, arithmetic::promote_to_trivial_share};
-use mpc_core::protocols::rep3_ring::Rep3RingShare;
+use mpc_core::protocols::rep3::{arithmetic::promote_to_trivial_share, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3_ring::casts;
 use mpc_core::protocols::rep3_ring::edabits::{EdaBitsBatchScratch, PreprocessingPool};
 use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
+use mpc_core::protocols::rep3_ring::Rep3RingShare;
 use rand::distributions::{Distribution, Standard};
 use rayon::prelude::*;
 use tracing::{info_span, trace_span};
@@ -34,7 +34,7 @@ use crate::utils::future_ring::{FutureRep3Ring, Rep3RingFutureExt};
 use crate::utils::memory::maybe_purge_jemalloc;
 use crate::utils::types::Either;
 use crate::zkvm::dag::state_manager::StateManagerWorker;
-use crate::zkvm::instruction::{Rep3LookupQuery, Rep3Operand, populate_operands_casts};
+use crate::zkvm::instruction::{populate_operands_casts, Rep3LookupQuery, Rep3Operand};
 
 use super::instruction::{Rep3Cycle, Rep3RAMAccess};
 
