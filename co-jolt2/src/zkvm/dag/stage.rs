@@ -165,7 +165,6 @@ where
         use crate::subprotocols::sumcheck::BatchedSumcheckWorkerInstance;
         use crate::zkvm::spartan::product::Rep3ProductVirtualizationSumcheckWorker;
         use jolt_core::poly::opening_proof::SumcheckId;
-        use jolt_core::utils::math::Math;
         use jolt_core::zkvm::instruction::CircuitFlags;
         use jolt_core::zkvm::spartan::pc::PCSumcheck;
         use jolt_core::zkvm::witness::VirtualPolynomial;
@@ -173,20 +172,6 @@ where
         let party_id = io_ctx.party_id();
         let ram_dag = self.ram_dag.as_mut().expect("ram_dag missing");
         let lookups_dag = self.lookups_dag.as_mut().expect("lookups_dag missing");
-
-        // Send ram_init_eval additive share to coordinator.
-        // The coordinator cannot compute this independently because the initial
-        // memory state includes secret-shared advice regions.
-        {
-            let r_val_point = sm
-                .accumulator
-                .get_virtual_polynomial_opening(VirtualPolynomial::RamVal, SumcheckId::RamReadWriteChecking)
-                .0;
-            let r_address = &r_val_point.r[..sm.ram_K.log_2()];
-            let r_address_f: Vec<F> = r_address.iter().map(|c| (*c).into()).collect();
-            let ram_init_share = ram_dag.eval_val_init(&r_address_f);
-            io_ctx.network().send_response(ram_init_share.into_fe())?;
-        }
 
         // Receive stage3 init data from coordinator (three messages).
         let (gamma_pc, input_claim_pc, input_claim_product): (F, F, F) = io_ctx.network().receive_request()?;

@@ -46,29 +46,26 @@ impl<T> core::ops::Deref for TrustedAdvice<T> {
     }
 }
 
-/// A wrapper type to mark guest program inputs as public (not secret-shared).
-///
-/// Bare (unwrapped) parameters default to untrusted advice (secret-shared in MPC).
-/// Use this wrapper when the verifier needs to see the input in plaintext.
+/// A wrapper type to mark guest program inputs as untrusted_advice.
 #[derive(Debug, Serialize, Deserialize)]
 #[repr(transparent)]
-pub struct Public<T> {
+pub struct UntrustedAdvice<T> {
     value: T,
 }
 
-impl<T> Public<T> {
+impl<T> UntrustedAdvice<T> {
     pub fn new(value: T) -> Self {
         Self { value }
     }
 }
 
-impl<T> From<T> for Public<T> {
+impl<T> From<T> for UntrustedAdvice<T> {
     fn from(value: T) -> Self {
         Self::new(value)
     }
 }
 
-impl<T> core::ops::Deref for Public<T> {
+impl<T> core::ops::Deref for UntrustedAdvice<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {

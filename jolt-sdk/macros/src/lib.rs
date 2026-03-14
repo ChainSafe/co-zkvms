@@ -919,14 +919,13 @@ impl MacroBuilder {
                     let ident = pat_ident.ident.clone();
                     let arg_type = ty.clone();
 
-                    // Check if the type is wrapped in jolt::TrustedAdvice<> or jolt::Public<>
+                    // Check if the type is wrapped in jolt::TrustedAdvice<> or jolt::UntrustedAdvice<>
                     if Self::is_trusted_advice_type(&arg_type) {
                         trusted_advice_args.push((ident, arg_type));
-                    } else if Self::is_public_type(&arg_type) {
-                        pub_args.push((ident, arg_type));
-                    } else {
-                        // Bare params default to untrusted advice (secret-shared in MPC)
+                    } else if Self::is_untrusted_advice_type(&arg_type) {
                         untrusted_advice_args.push((ident, arg_type));
+                    } else {
+                        pub_args.push((ident, arg_type));
                     }
                 } else {
                     panic!("cannot parse arg");
@@ -948,10 +947,10 @@ impl MacroBuilder {
         false
     }
 
-    fn is_public_type(ty: &Type) -> bool {
+    fn is_untrusted_advice_type(ty: &Type) -> bool {
         if let Type::Path(type_path) = ty {
             if let Some(last_segment) = type_path.path.segments.last() {
-                return last_segment.ident == "Public";
+                return last_segment.ident == "UntrustedAdvice";
             }
         }
         false

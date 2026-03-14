@@ -233,24 +233,11 @@ impl DoryGlobals {
         CURRENT_CONTEXT.load(Ordering::SeqCst).into()
     }
 
-    /// Set the Dory context and return a guard that restores the previous context on drop.
-    ///
-    /// **WARNING**: This is NOT safe for concurrent use from multiple threads,
-    /// because the guard captures the previous context at call time. If another
-    /// thread has already overwritten CURRENT_CONTEXT, the guard will restore
-    /// the wrong value on drop. Use `set_context` for multi-threaded scenarios.
+    /// Set the Dory context and return a guard that restores the previous context on drop
     pub fn with_context(context: DoryContext) -> DoryContextGuard {
         let previous = Self::current_context();
         CURRENT_CONTEXT.store(context as u8, Ordering::SeqCst);
         DoryContextGuard { previous_context: previous }
-    }
-
-    /// Set the Dory context without a guard.
-    ///
-    /// Use this instead of `with_context` when multiple threads share the same
-    /// global context and guard-based restore would race.
-    pub fn set_context(context: DoryContext) {
-        CURRENT_CONTEXT.store(context as u8, Ordering::SeqCst);
     }
 
     /// Get the current Dory matrix layout
