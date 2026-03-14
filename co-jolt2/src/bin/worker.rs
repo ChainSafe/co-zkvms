@@ -315,7 +315,12 @@ fn prove_loop(
                 precache_budget.u128,
             ];
             info!(precache_t_log2, precache_trace_len, ?precache_budget, "building P0/P1 edabits precache");
-            preproc.prepare_edabits_precache(&pool_dir, precache_counts)?;
+            preproc.prepare_edabits_precache(&pool_dir, precache_counts).with_context(|| {
+                format!(
+                    "failed to build P0/P1 edabits precache for EDABITS_PRECACHE_T_LOG2={} (trace_len={}, counts={:?})",
+                    precache_t_log2, precache_trace_len, precache_counts
+                )
+            })?;
         }
 
         // Ring MSM preprocessing (daPoints only — wrap masks and ring edaBits are in the pool)

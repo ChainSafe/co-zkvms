@@ -231,6 +231,25 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
 
     #[tracing::instrument(skip_all, name = "Preprocessing::prepare_edabits_precache")]
     pub fn prepare_edabits_precache(&mut self, dir: &Path, counts: [usize; 5]) -> std::io::Result<()> {
+        let remaining = [
+            self.edabits_u8.remaining(),
+            self.edabits_u16.remaining(),
+            self.edabits_u32.remaining(),
+            self.edabits_u64.remaining(),
+            self.edabits_u128.remaining(),
+        ];
+        if let Some((idx, (&requested, &available))) =
+            counts.iter().zip(remaining.iter()).enumerate().find(|(_, (requested, available))| requested > available)
+        {
+            let ring_bits = [8usize, 16, 32, 64, 128][idx];
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "PreprocessingPool::prepare_edabits_precache requested {} u{} edabits but only {} remain; requested={:?}, remaining={:?}",
+                    requested, ring_bits, available, counts, remaining
+                ),
+            ));
+        }
         self.edabits_u64.prepare_precache(dir, counts[3])?;
         self.edabits_u128.prepare_precache(dir, counts[4])?;
         self.edabits_u32.prepare_precache(dir, counts[2])?;

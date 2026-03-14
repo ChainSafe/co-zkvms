@@ -747,18 +747,33 @@ where
         Ok(())
     }
 
+    #[tracing::instrument(
+        skip(self, dir),
+        level = "trace",
+        name = "prepare_precache",
+        fields(ring_bits = T::K, requested, remaining = self.remaining(), party_id = ?self.party_id)
+    )]
     pub(crate) fn prepare_precache(&mut self, dir: &Path, requested: usize) -> std::io::Result<()> {
         if self.party_id == PartyID::ID2 || requested == 0 || self.remaining() == 0 {
             self.clear_precache_files(dir)?;
             return Ok(());
         }
 
-        let cached = requested.min(self.remaining());
-        if cached == 0 {
-            self.clear_precache_files(dir)?;
-            return Ok(());
+        let remaining = self.remaining();
+        if requested > remaining {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "LazyEdaBits<u{}>::prepare_precache requested {} items but only {} remain (cursor={}, total={})",
+                    T::K,
+                    requested,
+                    remaining,
+                    self.cursor,
+                    self.total
+                ),
+            ));
         }
-        if self.has_matching_precache(cached) {
+        if self.has_matching_precache(requested) {
             return Ok(());
         }
 
@@ -766,9 +781,9 @@ where
         let alpha_path = Self::precache_alpha_path(dir);
         let gamma_path = Self::precache_gamma_path(dir);
         let meta_path = Self::precache_meta_path(dir);
-        let mut alpha_store = backing_store::BackingStore::create_file_backed_sized(&alpha_path, cached * T::K)?;
+        let mut alpha_store = backing_store::BackingStore::create_file_backed_sized(&alpha_path, requested * T::K)?;
         let mut gamma_store = if self.party_id == PartyID::ID0 {
-            backing_store::BackingStore::create_file_backed_sized(&gamma_path, cached)?
+            backing_store::BackingStore::create_file_backed_sized(&gamma_path, requested)?
         } else {
             Self::remove_file_if_exists(&gamma_path)?;
             backing_store::BackingStore::Empty
@@ -782,27 +797,34 @@ where
         const PRECACHE_TARGET_ALPHA_BYTES: usize = 96 * 1024 * 1024;
         let alpha_bytes_per_item = T::K.saturating_mul(std::mem::size_of::<F>()).max(1);
         let target_items = PRECACHE_TARGET_ALPHA_BYTES / alpha_bytes_per_item;
-        let chunk_len = cached.min(target_items.max(16 * 1024).max(1));
+        let chunk_len = requested.min(target_items.max(16 * 1024).max(1));
         let mut scratch = EdaBitsBatchScratch::<T, F>::default();
-        for offset in (0..cached).step_by(chunk_len) {
-            let len = (cached - offset).min(chunk_len);
+        for offset in (0..requested).step_by(chunk_len) {
+            let len = (requested - offset).min(chunk_len);
             scratch.gammas.clear();
             scratch.gammas.resize(len, RingElement(T::zero()));
             scratch.alphas_flat.clear();
             scratch.alphas_flat.resize(len * T::K, F::zero());
-            self.generate_into(start_cursor + offset, len, &mut scratch, 0);
-            alpha_writer.write_at(offset * T::K, &scratch.alphas_flat)?;
+            {
+                let _span = tracing::trace_span!("precache_generate_chunk", ring_bits = T::K, offset, len).entered();
+                self.generate_into(start_cursor + offset, len, &mut scratch, 0);
+            }
+            {
+                let _span = tracing::trace_span!("precache_alpha_write_chunk", ring_bits = T::K, offset, len).entered();
+                alpha_writer.write_at(offset * T::K, &scratch.alphas_flat)?;
+            }
             if let Some(writer) = gamma_writer.as_ref() {
+                let _span = tracing::trace_span!("precache_gamma_write_chunk", ring_bits = T::K, offset, len).entered();
                 writer.write_at(offset, &scratch.gammas)?;
             }
         }
 
-        let meta = self.current_precache_meta(start_cursor, cached);
+        let meta = self.current_precache_meta(start_cursor, requested);
         Self::write_precache_meta(&meta_path, &meta)?;
 
         self.alphas_flat_store = alpha_store;
         self.gamma_store = gamma_store;
-        self.storage_mode = EdaBitsStorageMode::P01Precache { start_cursor, len: cached };
+        self.storage_mode = EdaBitsStorageMode::P01Precache { start_cursor, len: requested };
         Ok(())
     }
 }
@@ -2081,6 +2103,90 @@ mod tests {
                 assert!(!LazyEdaBits::<u64, Fr>::precache_alpha_path(&pool_dir).exists());
                 if party_id == PartyID::ID0 {
                     assert!(!LazyEdaBits::<u64, Fr>::precache_gamma_path(&pool_dir).exists());
+                }
+                Ok::<(), eyre::Report>(())
+            },
+            |(), _net| Ok(()),
+        );
+
+        let _ = std::fs::remove_dir_all(&base_dir);
+    }
+
+    #[test]
+    fn preprocess_pool_precache_oversized_single_width_errors() {
+        const NUM_U64: usize = 8;
+
+        let base_dir = temp_test_dir("co_jolt2_preproc_precache_oversized_single");
+        let base_dir_for_workers = base_dir.clone();
+        std::fs::create_dir_all(&base_dir).expect("failed to create temp dir");
+
+        run_rep3_local_test_with_coordinator(
+            1,
+            |_| (),
+            || (),
+            move |(), mut io_ctx| {
+                let party_id = io_ctx.party_id();
+                let pool_dir = base_dir_for_workers.join(format!("party_{}", usize::from(party_id)));
+                std::fs::create_dir_all(&pool_dir)?;
+
+                let counts = [0, 0, 0, NUM_U64, 0];
+                #[cfg(not(feature = "ring-msm"))]
+                let mut pool = preprocess_pool::<Fr, _>(&pool_dir, counts, 0, 0, 0, &mut io_ctx)?;
+                #[cfg(feature = "ring-msm")]
+                let mut pool = preprocess_pool::<Fr, _>(&pool_dir, counts, 0, 0, 0, 0, 0, &mut io_ctx)?;
+
+                let err = pool
+                    .prepare_edabits_precache(&pool_dir, [0, 0, 0, NUM_U64 + 1, 0])
+                    .expect_err("oversized precache must fail");
+                assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+                assert!(!LazyEdaBits::<u64, Fr>::precache_meta_path(&pool_dir).exists());
+                assert!(!LazyEdaBits::<u64, Fr>::precache_alpha_path(&pool_dir).exists());
+                if party_id == PartyID::ID0 {
+                    assert!(!LazyEdaBits::<u64, Fr>::precache_gamma_path(&pool_dir).exists());
+                }
+                Ok::<(), eyre::Report>(())
+            },
+            |(), _net| Ok(()),
+        );
+
+        let _ = std::fs::remove_dir_all(&base_dir);
+    }
+
+    #[test]
+    fn preprocess_pool_precache_pool_level_failure_is_atomic() {
+        const NUM_U64: usize = 8;
+
+        let base_dir = temp_test_dir("co_jolt2_preproc_precache_pool_atomic");
+        let base_dir_for_workers = base_dir.clone();
+        std::fs::create_dir_all(&base_dir).expect("failed to create temp dir");
+
+        run_rep3_local_test_with_coordinator(
+            1,
+            |_| (),
+            || (),
+            move |(), mut io_ctx| {
+                let party_id = io_ctx.party_id();
+                let pool_dir = base_dir_for_workers.join(format!("party_{}", usize::from(party_id)));
+                std::fs::create_dir_all(&pool_dir)?;
+
+                let counts = [0, 0, 0, NUM_U64, 0];
+                #[cfg(not(feature = "ring-msm"))]
+                let mut pool = preprocess_pool::<Fr, _>(&pool_dir, counts, 0, 0, 0, &mut io_ctx)?;
+                #[cfg(feature = "ring-msm")]
+                let mut pool = preprocess_pool::<Fr, _>(&pool_dir, counts, 0, 0, 0, 0, 0, &mut io_ctx)?;
+
+                let err = pool
+                    .prepare_edabits_precache(&pool_dir, [0, 0, 0, NUM_U64, 1])
+                    .expect_err("pool-level oversized precache must fail");
+                assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+
+                assert!(!LazyEdaBits::<u64, Fr>::precache_meta_path(&pool_dir).exists());
+                assert!(!LazyEdaBits::<u64, Fr>::precache_alpha_path(&pool_dir).exists());
+                assert!(!LazyEdaBits::<u128, Fr>::precache_meta_path(&pool_dir).exists());
+                assert!(!LazyEdaBits::<u128, Fr>::precache_alpha_path(&pool_dir).exists());
+                if party_id == PartyID::ID0 {
+                    assert!(!LazyEdaBits::<u64, Fr>::precache_gamma_path(&pool_dir).exists());
+                    assert!(!LazyEdaBits::<u128, Fr>::precache_gamma_path(&pool_dir).exists());
                 }
                 Ok::<(), eyre::Report>(())
             },
