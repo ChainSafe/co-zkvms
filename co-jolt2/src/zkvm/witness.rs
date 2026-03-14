@@ -142,11 +142,8 @@ fn write_sparse_field_target<F: JoltField>(
     write_sparse_target(out, target.with_row(row), value);
 }
 
-#[tracing::instrument(
-    skip_all,
-    name = "fill_field_from_operands_sparse"
-)]
-fn fill_field_from_operands_sparse<F, N>(
+#[tracing::instrument(skip_all, name = "r2f_operands_sparse_chunk")]
+fn r2f_operands_sparse_chunk<F, N>(
     io_ctx: &mut IoContextPool<N>,
     shares: &[Rep3RingShare<XlenInt>],
     targets: &[SparseCastTarget],
@@ -181,6 +178,7 @@ where
                 view.fill_into(&mut scratch.batch)?;
                 casts::r2f_b2a_preproc_many_into::<XlenInt, F, _>(xs, scratch.batch.as_ref(), ctx, &mut scratch.cast)?;
                 debug_assert_eq!(scratch.cast.output().len(), xs.len());
+                let _span = tracing::trace_span!("write_sparse_target", start = start).entered();
                 for (offset, value) in scratch.cast.output().iter().copied().enumerate() {
                     write_sparse_target(out, chunk_targets[start + offset], value);
                 }
@@ -464,6 +462,7 @@ where
             }
         };
 
+    let _span = trace_span!("r2f_operands_sparse", n = n).entered();
     let slab_rows: usize =
         std::env::var("OPERAND_CAST_SLAB_ROWS").ok().and_then(|s| s.parse().ok()).unwrap_or(16 * 1024);
     let slab_rows = slab_rows.max(1);
@@ -583,8 +582,9 @@ where
         }
         drop(_span);
 
-        fill_field_from_operands_sparse::<F, N>(io_ctx, &cast_shares, &cast_targets, &shared_cols, preproc)?;
+        r2f_operands_sparse_chunk::<F, N>(io_ctx, &cast_shares, &cast_targets, &shared_cols, preproc)?;
     }
+    drop(_span);
 
     let _span = tracing::trace_span!("init_rep3_witnesses").entered();
     let rs1_value = shared_cols.rs1.into_inner();

@@ -168,6 +168,7 @@ where
         self.len
     }
 
+    #[tracing::instrument(skip_all, name = "edabits::fill_into", level = "trace")]
     pub fn fill_into(&self, scratch: &mut EdaBitsBatchScratch<T, F>) -> std::io::Result<()> {
         let n = self.len;
         let k = T::K;
@@ -187,6 +188,7 @@ where
             (self.cached_start_cursor + self.cached_len - self.start_cursor).min(n)
         };
 
+        let _span = tracing::trace_span!("from_cache", cached = cached).entered();
         if cached > 0 {
             let alpha_start = (self.start_cursor - self.store_start_cursor) * k;
             let alpha_end = alpha_start + cached * k;
@@ -207,12 +209,18 @@ where
                 PartyID::ID1 | PartyID::ID2 => scratch.gammas[..cached].fill(RingElement(T::zero())),
             }
         }
+        drop(_span);
 
+        let _span = tracing::trace_span!("regenerate", cached = cached).entered();
         if cached < n {
             if self.party_id == PartyID::ID2 {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::UnexpectedEof,
-                    format!("authoritative edabits coverage missing for P2 range {}..{}", self.start_cursor, self.start_cursor + n),
+                    format!(
+                        "authoritative edabits coverage missing for P2 range {}..{}",
+                        self.start_cursor,
+                        self.start_cursor + n
+                    ),
                 ));
             }
             generate_into_from_state(
@@ -442,18 +450,16 @@ fn generate_into_from_state<T: IntRing2k, F: PrimeField>(
     }
 
     let interleaved = &scratch.interleaved_bytes;
-    scratch.alphas_flat[item_offset * k..(item_offset + n) * k]
-        .par_iter_mut()
-        .enumerate()
-        .with_min_len(256)
-        .for_each(|(idx, alpha)| {
+    scratch.alphas_flat[item_offset * k..(item_offset + n) * k].par_iter_mut().enumerate().with_min_len(256).for_each(
+        |(idx, alpha)| {
             let item = idx / k;
             let bit = idx % k;
             let a_start = item * stride + t_bytes + bit * fb;
             let lo = u64::from_le_bytes(interleaved[a_start..a_start + 8].try_into().unwrap());
             let hi = u64::from_le_bytes(interleaved[a_start + 8..a_start + 16].try_into().unwrap());
             *alpha = F::from((hi as u128) << 64 | lo as u128);
-        });
+        },
+    );
 }
 
 impl<T: IntRing2k, F: PrimeField> LazyEdaBits<T, F>
@@ -944,7 +950,11 @@ where
                     } else {
                         None
                     };
-                    let gamma_range = if cached > 0 { Some((cursor_base - start_cursor, cursor_base - start_cursor + cached)) } else { None };
+                    let gamma_range = if cached > 0 {
+                        Some((cursor_base - start_cursor, cursor_base - start_cursor + cached))
+                    } else {
+                        None
+                    };
                     (
                         start_cursor,
                         len,
