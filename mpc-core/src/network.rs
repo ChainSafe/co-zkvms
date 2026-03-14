@@ -798,6 +798,61 @@ impl<Network: Rep3NetworkWorker> IoContextPool<Network> {
         Ok(())
     }
 
+    pub fn par_chunks_forked_apply<T, V, S, MakeView, MapFn, Err>(
+        &mut self,
+        inputs: &[Rep3RingShare<T>],
+        chunk_size: Option<usize>,
+        scratch: &mut [S],
+        make_view: MakeView,
+        map: MapFn,
+    ) -> eyre::Result<()>
+    where
+        T: IntRing2k + Send + Sync,
+        V: Send,
+        S: Send,
+        MakeView: Fn(usize, usize) -> V + Sync + Send,
+        MapFn: Fn(usize, &[Rep3RingShare<T>], V, &mut IoContext<Network>, &mut S) -> Result<(), Err> + Sync + Send,
+        eyre::Report: From<Err>,
+        Err: Send + Sync,
+    {
+        let len = inputs.len();
+        if len == 0 {
+            return Ok(());
+        }
+
+        let chunk_size =
+            chunk_size.unwrap_or_else(|| if self.forks.is_empty() { len } else { len.div_ceil(self.forks.len()) });
+        assert!(chunk_size != 0);
+
+        if self.forks.is_empty() || len <= chunk_size {
+            let Some(first_scratch) = scratch.first_mut() else {
+                eyre::bail!("par_chunks_forked_apply requires at least one scratch slot");
+            };
+            return Ok(map(0, inputs, make_view(0, len), self.main(), first_scratch)?);
+        }
+
+        let num_forks = len.div_ceil(chunk_size);
+        eyre::ensure!(
+            scratch.len() >= num_forks,
+            "par_chunks_forked_apply: need {} scratch slots, got {}",
+            num_forks,
+            scratch.len()
+        );
+
+        inputs
+            .par_chunks(chunk_size)
+            .enumerate()
+            .zip_eq(self.forks(num_forks).par_iter_mut().zip_eq(scratch[..num_forks].par_iter_mut()))
+            .map(|((chunk_idx, xs), (ctx, scratch))| {
+                let start = chunk_idx * chunk_size;
+                let view = make_view(start, xs.len());
+                map(start, xs, view, ctx, scratch).map_err(eyre::Error::from)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(())
+    }
+
     /// Like `par_chunks` but also splits a `DaBitBatch` in lockstep with inputs.
     /// Each fork receives a sub-batch with matching gammas, thetas, and v_shares
     /// (all 1:1 with inputs).

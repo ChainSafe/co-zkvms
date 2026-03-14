@@ -51,45 +51,42 @@ enum SparseCastCol {
 }
 
 #[derive(Copy, Clone, Debug)]
-struct SparseCastJob {
-    target: SparseCastTarget,
-    share: Rep3RingShare<XlenInt>,
+enum SparseCastTarget {
+    Single { row: usize, col: SparseCastCol },
+    Pair { row: usize, first: SparseCastCol, second: SparseCastCol },
 }
 
 #[derive(Copy, Clone, Debug)]
-struct SparseCastTarget {
-    row: usize,
-    cols: [SparseCastCol; 2],
-    len: u8,
-}
-
-#[derive(Copy, Clone, Debug)]
-struct SparseFieldTarget {
-    cols: [SparseCastCol; 2],
-    len: u8,
-}
-
-impl SparseCastTarget {
-    fn single(row: usize, col: SparseCastCol) -> Self {
-        Self { row, cols: [col, col], len: 1 }
-    }
-
-    fn pair(row: usize, first: SparseCastCol, second: SparseCastCol) -> Self {
-        Self { row, cols: [first, second], len: 2 }
-    }
+enum SparseFieldTarget {
+    Single { col: SparseCastCol },
+    Pair { first: SparseCastCol, second: SparseCastCol },
 }
 
 impl SparseFieldTarget {
     fn single(col: SparseCastCol) -> Self {
-        Self { cols: [col, col], len: 1 }
+        Self::Single { col }
     }
 
     fn pair(first: SparseCastCol, second: SparseCastCol) -> Self {
-        Self { cols: [first, second], len: 2 }
+        Self::Pair { first, second }
     }
 
     fn with_row(self, row: usize) -> SparseCastTarget {
-        SparseCastTarget { row, cols: self.cols, len: self.len }
+        match self {
+            Self::Single { col } => SparseCastTarget::Single { row, col },
+            Self::Pair { first, second } => SparseCastTarget::Pair { row, first, second },
+        }
+    }
+}
+
+struct SparseCastScratch<F: JoltField> {
+    batch: EdaBitsBatchScratch<XlenInt, F>,
+    cast: casts::R2fB2aScratch<XlenInt, F>,
+}
+
+impl<F: JoltField> Default for SparseCastScratch<F> {
+    fn default() -> Self {
+        Self { batch: EdaBitsBatchScratch::default(), cast: casts::R2fB2aScratch::default() }
     }
 }
 
@@ -127,9 +124,12 @@ fn write_sparse_target<F: JoltField>(
     target: SparseCastTarget,
     value: Rep3PrimeFieldShare<F>,
 ) {
-    write_sparse_field(out, target.row, target.cols[0], value);
-    if target.len == 2 {
-        write_sparse_field(out, target.row, target.cols[1], value);
+    match target {
+        SparseCastTarget::Single { row, col } => write_sparse_field(out, row, col, value),
+        SparseCastTarget::Pair { row, first, second } => {
+            write_sparse_field(out, row, first, value);
+            write_sparse_field(out, row, second, value);
+        }
     }
 }
 
@@ -144,12 +144,12 @@ fn write_sparse_field_target<F: JoltField>(
 
 #[tracing::instrument(
     skip_all,
-    name = "fill_field_from_operands_sparse",
-    fields(jobs = jobs.len())
+    name = "fill_field_from_operands_sparse"
 )]
 fn fill_field_from_operands_sparse<F, N>(
     io_ctx: &mut IoContextPool<N>,
-    jobs: &[SparseCastJob],
+    shares: &[Rep3RingShare<XlenInt>],
+    targets: &[SparseCastTarget],
     out: &SharedSparseFieldCols<F>,
     preproc: &mut PreprocessingPool<F>,
 ) -> eyre::Result<()>
@@ -158,44 +158,36 @@ where
     N: Rep3NetworkWorker,
     Standard: Distribution<XlenInt>,
 {
-    if jobs.is_empty() {
+    if shares.is_empty() {
         return Ok(());
     }
+    debug_assert_eq!(shares.len(), targets.len());
 
     let chunk_size: usize = std::env::var("B2A_CHUNK").ok().and_then(|s| s.parse().ok()).unwrap_or(8192);
-    let mut shares: Vec<Rep3RingShare<XlenInt>> = Vec::with_capacity(chunk_size);
-    let mut targets: Vec<SparseCastTarget> = Vec::with_capacity(chunk_size);
-    let mut batch_scratch = EdaBitsBatchScratch::<XlenInt, F>::default();
-    let mut cast_scratch: Vec<casts::R2fB2aScratch<XlenInt, F>> =
-        (0..io_ctx.max_forks().max(1)).map(|_| casts::R2fB2aScratch::default()).collect();
+    let mut cast_scratch: Vec<SparseCastScratch<F>> =
+        (0..io_ctx.max_forks().max(1)).map(|_| SparseCastScratch::default()).collect();
 
-    for chunk in jobs.chunks(chunk_size) {
-        let n = chunk.len();
-        let _span = trace_span!("chunk_seq_pass", n).entered();
-        shares.clear();
-        targets.clear();
-        for job in chunk.iter().copied() {
-            shares.push(job.share);
-            targets.push(job.target);
-        }
-        drop(_span);
-
-        preproc.take_edabits_into::<XlenInt>(n, &mut batch_scratch)?;
-        let targets = &targets;
-        io_ctx.par_chunks_preproc_apply(
-            &shares,
-            batch_scratch.as_ref(),
+    for (chunk_idx, chunk_shares) in shares.chunks(chunk_size).enumerate() {
+        let start_idx = chunk_idx * chunk_size;
+        let chunk_targets = &targets[start_idx..start_idx + chunk_shares.len()];
+        let mut session = preproc.begin_forkable_session();
+        let reserved = session.reserve_edabits::<XlenInt>(chunk_shares.len())?;
+        io_ctx.par_chunks_forked_apply(
+            chunk_shares,
             None,
             &mut cast_scratch,
-            |start, xs, batch, ctx, scratch| {
-                casts::r2f_b2a_preproc_many_into::<XlenInt, F, _>(xs, batch, ctx, scratch)?;
-                debug_assert_eq!(scratch.output().len(), xs.len());
-                for (offset, value) in scratch.output().iter().copied().enumerate() {
-                    write_sparse_target(out, targets[start + offset], value);
+            |start, len| reserved.fork_subrange(start, len),
+            |start, xs, view, ctx, scratch| {
+                view.fill_into(&mut scratch.batch)?;
+                casts::r2f_b2a_preproc_many_into::<XlenInt, F, _>(xs, scratch.batch.as_ref(), ctx, &mut scratch.cast)?;
+                debug_assert_eq!(scratch.cast.output().len(), xs.len());
+                for (offset, value) in scratch.cast.output().iter().copied().enumerate() {
+                    write_sparse_target(out, chunk_targets[start + offset], value);
                 }
                 Ok::<(), eyre::Report>(())
             },
         )?;
+        session.commit();
     }
 
     Ok(())
@@ -567,7 +559,8 @@ where
         drop(_span);
 
         let _span = trace_span!("cast_jobs", start = slab_start, rows = slab_end - slab_start).entered();
-        let mut cast_jobs: Vec<SparseCastJob> = Vec::with_capacity((slab_end - slab_start) * 5);
+        let mut cast_shares: Vec<Rep3RingShare<XlenInt>> = Vec::with_capacity((slab_end - slab_start) * 5);
+        let mut cast_targets: Vec<SparseCastTarget> = Vec::with_capacity((slab_end - slab_start) * 5);
         for (offset, cr) in cycle_results.into_iter().enumerate() {
             let row = slab_start + offset;
             meta.push(cr.meta);
@@ -582,14 +575,15 @@ where
                 match op {
                     FieldOp::WriteTrivial(share) => write_sparse_field_target(&shared_cols, row, target, share),
                     FieldOp::NeedsCast(binary) => {
-                        cast_jobs.push(SparseCastJob { target: target.with_row(row), share: binary })
+                        cast_targets.push(target.with_row(row));
+                        cast_shares.push(binary);
                     }
                 }
             }
         }
         drop(_span);
 
-        fill_field_from_operands_sparse::<F, N>(io_ctx, &cast_jobs, &shared_cols, preproc)?;
+        fill_field_from_operands_sparse::<F, N>(io_ctx, &cast_shares, &cast_targets, &shared_cols, preproc)?;
     }
 
     let _span = tracing::trace_span!("init_rep3_witnesses").entered();

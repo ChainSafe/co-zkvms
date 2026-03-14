@@ -96,6 +96,146 @@ impl<T: IntRing2k, F: PrimeField> EdaBitsBatch<T, F> {
     }
 }
 
+pub(crate) struct EdaBitsCommitPlan {
+    cursor_base: usize,
+    len: usize,
+    alpha_consume: Option<(usize, usize)>,
+    gamma_consume: Option<(usize, usize)>,
+}
+
+pub struct ReservedEdaBits<'a, T: IntRing2k, F: PrimeField> {
+    base_cursor: usize,
+    len: usize,
+    party_id: PartyID,
+    field_bytes: usize,
+    cached_start_cursor: usize,
+    cached_len: usize,
+    store_start_cursor: usize,
+    alpha_view: Option<backing_store::BackingStoreReadView<'a, F>>,
+    gamma_view: Option<backing_store::BackingStoreReadView<'a, RingElement<T>>>,
+    seed1: [u8; crate::SEED_SIZE],
+    pos1: u128,
+    seed2: [u8; crate::SEED_SIZE],
+    pos2: u128,
+}
+
+pub struct ForkedEdaBitsView<'a, T: IntRing2k, F: PrimeField> {
+    start_cursor: usize,
+    len: usize,
+    party_id: PartyID,
+    field_bytes: usize,
+    cached_start_cursor: usize,
+    cached_len: usize,
+    store_start_cursor: usize,
+    alpha_view: Option<backing_store::BackingStoreReadView<'a, F>>,
+    gamma_view: Option<backing_store::BackingStoreReadView<'a, RingElement<T>>>,
+    seed1: [u8; crate::SEED_SIZE],
+    pos1: u128,
+    seed2: [u8; crate::SEED_SIZE],
+    pos2: u128,
+}
+
+impl<'a, T: IntRing2k, F: PrimeField> ReservedEdaBits<'a, T, F> {
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn fork_subrange(&self, start: usize, len: usize) -> ForkedEdaBitsView<'a, T, F> {
+        debug_assert!(start + len <= self.len);
+        ForkedEdaBitsView {
+            start_cursor: self.base_cursor + start,
+            len,
+            party_id: self.party_id,
+            field_bytes: self.field_bytes,
+            cached_start_cursor: self.cached_start_cursor,
+            cached_len: self.cached_len,
+            store_start_cursor: self.store_start_cursor,
+            alpha_view: self.alpha_view.clone(),
+            gamma_view: self.gamma_view.clone(),
+            seed1: self.seed1,
+            pos1: self.pos1,
+            seed2: self.seed2,
+            pos2: self.pos2,
+        }
+    }
+}
+
+impl<'a, T: IntRing2k, F: PrimeField> ForkedEdaBitsView<'a, T, F>
+where
+    Standard: Distribution<T>,
+{
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn fill_into(&self, scratch: &mut EdaBitsBatchScratch<T, F>) -> std::io::Result<()> {
+        let n = self.len;
+        let k = T::K;
+        scratch.gammas.clear();
+        scratch.gammas.resize(n, RingElement(T::zero()));
+        scratch.alphas_flat.clear();
+        scratch.alphas_flat.resize(n * k, F::zero());
+        if n == 0 {
+            scratch.interleaved_bytes.clear();
+            scratch.gamma_bytes.clear();
+            return Ok(());
+        }
+
+        let cached = if self.cached_len == 0 || self.start_cursor < self.cached_start_cursor {
+            0
+        } else {
+            (self.cached_start_cursor + self.cached_len - self.start_cursor).min(n)
+        };
+
+        if cached > 0 {
+            let alpha_start = (self.start_cursor - self.store_start_cursor) * k;
+            let alpha_end = alpha_start + cached * k;
+            self.alpha_view
+                .as_ref()
+                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "missing alpha view"))?
+                .read_into_slice(alpha_start, alpha_end, &mut scratch.alphas_flat[..cached * k])?;
+
+            match self.party_id {
+                PartyID::ID0 => {
+                    let gamma_start = self.start_cursor - self.store_start_cursor;
+                    let gamma_end = gamma_start + cached;
+                    self.gamma_view
+                        .as_ref()
+                        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "missing gamma view"))?
+                        .read_into_slice(gamma_start, gamma_end, &mut scratch.gammas[..cached])?;
+                }
+                PartyID::ID1 | PartyID::ID2 => scratch.gammas[..cached].fill(RingElement(T::zero())),
+            }
+        }
+
+        if cached < n {
+            if self.party_id == PartyID::ID2 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    format!("authoritative edabits coverage missing for P2 range {}..{}", self.start_cursor, self.start_cursor + n),
+                ));
+            }
+            generate_into_from_state(
+                self.seed1,
+                self.pos1,
+                self.seed2,
+                self.pos2,
+                self.field_bytes,
+                self.party_id,
+                self.start_cursor + cached,
+                n - cached,
+                scratch,
+                cached,
+            );
+        } else {
+            scratch.interleaved_bytes.clear();
+            scratch.gamma_bytes.clear();
+        }
+
+        Ok(())
+    }
+}
+
 /// Generate `num` random Protocol Π₂ B2A tuples using Rep3 preprocessing.
 ///
 /// For each tuple, generates K random bits γ known only to P0, plus a 2-of-2
@@ -229,6 +369,91 @@ pub struct LazyEdaBits<T: IntRing2k, F: PrimeField> {
     /// `None` for in-memory-only pools (freshly preprocessed).
     meta_path: Option<PathBuf>,
     _phantom: PhantomData<(T, F)>,
+}
+
+fn generate_into_from_state<T: IntRing2k, F: PrimeField>(
+    seed1: [u8; crate::SEED_SIZE],
+    pos1: u128,
+    seed2: [u8; crate::SEED_SIZE],
+    pos2: u128,
+    field_bytes: usize,
+    party_id: PartyID,
+    cursor_base: usize,
+    n: usize,
+    scratch: &mut EdaBitsBatchScratch<T, F>,
+    item_offset: usize,
+) {
+    if n == 0 {
+        return;
+    }
+
+    let t_bytes = std::mem::size_of::<T>();
+    let k = T::K;
+    let fb = field_bytes;
+    let stride = t_bytes + k * fb;
+    let item_byte_offset = cursor_base * stride;
+    let interleaved_bytes = n * stride;
+
+    fn seek_and_generate_into(
+        seed: [u8; crate::SEED_SIZE],
+        base_pos: u128,
+        byte_offset: usize,
+        needed: usize,
+        out: &mut Vec<u8>,
+    ) {
+        let word_offset = (byte_offset as u128) / 4;
+        let skip = byte_offset % 4;
+        let mut rng = crate::RngType::from_seed(seed);
+        rng.set_word_pos(base_pos + word_offset);
+        out.resize(needed + skip, 0);
+        rng.fill_bytes(out);
+        if skip > 0 {
+            out.copy_within(skip.., 0);
+        }
+        out.truncate(needed);
+    }
+
+    let g2_gamma_offset = cursor_base * t_bytes;
+    let g2_gamma_bytes = n * t_bytes;
+
+    if party_id == PartyID::ID0 {
+        let (interleaved, g2_bytes) = (&mut scratch.interleaved_bytes, &mut scratch.gamma_bytes);
+        rayon::join(
+            || seek_and_generate_into(seed1, pos1, item_byte_offset, interleaved_bytes, interleaved),
+            || seek_and_generate_into(seed2, pos2, g2_gamma_offset, g2_gamma_bytes, g2_bytes),
+        );
+    } else {
+        seek_and_generate_into(seed2, pos2, item_byte_offset, interleaved_bytes, &mut scratch.interleaved_bytes);
+        scratch.gamma_bytes.clear();
+    }
+
+    if party_id == PartyID::ID0 {
+        let interleaved = &scratch.interleaved_bytes;
+        let g2_bytes = &scratch.gamma_bytes;
+        scratch.gammas[item_offset..item_offset + n].par_iter_mut().enumerate().for_each(|(i, gamma)| {
+            let g1_off = i * stride;
+            let g2_off = i * t_bytes;
+            let g1_val = T::from_le_bytes(&interleaved[g1_off..g1_off + t_bytes]);
+            let g2_val = T::from_le_bytes(&g2_bytes[g2_off..g2_off + t_bytes]);
+            *gamma = RingElement(g1_val ^ g2_val);
+        });
+    } else {
+        scratch.gammas[item_offset..item_offset + n].fill(RingElement(T::zero()));
+    }
+
+    let interleaved = &scratch.interleaved_bytes;
+    scratch.alphas_flat[item_offset * k..(item_offset + n) * k]
+        .par_iter_mut()
+        .enumerate()
+        .with_min_len(256)
+        .for_each(|(idx, alpha)| {
+            let item = idx / k;
+            let bit = idx % k;
+            let a_start = item * stride + t_bytes + bit * fb;
+            let lo = u64::from_le_bytes(interleaved[a_start..a_start + 8].try_into().unwrap());
+            let hi = u64::from_le_bytes(interleaved[a_start + 8..a_start + 16].try_into().unwrap());
+            *alpha = F::from((hi as u128) << 64 | lo as u128);
+        });
 }
 
 impl<T: IntRing2k, F: PrimeField> LazyEdaBits<T, F>
@@ -604,84 +829,18 @@ where
     }
 
     fn generate_into(&self, cursor_base: usize, n: usize, scratch: &mut EdaBitsBatchScratch<T, F>, item_offset: usize) {
-        if n == 0 {
-            return;
-        }
-
-        let t_bytes = std::mem::size_of::<T>();
-        let k = T::K;
-        let party_id = self.party_id;
-        let fb = self.field_bytes;
-        let stride = t_bytes + k * fb;
-        let item_byte_offset = cursor_base * stride;
-        let interleaved_bytes = n * stride;
-
-        fn seek_and_generate_into(
-            seed: [u8; crate::SEED_SIZE],
-            base_pos: u128,
-            byte_offset: usize,
-            needed: usize,
-            out: &mut Vec<u8>,
-        ) {
-            let word_offset = (byte_offset as u128) / 4;
-            let skip = byte_offset % 4;
-            let mut rng = crate::RngType::from_seed(seed);
-            rng.set_word_pos(base_pos + word_offset);
-            out.resize(needed + skip, 0);
-            rng.fill_bytes(out);
-            if skip > 0 {
-                out.copy_within(skip.., 0);
-            }
-            out.truncate(needed);
-        }
-
-        let g2_gamma_offset = cursor_base * t_bytes;
-        let g2_gamma_bytes = n * t_bytes;
-
-        if party_id == PartyID::ID0 {
-            let (interleaved, g2_bytes) = (&mut scratch.interleaved_bytes, &mut scratch.gamma_bytes);
-            rayon::join(
-                || seek_and_generate_into(self.seed1, self.pos1, item_byte_offset, interleaved_bytes, interleaved),
-                || seek_and_generate_into(self.seed2, self.pos2, g2_gamma_offset, g2_gamma_bytes, g2_bytes),
-            );
-        } else {
-            seek_and_generate_into(
-                self.seed2,
-                self.pos2,
-                item_byte_offset,
-                interleaved_bytes,
-                &mut scratch.interleaved_bytes,
-            );
-            scratch.gamma_bytes.clear();
-        }
-
-        if party_id == PartyID::ID0 {
-            let interleaved = &scratch.interleaved_bytes;
-            let g2_bytes = &scratch.gamma_bytes;
-            scratch.gammas[item_offset..item_offset + n].par_iter_mut().enumerate().for_each(|(i, gamma)| {
-                let g1_off = i * stride;
-                let g2_off = i * t_bytes;
-                let g1_val = T::from_le_bytes(&interleaved[g1_off..g1_off + t_bytes]);
-                let g2_val = T::from_le_bytes(&g2_bytes[g2_off..g2_off + t_bytes]);
-                *gamma = RingElement(g1_val ^ g2_val);
-            });
-        } else {
-            scratch.gammas[item_offset..item_offset + n].fill(RingElement(T::zero()));
-        }
-
-        let interleaved = &scratch.interleaved_bytes;
-        scratch.alphas_flat[item_offset * k..(item_offset + n) * k]
-            .par_iter_mut()
-            .enumerate()
-            .with_min_len(256)
-            .for_each(|(idx, alpha)| {
-                let item = idx / k;
-                let bit = idx % k;
-                let a_start = item * stride + t_bytes + bit * fb;
-                let lo = u64::from_le_bytes(interleaved[a_start..a_start + 8].try_into().unwrap());
-                let hi = u64::from_le_bytes(interleaved[a_start + 8..a_start + 16].try_into().unwrap());
-                *alpha = F::from((hi as u128) << 64 | lo as u128);
-            });
+        generate_into_from_state(
+            self.seed1,
+            self.pos1,
+            self.seed2,
+            self.pos2,
+            self.field_bytes,
+            self.party_id,
+            cursor_base,
+            n,
+            scratch,
+            item_offset,
+        );
     }
 
     /// Drain `n` edaBits as a flat `EdaBitsBatch` with zero per-edaBit allocations.
@@ -745,6 +904,94 @@ where
         self.cursor += n;
         self.persist_cursor();
         Ok(())
+    }
+
+    pub(crate) fn reserve_range(&self, n: usize) -> eyre::Result<(ReservedEdaBits<'_, T, F>, EdaBitsCommitPlan)> {
+        eyre::ensure!(
+            self.cursor + n <= self.total,
+            "LazyEdaBits<u{}>: need {n}, have {} (cursor={}, total={})",
+            T::K,
+            self.remaining(),
+            self.cursor,
+            self.total
+        );
+
+        let cursor_base = self.cursor;
+        let (cached_start_cursor, cached_len, store_start_cursor, alpha_view, gamma_view, alpha_consume, gamma_consume) =
+            match self.storage_mode {
+                EdaBitsStorageMode::P2Authoritative => {
+                    let alpha_start = cursor_base * T::K;
+                    let alpha_end = alpha_start + n * T::K;
+                    (
+                        cursor_base,
+                        n,
+                        0,
+                        Some(self.alphas_flat_store.read_view()?),
+                        None,
+                        Some((alpha_start, alpha_end)),
+                        None,
+                    )
+                }
+                EdaBitsStorageMode::P01Precache { start_cursor, len } => {
+                    let cached = if cursor_base < start_cursor || cursor_base >= start_cursor + len {
+                        0
+                    } else {
+                        (start_cursor + len - cursor_base).min(n)
+                    };
+                    let alpha_range = if cached > 0 {
+                        let alpha_start = (cursor_base - start_cursor) * T::K;
+                        Some((alpha_start, alpha_start + cached * T::K))
+                    } else {
+                        None
+                    };
+                    let gamma_range = if cached > 0 { Some((cursor_base - start_cursor, cursor_base - start_cursor + cached)) } else { None };
+                    (
+                        start_cursor,
+                        len,
+                        start_cursor,
+                        if cached > 0 { Some(self.alphas_flat_store.read_view()?) } else { None },
+                        if cached > 0 && self.party_id == PartyID::ID0 {
+                            Some(self.gamma_store.read_view()?)
+                        } else {
+                            None
+                        },
+                        alpha_range,
+                        gamma_range,
+                    )
+                }
+                EdaBitsStorageMode::None => (0, 0, 0, None, None, None, None),
+            };
+
+        Ok((
+            ReservedEdaBits {
+                base_cursor: cursor_base,
+                len: n,
+                party_id: self.party_id,
+                field_bytes: self.field_bytes,
+                cached_start_cursor,
+                cached_len,
+                store_start_cursor,
+                alpha_view,
+                gamma_view,
+                seed1: self.seed1,
+                pos1: self.pos1,
+                seed2: self.seed2,
+                pos2: self.pos2,
+            },
+            EdaBitsCommitPlan { cursor_base, len: n, alpha_consume, gamma_consume },
+        ))
+    }
+
+    pub(crate) fn commit_reserved(&mut self, plan: EdaBitsCommitPlan) {
+        debug_assert_eq!(self.cursor, plan.cursor_base);
+        self.cursor += plan.len;
+        if let Some((start, end)) = plan.alpha_consume {
+            self.alphas_flat_store.consume(start, end);
+        }
+        if let Some((start, end)) = plan.gamma_consume {
+            self.gamma_store.consume(start, end);
+        }
+        self.persist_cursor();
     }
 
     #[tracing::instrument(
@@ -1384,7 +1631,7 @@ where
 // EdaBitsPool: pre-generated edaBits/daBits for batched conversions
 // ---------------------------------------------------------------------------
 
-pub use super::pool::PreprocessingPool;
+pub use super::pool::{ForkablePreprocessingSession, PreprocessingPool};
 
 #[cfg(all(test, feature = "test-utils"))]
 mod tests {

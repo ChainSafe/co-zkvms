@@ -3,7 +3,8 @@ use std::path::Path;
 use super::backing_store;
 use super::dabits::{DaBitBatch, LazyDaBits};
 use super::edabits::{
-    EdaBitsBatch, EdaBitsBatchScratch, EdaBitsRingBatch, EdaBitsStorageMode, LazyEdaBits, LazyEdaBitsRing,
+    EdaBitsBatch, EdaBitsBatchScratch, EdaBitsCommitPlan, EdaBitsRingBatch, EdaBitsStorageMode, LazyEdaBits,
+    LazyEdaBitsRing, ReservedEdaBits,
 };
 use crate::field::PrimeField;
 use crate::protocols::rep3::PartyID;
@@ -49,6 +50,19 @@ pub struct PreprocessingPool<F: PrimeField, C: ark_ec::CurveGroup = ark_bn254::G
     pub(crate) ring_edabits_u66: LazyEdaBitsRing<U66>,
     #[cfg(not(feature = "ring-msm"))]
     _phantom: PhantomData<C>,
+}
+
+enum PreprocessingCommit {
+    EdaBitsU8(EdaBitsCommitPlan),
+    EdaBitsU16(EdaBitsCommitPlan),
+    EdaBitsU32(EdaBitsCommitPlan),
+    EdaBitsU64(EdaBitsCommitPlan),
+    EdaBitsU128(EdaBitsCommitPlan),
+}
+
+pub struct ForkablePreprocessingSession<'a, F: PrimeField, C: ark_ec::CurveGroup = ark_bn254::G1Projective> {
+    pool: &'a mut PreprocessingPool<F, C>,
+    commits: Vec<PreprocessingCommit>,
 }
 
 impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
@@ -102,6 +116,10 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             #[cfg(not(feature = "ring-msm"))]
             _phantom: PhantomData,
         }
+    }
+
+    pub fn begin_forkable_session(&mut self) -> ForkablePreprocessingSession<'_, F, C> {
+        ForkablePreprocessingSession { pool: self, commits: Vec::new() }
     }
 
     // --- ring-msm gated methods ---
@@ -419,6 +437,52 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             #[cfg(not(feature = "ring-msm"))]
             _phantom: PhantomData,
         })
+    }
+}
+
+impl<'a, F: PrimeField, C: ark_ec::CurveGroup> ForkablePreprocessingSession<'a, F, C> {
+    pub fn reserve_edabits<T: IntRing2k>(&mut self, n: usize) -> eyre::Result<ReservedEdaBits<'_, T, F>>
+    where
+        Standard: Distribution<T>,
+    {
+        use std::any::TypeId;
+
+        let tid = TypeId::of::<T>();
+        if tid == TypeId::of::<u8>() {
+            let (reserved, plan) = self.pool.edabits_u8.reserve_range(n)?;
+            self.commits.push(PreprocessingCommit::EdaBitsU8(plan));
+            Ok(unsafe { std::mem::transmute::<ReservedEdaBits<'_, u8, F>, ReservedEdaBits<'_, T, F>>(reserved) })
+        } else if tid == TypeId::of::<u16>() {
+            let (reserved, plan) = self.pool.edabits_u16.reserve_range(n)?;
+            self.commits.push(PreprocessingCommit::EdaBitsU16(plan));
+            Ok(unsafe { std::mem::transmute::<ReservedEdaBits<'_, u16, F>, ReservedEdaBits<'_, T, F>>(reserved) })
+        } else if tid == TypeId::of::<u32>() {
+            let (reserved, plan) = self.pool.edabits_u32.reserve_range(n)?;
+            self.commits.push(PreprocessingCommit::EdaBitsU32(plan));
+            Ok(unsafe { std::mem::transmute::<ReservedEdaBits<'_, u32, F>, ReservedEdaBits<'_, T, F>>(reserved) })
+        } else if tid == TypeId::of::<u64>() {
+            let (reserved, plan) = self.pool.edabits_u64.reserve_range(n)?;
+            self.commits.push(PreprocessingCommit::EdaBitsU64(plan));
+            Ok(unsafe { std::mem::transmute::<ReservedEdaBits<'_, u64, F>, ReservedEdaBits<'_, T, F>>(reserved) })
+        } else if tid == TypeId::of::<u128>() {
+            let (reserved, plan) = self.pool.edabits_u128.reserve_range(n)?;
+            self.commits.push(PreprocessingCommit::EdaBitsU128(plan));
+            Ok(unsafe { std::mem::transmute::<ReservedEdaBits<'_, u128, F>, ReservedEdaBits<'_, T, F>>(reserved) })
+        } else {
+            eyre::bail!("ForkablePreprocessingSession::reserve_edabits: unsupported ring type u{}", T::K);
+        }
+    }
+
+    pub fn commit(mut self) {
+        for commit in self.commits {
+            match commit {
+                PreprocessingCommit::EdaBitsU8(plan) => self.pool.edabits_u8.commit_reserved(plan),
+                PreprocessingCommit::EdaBitsU16(plan) => self.pool.edabits_u16.commit_reserved(plan),
+                PreprocessingCommit::EdaBitsU32(plan) => self.pool.edabits_u32.commit_reserved(plan),
+                PreprocessingCommit::EdaBitsU64(plan) => self.pool.edabits_u64.commit_reserved(plan),
+                PreprocessingCommit::EdaBitsU128(plan) => self.pool.edabits_u128.commit_reserved(plan),
+            }
+        }
     }
 }
 

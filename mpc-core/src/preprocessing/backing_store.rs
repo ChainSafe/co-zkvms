@@ -51,10 +51,28 @@ pub(crate) enum BackingStore<F> {
     Empty,
 }
 
+pub(crate) enum BackingStoreReadView<'a, F> {
+    InMemory(&'a [F]),
+    FileBacked { file: File, len: usize },
+    Empty,
+}
+
 pub(crate) struct FileBackedWriter<F> {
     file: File,
     len: usize,
     _phantom: PhantomData<F>,
+}
+
+impl<F> Clone for BackingStoreReadView<'_, F> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::InMemory(slice) => Self::InMemory(slice),
+            Self::FileBacked { file, len } => {
+                Self::FileBacked { file: file.try_clone().expect("cloning file-backed read view"), len: *len }
+            }
+            Self::Empty => Self::Empty,
+        }
+    }
 }
 
 impl<F> Clone for FileBackedWriter<F> {
@@ -93,6 +111,16 @@ impl<F> BackingStore<F> {
                 panic!("BackingStore::FileBacked does not support as_slice(); use read_reuse/read_consume")
             }
             BackingStore::Empty => &[],
+        }
+    }
+
+    pub(crate) fn read_view(&self) -> io::Result<BackingStoreReadView<'_, F>> {
+        match self {
+            BackingStore::InMemory(v) => Ok(BackingStoreReadView::InMemory(v.as_slice())),
+            BackingStore::FileBacked { file, len, .. } => {
+                Ok(BackingStoreReadView::FileBacked { file: file.try_clone()?, len: *len })
+            }
+            BackingStore::Empty => Ok(BackingStoreReadView::Empty),
         }
     }
 
@@ -849,6 +877,64 @@ impl<F> BackingStore<F> {
                     byte_len,
                     "BackingStore::consume zeroed range"
                 );
+            }
+        }
+    }
+}
+
+impl<F> BackingStoreReadView<'_, F> {
+    fn validate_range(&self, start: usize, end: usize) -> io::Result<()> {
+        let len = match self {
+            BackingStoreReadView::InMemory(v) => v.len(),
+            BackingStoreReadView::FileBacked { len, .. } => *len,
+            BackingStoreReadView::Empty => 0,
+        };
+        if start > end {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("invalid range: start({start}) > end({end})"),
+            ));
+        }
+        if end > len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("range end({end}) exceeds len({len})"),
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn read_into_slice(&self, start: usize, end: usize, out: &mut [F]) -> io::Result<()>
+    where
+        F: Copy,
+    {
+        let count = end.saturating_sub(start);
+        if out.len() != count {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("slice length {} does not match requested element count {}", out.len(), count),
+            ));
+        }
+        match self {
+            BackingStoreReadView::InMemory(v) => {
+                self.validate_range(start, end)?;
+                out.copy_from_slice(&v[start..end]);
+                Ok(())
+            }
+            BackingStoreReadView::FileBacked { file, .. } => {
+                self.validate_range(start, end)?;
+                let (byte_offset, byte_len) = BackingStore::<F>::byte_range(start, end);
+                let out_bytes = unsafe { std::slice::from_raw_parts_mut(out.as_mut_ptr() as *mut u8, byte_len) };
+                BackingStore::<F>::file_read_exact_at(file, byte_offset, out_bytes)
+            }
+            BackingStoreReadView::Empty => {
+                if !out.is_empty() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "attempted to read from empty backing store",
+                    ));
+                }
+                Ok(())
             }
         }
     }
