@@ -14,6 +14,8 @@ use crate::utils::memory::maybe_purge_jemalloc;
 use crate::utils::types::MaybeShared;
 use crate::zkvm::dag::stage::{Rep3JoltDagStagesWorker, SumcheckStagesWorker};
 use crate::zkvm::dag::state_manager::StateManagerWorker;
+#[cfg(feature = "ring-msm")]
+use crate::zkvm::inc_biased_b2a::biased_inc_b2a_many;
 use crate::zkvm::spartan::Rep3SpartanDagWorker;
 use crate::zkvm::witness::{generate_witness_batch_rep3, populate_cycle_witness_rep3};
 use jolt_core::field::JoltField;
@@ -261,10 +263,9 @@ impl Rep3JoltDagWorker {
             }
 
             // IRingScalars (biased inc) → Dense field via A2B + r2f_b2a - bias
-            let bias_f = F::from_u64(1u64 << XLEN);
-            for key in [CommittedPolynomial::RdInc, CommittedPolynomial::RamInc] {
-                if let Some(poly) = witness_polys.get(&key) {
-                    if matches!(poly, Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::IRingScalars(_))) {
+                        for key in [CommittedPolynomial::RdInc, CommittedPolynomial::RamInc] {
+                            if let Some(poly) = witness_polys.get(&key) {
+                                if matches!(poly, Rep3MultilinearPolynomial::Shared(Rep3SharedPoly::IRingScalars(_))) {
                         let _span = info_span!("iring_to_dense", ?key).entered();
                         // Extract arithmetic u64 shares
                         let inc_poly = match witness_polys.remove(&key).unwrap() {
@@ -277,23 +278,7 @@ impl Rep3JoltDagWorker {
                         // A2B → r2f_b2a → sub bias, chunked to limit RSS.
                         let inc_b2a_chunk: usize =
                             std::env::var("INC_B2A_CHUNK").ok().and_then(|s| s.parse().ok()).unwrap_or(8 * 1024);
-                        let total = arith_shares.len();
-                        let mut inc: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(total);
-                        for off in (0..total).step_by(inc_b2a_chunk) {
-                            let end = (off + inc_b2a_chunk).min(total);
-                            let chunk = &arith_shares[off..end];
-                            let biased_bin = ring_conv::a2b_many(chunk, io_ctx.main())?;
-                            let batch_eda = preproc.take_edabits::<ArithmeticWideInt>(chunk.len())?;
-                            let biased_field: Vec<Rep3PrimeFieldShare<F>> =
-                                casts::r2f_b2a_preproc_many::<ArithmeticWideInt, F, _>(
-                                    &biased_bin,
-                                    &batch_eda,
-                                    io_ctx.main(),
-                                )?;
-                            inc.extend(biased_field.into_iter().map(|s| {
-                                mpc_core::protocols::rep3::arithmetic::sub_shared_by_public(s, bias_f, party_id)
-                            }));
-                        }
+                        let inc = biased_inc_b2a_many(&arith_shares, io_ctx, preproc, inc_b2a_chunk, 1, party_id)?;
 
                         let dense = crate::poly::dense_mlpoly::Rep3DensePolynomial::new(inc);
                         match key {

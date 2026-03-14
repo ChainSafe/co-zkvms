@@ -38,6 +38,8 @@ use crate::poly::Rep3MultilinearPolynomial;
 use crate::utils::future_ring::{FutureRep3Ring, Rep3RingFutureExt};
 use crate::utils::memory::maybe_purge_jemalloc;
 use crate::utils::types::Either;
+#[cfg(not(feature = "ring-msm"))]
+use crate::zkvm::inc_biased_b2a::biased_inc_b2a_many;
 use crate::zkvm::dag::state_manager::StateManagerWorker;
 use crate::zkvm::instruction::{populate_operands_casts, Rep3LookupQuery, Rep3Operand};
 
@@ -444,25 +446,49 @@ where
         lookup_table: Option<LookupTables<XLEN>>,
         is_interleaved: bool,
         right_mask: Option<u64>,
-        // Per-operand: (col, Either public field share or binary ring share for B2A)
-        field_ops: Vec<(SparseFieldTarget, FieldOp<F>)>,
+        field_ops: [Option<(SparseFieldTarget, FieldOp<F>)>; 7],
+        field_ops_len: usize,
     }
     enum FieldOp<F: JoltField> {
         WriteTrivial(Rep3PrimeFieldShare<F>),
         NeedsCast(Rep3RingShare<XlenInt>),
     }
 
+    fn push_field_op<F: JoltField>(
+        ops: &mut [Option<(SparseFieldTarget, FieldOp<F>)>; 7],
+        ops_len: &mut usize,
+        target: SparseFieldTarget,
+        op: FieldOp<F>,
+    ) {
+        debug_assert!(*ops_len < ops.len());
+        ops[*ops_len] = Some((target, op));
+        *ops_len += 1;
+    }
+
     // Helper to classify an operand for parallel processing.
     let classify_op =
-        |target: SparseFieldTarget, op: &Rep3Operand, ops: &mut Vec<(SparseFieldTarget, FieldOp<F>)>| match op {
+        |target: SparseFieldTarget,
+         op: &Rep3Operand,
+         ops: &mut [Option<(SparseFieldTarget, FieldOp<F>)>; 7],
+         ops_len: &mut usize| match op {
             Rep3Operand::Public(v) => {
-                ops.push((target, FieldOp::WriteTrivial(promote_to_trivial_share(party_id, F::from_u64(*v as u64)))));
+                push_field_op(
+                    ops,
+                    ops_len,
+                    target,
+                    FieldOp::WriteTrivial(promote_to_trivial_share(party_id, F::from_u64(*v as u64))),
+                );
             }
             Rep3Operand::Shared { public: Some(v), .. } => {
-                ops.push((target, FieldOp::WriteTrivial(promote_to_trivial_share(party_id, F::from_u64(*v)))));
+                push_field_op(
+                    ops,
+                    ops_len,
+                    target,
+                    FieldOp::WriteTrivial(promote_to_trivial_share(party_id, F::from_u64(*v))),
+                );
             }
             Rep3Operand::Shared { .. } => {
-                ops.push((target, FieldOp::NeedsCast(op.as_binary())));
+                push_field_op(ops, ops_len, target, FieldOp::NeedsCast(op.as_binary()));
             }
         };
 
@@ -504,7 +530,8 @@ where
                     }
                 }
 
-                let mut field_ops = Vec::with_capacity(7);
+                let mut field_ops = [(); 7].map(|_| None);
+                let mut field_ops_len = 0usize;
 
                 if circuit_flags[CircuitFlags::Advice as usize] {
                     if let Rep3Cycle::VirtualAdvice(c) = cycle {
@@ -512,13 +539,19 @@ where
                             SparseFieldTarget::single(SparseCastCol::Advice),
                             c.advice.as_ref().expect("VirtualAdvice shared advice payload missing"),
                             &mut field_ops,
+                            &mut field_ops_len,
                         );
                     }
                 }
 
-                classify_op(SparseFieldTarget::single(SparseCastCol::Rs1), &rs1_v, &mut field_ops);
-                classify_op(SparseFieldTarget::single(SparseCastCol::Rs2), &rs2_v, &mut field_ops);
-                classify_op(SparseFieldTarget::single(SparseCastCol::RdWrite), &rd_post, &mut field_ops);
+                classify_op(SparseFieldTarget::single(SparseCastCol::Rs1), &rs1_v, &mut field_ops, &mut field_ops_len);
+                classify_op(SparseFieldTarget::single(SparseCastCol::Rs2), &rs2_v, &mut field_ops, &mut field_ops_len);
+                classify_op(
+                    SparseFieldTarget::single(SparseCastCol::RdWrite),
+                    &rd_post,
+                    &mut field_ops,
+                    &mut field_ops_len,
+                );
 
                 match cycle.ram_access() {
                     Rep3RAMAccess::Read(r) => {
@@ -526,18 +559,31 @@ where
                             SparseFieldTarget::pair(SparseCastCol::RamRead, SparseCastCol::RamWrite),
                             &r.value,
                             &mut field_ops,
+                            &mut field_ops_len,
                         );
                     }
                     Rep3RAMAccess::Write(w) => {
-                        classify_op(SparseFieldTarget::single(SparseCastCol::RamRead), &w.pre_value, &mut field_ops);
-                        classify_op(SparseFieldTarget::single(SparseCastCol::RamWrite), &w.post_value, &mut field_ops);
+                        classify_op(
+                            SparseFieldTarget::single(SparseCastCol::RamRead),
+                            &w.pre_value,
+                            &mut field_ops,
+                            &mut field_ops_len,
+                        );
+                        classify_op(
+                            SparseFieldTarget::single(SparseCastCol::RamWrite),
+                            &w.post_value,
+                            &mut field_ops,
+                            &mut field_ops_len,
+                        );
                     }
                     Rep3RAMAccess::NoOp => {
                         let z = promote_to_trivial_share(party_id, F::zero());
-                        field_ops.push((
+                        push_field_op(
+                            &mut field_ops,
+                            &mut field_ops_len,
                             SparseFieldTarget::pair(SparseCastCol::RamRead, SparseCastCol::RamWrite),
                             FieldOp::WriteTrivial(z),
-                        ));
+                        );
                     }
                 }
 
@@ -556,6 +602,7 @@ where
                     is_interleaved: circuit_flags.is_interleaved_operands(),
                     right_mask: compute_right_operand_public(cycle),
                     field_ops,
+                    field_ops_len,
                 }
             })
             .collect();
@@ -574,7 +621,7 @@ where
             is_interleaved_operands.push(cr.is_interleaved);
             right_operand_public_mask.push(cr.right_mask);
 
-            for (target, op) in cr.field_ops {
+            for (target, op) in cr.field_ops.into_iter().take(cr.field_ops_len).flatten() {
                 match op {
                     FieldOp::WriteTrivial(share) => write_sparse_field_target(&shared_cols, row, target, share),
                     FieldOp::NeedsCast(binary) => {
@@ -978,50 +1025,8 @@ where
                 {
                     // Non-ring-msm: A2B → r2f_b2a → sub_public(2^XLEN), chunked to limit RSS.
                     let _span = info_span!("rd_inc_biased_b2a", n, chunk = inc_b2a_chunk).entered();
-                    let bias_f = F::from_u64(1u64 << XLEN);
-                    let mut inc: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(n);
-                    for off in (0..n).step_by(inc_b2a_chunk) {
-                        let end = (off + inc_b2a_chunk).min(n);
-                        let chunk = &biased_arith[off..end];
-                        let biased_bin = ring_conv::a2b_many(chunk, io_ctx.main())?;
-                        let biased_field: Vec<Rep3PrimeFieldShare<F>> = if inc_b2a_max_forks <= 1 {
-                            let batch_eda = preproc.take_edabits::<ArithmeticWideInt>(chunk.len())?;
-                            casts::r2f_b2a_preproc_many::<ArithmeticWideInt, F, _>(
-                                &biased_bin,
-                                &batch_eda,
-                                io_ctx.main(),
-                            )?
-                        } else {
-                            let chunk_size = biased_bin.len().div_ceil(inc_b2a_max_forks);
-                            let mut session = preproc.begin_forkable_session();
-                            let reserved = session.reserve_edabits::<ArithmeticWideInt>(chunk.len())?;
-                            let mut scratch: Vec<ForkedB2aScratch<ArithmeticWideInt, F>> =
-                                (0..inc_b2a_max_forks).map(|_| ForkedB2aScratch::default()).collect();
-                            let biased_field = io_ctx.par_chunks_preproc(
-                                &biased_bin,
-                                Some(chunk_size),
-                                &mut scratch,
-                                |start, len| reserved.range_view(start, len),
-                                |_, xs, view: EdaBitsRangeView<'_, ArithmeticWideInt, F>, c, scratch| {
-                                    view.fill_into_par_safe(&mut scratch.batch)?;
-                                    casts::r2f_b2a_preproc_many_into::<ArithmeticWideInt, F, _>(
-                                        xs,
-                                        scratch.batch.as_ref(),
-                                        c,
-                                        &mut scratch.cast,
-                                    )?;
-                                    Ok::<_, eyre::Report>(scratch.cast.take_output())
-                                },
-                            )?;
-                            session.finalize_success();
-                            biased_field
-                        };
-                        inc.extend(
-                            biased_field.into_iter().map(|s| {
-                                mpc_core::protocols::rep3::arithmetic::sub_shared_by_public(s, bias_f, party_id)
-                            }),
-                        );
-                    }
+                    let inc =
+                        biased_inc_b2a_many(&biased_arith, io_ctx, preproc, inc_b2a_chunk, inc_b2a_max_forks, party_id)?;
                     drop(_span);
                     let dense = Rep3DensePolynomial::new(inc);
                     state.prover_state.cycle_witness.set_stage2_incs(Some(dense.clone()), None);
@@ -1047,50 +1052,8 @@ where
                 #[cfg(not(feature = "ring-msm"))]
                 {
                     let _span = info_span!("ram_inc_biased_b2a", n, chunk = inc_b2a_chunk).entered();
-                    let bias_f = F::from_u64(1u64 << XLEN);
-                    let mut inc: Vec<Rep3PrimeFieldShare<F>> = Vec::with_capacity(n);
-                    for off in (0..n).step_by(inc_b2a_chunk) {
-                        let end = (off + inc_b2a_chunk).min(n);
-                        let chunk = &biased_arith[off..end];
-                        let biased_bin = ring_conv::a2b_many(chunk, io_ctx.main())?;
-                        let biased_field: Vec<Rep3PrimeFieldShare<F>> = if inc_b2a_max_forks <= 1 {
-                            let batch_eda = preproc.take_edabits::<ArithmeticWideInt>(chunk.len())?;
-                            casts::r2f_b2a_preproc_many::<ArithmeticWideInt, F, _>(
-                                &biased_bin,
-                                &batch_eda,
-                                io_ctx.main(),
-                            )?
-                        } else {
-                            let chunk_size = biased_bin.len().div_ceil(inc_b2a_max_forks);
-                            let mut session = preproc.begin_forkable_session();
-                            let reserved = session.reserve_edabits::<ArithmeticWideInt>(chunk.len())?;
-                            let mut scratch: Vec<ForkedB2aScratch<ArithmeticWideInt, F>> =
-                                (0..inc_b2a_max_forks).map(|_| ForkedB2aScratch::default()).collect();
-                            let biased_field = io_ctx.par_chunks_preproc(
-                                &biased_bin,
-                                Some(chunk_size),
-                                &mut scratch,
-                                |start, len| reserved.range_view(start, len),
-                                |_, xs, view: EdaBitsRangeView<'_, ArithmeticWideInt, F>, c, scratch| {
-                                    view.fill_into_par_safe(&mut scratch.batch)?;
-                                    casts::r2f_b2a_preproc_many_into::<ArithmeticWideInt, F, _>(
-                                        xs,
-                                        scratch.batch.as_ref(),
-                                        c,
-                                        &mut scratch.cast,
-                                    )?;
-                                    Ok::<_, eyre::Report>(scratch.cast.take_output())
-                                },
-                            )?;
-                            session.finalize_success();
-                            biased_field
-                        };
-                        inc.extend(
-                            biased_field.into_iter().map(|s| {
-                                mpc_core::protocols::rep3::arithmetic::sub_shared_by_public(s, bias_f, party_id)
-                            }),
-                        );
-                    }
+                    let inc =
+                        biased_inc_b2a_many(&biased_arith, io_ctx, preproc, inc_b2a_chunk, inc_b2a_max_forks, party_id)?;
                     drop(_span);
                     let dense = Rep3DensePolynomial::new(inc);
                     state.prover_state.cycle_witness.set_stage2_incs(None, Some(dense.clone()));

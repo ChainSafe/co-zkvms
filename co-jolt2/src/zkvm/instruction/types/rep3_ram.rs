@@ -46,6 +46,17 @@ impl Rep3RAMAccess {
         }
     }
 
+    pub fn for_each_shared_operand_mut(&mut self, mut f: impl FnMut(&mut Rep3Operand)) {
+        match self {
+            Rep3RAMAccess::Read(read) => f(&mut read.value),
+            Rep3RAMAccess::Write(write) => {
+                f(&mut write.pre_value);
+                f(&mut write.post_value);
+            }
+            Rep3RAMAccess::NoOp => {}
+        }
+    }
+
     /// Extract operand values from vanilla RAMAccess in the same order as `shared_operands_mut`.
     pub fn operand_values(access: &RAMAccess) -> Vec<u64> {
         match access {

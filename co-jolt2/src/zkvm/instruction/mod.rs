@@ -87,6 +87,14 @@ where
         }
         ops
     }
+
+    pub fn for_each_shared_operand_mut(&mut self, mut f: impl FnMut(&mut Rep3Operand)) {
+        self.register_state.for_each_shared_operand_mut(&mut f);
+        self.ram_access.for_each_shared_operand_mut(&mut f);
+        if let Some(advice) = &mut self.advice {
+            f(advice);
+        }
+    }
 }
 
 // ── Rep3LookupQuery ─────────────────────────────────────────────────────────
@@ -380,6 +388,16 @@ macro_rules! define_rep3_cycle {
                 }
             }
 
+            pub fn for_each_shared_operand_mut(&mut self, mut f: impl FnMut(&mut Rep3Operand)) {
+                match self {
+                    Rep3Cycle::NoOp => {}
+                    $(
+                        Rep3Cycle::$instr(cycle) => cycle.for_each_shared_operand_mut(&mut f),
+                    )*
+                    Rep3Cycle::INLINE(cycle) => cycle.for_each_shared_operand_mut(&mut f),
+                }
+            }
+
             pub fn get_pc(&self, preprocessing: &BytecodePreprocessing) -> usize {
                 if matches!(self, Rep3Cycle::NoOp) {
                     return 0;
@@ -559,14 +577,31 @@ where
     F: jolt_core::field::JoltField,
     N: Rep3NetworkWorker,
 {
-    let (binary, operands): (Vec<Rep3RingShare<XlenInt>>, Vec<&mut Rep3Operand>) = trace
-        .par_iter_mut()
-        .flat_map(|cycle| cycle.shared_operands_mut())
-        .filter_map(|op| match op {
-            Rep3Operand::Shared { arithmetic: None, binary, .. } => Some((*binary, op)),
-            _ => None,
+    let _span = tracing::trace_span!("classify").entered();
+    let chunked: Vec<(Vec<Rep3RingShare<XlenInt>>, Vec<usize>)> = trace
+        .par_chunks_mut(1024)
+        .map(|chunk| {
+            let mut binary = Vec::with_capacity(chunk.len() * 4);
+            let mut operands = Vec::with_capacity(chunk.len() * 4);
+            for cycle in chunk {
+                cycle.for_each_shared_operand_mut(|op| {
+                    if let Rep3Operand::Shared { arithmetic: None, binary: binary_share, .. } = op {
+                        binary.push(*binary_share);
+                        operands.push(op as *mut Rep3Operand as usize);
+                    }
+                });
+            }
+            (binary, operands)
         })
-        .unzip();
+        .collect();
+    let total = chunked.iter().map(|(binary, _)| binary.len()).sum();
+    let mut binary = Vec::with_capacity(total);
+    let mut operands = Vec::with_capacity(total);
+    for (mut chunk_binary, mut chunk_operands) in chunked {
+        binary.append(&mut chunk_binary);
+        operands.append(&mut chunk_operands);
+    }
+    drop(_span);
 
     if binary.is_empty() {
         return Ok(());
@@ -574,16 +609,19 @@ where
 
     let arithmetic = io_ctx.par_chunks(binary, None, |chunk, io_ctx| upcast_many_from_binary(&chunk, io_ctx))?;
 
-    operands.into_par_iter().zip(arithmetic).for_each(|(operand, arith)| match operand {
-        Rep3Operand::Shared { arithmetic: None, binary, public } => {
-            *operand = Rep3Operand::Shared {
-                binary: std::mem::take(binary),
-                arithmetic: Some(arith),
-                public: std::mem::take(public),
-            };
+    for (operand, arith) in operands.into_iter().zip(arithmetic) {
+        let operand = unsafe { &mut *(operand as *mut Rep3Operand) };
+        match operand {
+            Rep3Operand::Shared { arithmetic: None, binary, public } => {
+                *operand = Rep3Operand::Shared {
+                    binary: std::mem::take(binary),
+                    arithmetic: Some(arith),
+                    public: std::mem::take(public),
+                };
+            }
+            _ => panic!("Expected shared operand"),
         }
-        _ => panic!("Expected shared operand"),
-    });
+    }
 
     Ok(())
 }

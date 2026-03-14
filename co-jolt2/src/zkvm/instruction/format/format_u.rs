@@ -41,6 +41,11 @@ impl Rep3RegisterState for Rep3RegisterStateFormatU {
         vec![&mut self.rd.0, &mut self.rd.1]
     }
 
+    fn for_each_shared_operand_mut(&mut self, mut f: impl FnMut(&mut Rep3Operand)) {
+        f(&mut self.rd.0);
+        f(&mut self.rd.1);
+    }
+
     fn operand_values<T: InstructionRegisterState>(state: &T) -> Vec<u64> {
         let (old, new) = state.rd_values();
         vec![old, new]

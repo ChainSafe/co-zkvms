@@ -47,6 +47,12 @@ impl Rep3RegisterState for Rep3RegisterStateFormatInline {
         vec![&mut self.rs1, &mut self.rs2, &mut self.rs3]
     }
 
+    fn for_each_shared_operand_mut(&mut self, mut f: impl FnMut(&mut Rep3Operand)) {
+        f(&mut self.rs1);
+        f(&mut self.rs2);
+        f(&mut self.rs3);
+    }
+
     fn operand_values<T: InstructionRegisterState>(state: &T) -> Vec<u64> {
         // rs3 is not exposed by InstructionRegisterState trait, default to 0
         vec![state.rs1_value(), state.rs2_value(), 0]

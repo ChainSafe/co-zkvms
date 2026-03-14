@@ -1,5 +1,6 @@
 pub mod bytecode;
 pub mod dag;
+pub mod inc_biased_b2a;
 pub mod instruction;
 pub mod instruction_lookups;
 pub mod r1cs;

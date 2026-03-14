@@ -43,6 +43,9 @@ pub trait Rep3RegisterState: Default + Clone + Serialize + DeserializeOwned + De
     /// across the entire trace in one pass.
     fn shared_operands_mut(&mut self) -> Vec<&mut Rep3Operand>;
 
+    /// Visit all shared operand fields without allocating an intermediate vec.
+    fn for_each_shared_operand_mut(&mut self, f: impl FnMut(&mut Rep3Operand));
+
     /// Extract operand values from a vanilla register state in the same order
     /// as `shared_operands_mut` returns them. Used by `share_cycle` to know
     /// which values to generate binary shares for.
