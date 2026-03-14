@@ -96,30 +96,15 @@ impl<T: IntRing2k, F: PrimeField> EdaBitsBatch<T, F> {
     }
 }
 
-pub(crate) struct EdaBitsCommitPlan {
+#[derive(Clone)]
+pub(crate) struct EdabitsReserveRange {
     cursor_base: usize,
     len: usize,
     alpha_consume: Option<(usize, usize)>,
     gamma_consume: Option<(usize, usize)>,
 }
 
-pub struct ReservedEdaBits<'a, T: IntRing2k, F: PrimeField> {
-    base_cursor: usize,
-    len: usize,
-    party_id: PartyID,
-    field_bytes: usize,
-    cached_start_cursor: usize,
-    cached_len: usize,
-    store_start_cursor: usize,
-    alpha_view: Option<backing_store::BackingStoreReadView<'a, F>>,
-    gamma_view: Option<backing_store::BackingStoreReadView<'a, RingElement<T>>>,
-    seed1: [u8; crate::SEED_SIZE],
-    pos1: u128,
-    seed2: [u8; crate::SEED_SIZE],
-    pos2: u128,
-}
-
-pub struct ForkedEdaBitsView<'a, T: IntRing2k, F: PrimeField> {
+pub struct EdaBitsRangeView<'a, T: IntRing2k, F: PrimeField> {
     start_cursor: usize,
     len: usize,
     party_id: PartyID,
@@ -135,32 +120,37 @@ pub struct ForkedEdaBitsView<'a, T: IntRing2k, F: PrimeField> {
     pos2: u128,
 }
 
-impl<'a, T: IntRing2k, F: PrimeField> ReservedEdaBits<'a, T, F> {
+pub struct EdaBitsReservation<'a, T: IntRing2k, F: PrimeField> {
+    root: EdaBitsRangeView<'a, T, F>,
+    pub(crate) reserve_range: EdabitsReserveRange,
+}
+
+impl<'a, T: IntRing2k, F: PrimeField> EdaBitsReservation<'a, T, F> {
     pub fn len(&self) -> usize {
-        self.len
+        self.root.len
     }
 
-    pub fn fork_subrange(&self, start: usize, len: usize) -> ForkedEdaBitsView<'a, T, F> {
-        debug_assert!(start + len <= self.len);
-        ForkedEdaBitsView {
-            start_cursor: self.base_cursor + start,
+    pub fn range_view(&self, start: usize, len: usize) -> EdaBitsRangeView<'a, T, F> {
+        debug_assert!(start + len <= self.root.len);
+        EdaBitsRangeView {
+            start_cursor: self.root.start_cursor + start,
             len,
-            party_id: self.party_id,
-            field_bytes: self.field_bytes,
-            cached_start_cursor: self.cached_start_cursor,
-            cached_len: self.cached_len,
-            store_start_cursor: self.store_start_cursor,
-            alpha_view: self.alpha_view.clone(),
-            gamma_view: self.gamma_view.clone(),
-            seed1: self.seed1,
-            pos1: self.pos1,
-            seed2: self.seed2,
-            pos2: self.pos2,
+            party_id: self.root.party_id,
+            field_bytes: self.root.field_bytes,
+            cached_start_cursor: self.root.cached_start_cursor,
+            cached_len: self.root.cached_len,
+            store_start_cursor: self.root.store_start_cursor,
+            alpha_view: self.root.alpha_view.clone(),
+            gamma_view: self.root.gamma_view.clone(),
+            seed1: self.root.seed1,
+            pos1: self.root.pos1,
+            seed2: self.root.seed2,
+            pos2: self.root.pos2,
         }
     }
 }
 
-impl<'a, T: IntRing2k, F: PrimeField> ForkedEdaBitsView<'a, T, F>
+impl<'a, T: IntRing2k, F: PrimeField> EdaBitsRangeView<'a, T, F>
 where
     Standard: Distribution<T>,
 {
@@ -912,7 +902,7 @@ where
         Ok(())
     }
 
-    pub(crate) fn reserve_range(&self, n: usize) -> eyre::Result<(ReservedEdaBits<'_, T, F>, EdaBitsCommitPlan)> {
+    pub(crate) fn reserve_range(&self, n: usize) -> eyre::Result<EdaBitsReservation<'_, T, F>> {
         eyre::ensure!(
             self.cursor + n <= self.total,
             "LazyEdaBits<u{}>: need {n}, have {} (cursor={}, total={})",
@@ -972,9 +962,9 @@ where
                 EdaBitsStorageMode::None => (0, 0, 0, None, None, None, None),
             };
 
-        Ok((
-            ReservedEdaBits {
-                base_cursor: cursor_base,
+        Ok(EdaBitsReservation {
+            root: EdaBitsRangeView {
+                start_cursor: cursor_base,
                 len: n,
                 party_id: self.party_id,
                 field_bytes: self.field_bytes,
@@ -988,17 +978,17 @@ where
                 seed2: self.seed2,
                 pos2: self.pos2,
             },
-            EdaBitsCommitPlan { cursor_base, len: n, alpha_consume, gamma_consume },
-        ))
+            reserve_range: EdabitsReserveRange { cursor_base, len: n, alpha_consume, gamma_consume },
+        })
     }
 
-    pub(crate) fn commit_reserved(&mut self, plan: EdaBitsCommitPlan) {
-        debug_assert_eq!(self.cursor, plan.cursor_base);
-        self.cursor += plan.len;
-        if let Some((start, end)) = plan.alpha_consume {
+    pub(crate) fn finalize_reserved_range(&mut self, range: EdabitsReserveRange) {
+        debug_assert_eq!(self.cursor, range.cursor_base);
+        self.cursor += range.len;
+        if let Some((start, end)) = range.alpha_consume {
             self.alphas_flat_store.consume(start, end);
         }
-        if let Some((start, end)) = plan.gamma_consume {
+        if let Some((start, end)) = range.gamma_consume {
             self.gamma_store.consume(start, end);
         }
         self.persist_cursor();

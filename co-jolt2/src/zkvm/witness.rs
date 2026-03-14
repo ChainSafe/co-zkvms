@@ -173,19 +173,20 @@ where
             chunk_shares,
             None,
             &mut cast_scratch,
-            |start, len| reserved.fork_subrange(start, len),
+            |start, len| reserved.range_view(start, len),
             |start, xs, view, ctx, scratch| {
                 view.fill_into(&mut scratch.batch)?;
+
                 casts::r2f_b2a_preproc_many_into::<XlenInt, F, _>(xs, scratch.batch.as_ref(), ctx, &mut scratch.cast)?;
                 debug_assert_eq!(scratch.cast.output().len(), xs.len());
-                let _span = tracing::trace_span!("write_sparse_target", start = start).entered();
+                let _span = tracing::trace_span!("scatter", start = start).entered();
                 for (offset, value) in scratch.cast.output().iter().copied().enumerate() {
                     write_sparse_target(out, chunk_targets[start + offset], value);
                 }
                 Ok::<(), eyre::Report>(())
             },
         )?;
-        session.commit();
+        session.finalize_success();
     }
 
     Ok(())
