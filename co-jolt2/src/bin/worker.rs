@@ -223,6 +223,7 @@ fn prove_loop(
         let mut preproc = {
             use mpc_core::protocols::rep3_ring::edabits;
             let num_dabits = budget.dabits;
+            let num_rand_ohvs_u8_k4 = budget.rand_ohvs_u8_k4;
 
             match edabits::PreprocessingPool::load(&pool_dir, party_id) {
                 Ok(mut pool) => {
@@ -236,8 +237,11 @@ fn prove_loop(
                     pool.validate_dapoints_num_columns(dory_num_columns, party_id);
 
                     let (rem_eda, rem_da) = pool.remaining_counts();
-                    let deficit_counts: [usize; 5] = std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
+                    let rem_rand_ohvs = pool.remaining_rand_ohvs_u8_k4();
+                    let deficit_counts: [usize; 5] =
+                        std::array::from_fn(|i| counts[i].saturating_sub(rem_eda[i]));
                     let deficit_dabits = num_dabits.saturating_sub(rem_da);
+                    let deficit_rand_ohvs = num_rand_ohvs_u8_k4.saturating_sub(rem_rand_ohvs);
                     let deficit_re64 = budget.ring_edabits_u64.saturating_sub(pool.remaining_ring_edabits_u64());
                     let deficit_re128 = budget.ring_edabits_u128.saturating_sub(pool.remaining_ring_edabits_u128());
                     #[cfg(feature = "ring-msm")]
@@ -250,6 +254,7 @@ fn prove_loop(
 
                     let need_extend = deficit_counts.iter().any(|&d| d > 0)
                         || deficit_dabits > 0
+                        || deficit_rand_ohvs > 0
                         || deficit_re64 > 0
                         || deficit_re128 > 0;
                     #[cfg(feature = "ring-msm")]
@@ -262,13 +267,15 @@ fn prove_loop(
                     if need_extend {
                         info!(
                             ?deficit_counts,
-                            deficit_dabits, deficit_re64, deficit_re128, "extending preprocessing pool"
+                            deficit_dabits, deficit_rand_ohvs, deficit_re64, deficit_re128,
+                            "extending preprocessing pool"
                         );
                         #[cfg(not(feature = "ring-msm"))]
                         edabits::extend_pool_batched(
                             &mut pool,
                             deficit_counts,
                             deficit_dabits,
+                            deficit_rand_ohvs,
                             deficit_re64,
                             deficit_re128,
                             io_ctx,
@@ -278,6 +285,7 @@ fn prove_loop(
                             &mut pool,
                             deficit_counts,
                             deficit_dabits,
+                            deficit_rand_ohvs,
                             deficit_re_dory,
                             deficit_re64,
                             deficit_re128,
@@ -298,6 +306,7 @@ fn prove_loop(
                             &pool_dir,
                             counts,
                             num_dabits,
+                            num_rand_ohvs_u8_k4,
                             budget.ring_edabits_u64,
                             budget.ring_edabits_u128,
                             io_ctx,
@@ -309,6 +318,7 @@ fn prove_loop(
                             &pool_dir,
                             counts,
                             num_dabits,
+                            num_rand_ohvs_u8_k4,
                             budget.ring_edabits_dory,
                             budget.ring_edabits_u64,
                             budget.ring_edabits_u128,

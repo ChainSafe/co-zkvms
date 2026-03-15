@@ -48,8 +48,19 @@ impl<F: JoltField> Rep3InstructionRaSumcheckWorker<F> {
             .into_par_iter()
             .map(|i| {
                 let eq_u = EqPolynomial::evals(&r_address_chunks[i]);
-                let shifted_table = shifted_table_from_rand_ohv(&eq_u, &one_hot_polys[i].rand_ohv_e_field);
-                Rep3RaPolynomial::new(one_hot_polys[i].masked_indices_c.clone(), shifted_table)
+                let shifted_tables = one_hot_polys[i].shifted_tables_from_public_table(&eq_u);
+                if one_hot_polys[i].num_rotation_slots() == 1 {
+                    Rep3RaPolynomial::new(
+                        one_hot_polys[i].masked_indices_c.clone(),
+                        shifted_tables.into_iter().next().unwrap(),
+                    )
+                } else {
+                    Rep3RaPolynomial::new_shifted(
+                        one_hot_polys[i].masked_indices_c.clone(),
+                        one_hot_polys[i].rotation_slot_by_cycle.clone(),
+                        shifted_tables,
+                    )
+                }
             })
             .collect();
 

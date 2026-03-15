@@ -24,8 +24,27 @@ pub enum Rep3RaPolynomial<I: Into<usize> + Copy + Default + Send + Sync + 'stati
 }
 
 impl<I: Into<usize> + Copy + Default + Send + Sync + 'static, F: JoltField> Rep3RaPolynomial<I, F> {
+    /// Lazy constructor: defers table lookup to `get_bound_coeff` time (Round1).
     pub fn new(lookup_indices: Arc<Vec<Option<I>>>, table: Vec<Rep3PrimeFieldShare<F>>) -> Self {
         Self::Round1(Rep3RaPolynomialRound1 { shifted_table: table, masked_lookup_indices: lookup_indices })
+    }
+
+    /// Eager constructor for per-slot shifted tables: materializes all coefficients upfront (RoundN).
+    pub fn new_shifted(
+        lookup_indices: Arc<Vec<Option<I>>>,
+        rotation_slot_by_row: Arc<Vec<Option<u8>>>,
+        shifted_tables_by_slot: Vec<Vec<Rep3PrimeFieldShare<F>>>,
+    ) -> Self {
+        debug_assert_eq!(lookup_indices.len(), rotation_slot_by_row.len());
+        let coeffs: Vec<Rep3PrimeFieldShare<F>> = lookup_indices
+            .iter()
+            .zip(rotation_slot_by_row.iter())
+            .map(|(opt_i, opt_slot)| match (opt_i, opt_slot) {
+                (Some(i), Some(slot)) => shifted_tables_by_slot[*slot as usize][(*i).into()],
+                _ => Rep3PrimeFieldShare::zero_share(),
+            })
+            .collect();
+        Self::RoundN(Rep3DensePolynomial::new(coeffs))
     }
 
     #[inline]

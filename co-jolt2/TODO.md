@@ -40,6 +40,43 @@ combined with shared values.
 **Goal**: keep these as public scalars end-to-end and only secret-share them when strictly required by
 a downstream protocol interface.
 
+## Optimize `new_shifted()` (R>1 rotation path)
+
+**Files**: `src/poly/ra_poly.rs`, `src/poly/one_hot_polynomial.rs`
+
+When `RAND_OHV_ROTATIONS > 1`, `new_shifted()` eagerly materializes an n-length dense polynomial
+(`RoundN`) because different cycles map to different rotation slots, preventing the lazy Round1
+table-lookup representation.
+
+### Problem
+- Allocates n × 64 bytes (two field elements per `Rep3PrimeFieldShare`) per polynomial.
+- Multiple one-hot polynomials live simultaneously during `reduce_and_prove`, spiking RSS.
+- Dense representation has worse cache behavior than Round1's 1-byte-index + L1-cached table.
+
+### Optimization ideas
+
+1. **Lazy multi-slot Round1**: Extend `Rep3RaPolynomialRound1` to store `Vec<Vec<Rep3PrimeFieldShare<F>>>`
+   (per-slot shifted tables) + `rotation_slot_by_row`. `get_bound_coeff(j)` looks up
+   `shifted_tables[slot][index]` — still O(1) with L1-cached tables (R×K elements, e.g. 16×16=256
+   field elements = 16 KB for R=16). Avoids n-length dense materialization entirely. Round1→Round2
+   bind precomputes f_0/f_1 per slot (O(R×K) work). Defers RoundN materialization to round 3 at
+   n/8 length.
+
+2. **Streaming materialization in Round3→RoundN**: Instead of materializing the full n-length dense
+   polynomial in `new_shifted()`, let Round1→Round2→Round3 handle the first 3 cycle-variable rounds
+   (as in approach 1), then materialize at Round3→RoundN when the polynomial is n/8 length. This
+   is 8× less memory than upfront materialization.
+
+3. **Sparse representation**: Since many cycles are `None` (padding), store only active-cycle
+   coefficients in a compact representation. During sumcheck, `get_bound_coeff` returns zero for
+   padding cycles without touching memory. Benefit depends on sparsity ratio.
+
+**Recommended**: Approach 1 (lazy multi-slot Round1) — minimal code change, eliminates the
+n-length allocation entirely, and naturally falls back to existing Round1→Round2→Round3→RoundN
+progression.
+
+---
+
 ## Risky optimizations (may hurt memory)
 
 ### Increase RA `wr_tile` default (stage4)

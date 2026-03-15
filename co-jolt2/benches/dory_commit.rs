@@ -97,6 +97,7 @@ fn main() {
                 &pool_dir,
                 [0, 0, 0, 0, 0],
                 0,
+                0,
                 total_coeffs,
                 total_coeffs,
                 0,

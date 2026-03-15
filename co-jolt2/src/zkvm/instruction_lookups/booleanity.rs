@@ -116,7 +116,8 @@ struct BooleanityProverStateWorker<F: JoltField> {
     F_table: Vec<F>,
     eq_r_r: F,
     /// Shared one-hot vectors e(r_i) for shifted table construction at phase transition.
-    one_hot_e_fields: [Arc<Vec<Rep3PrimeFieldShare<F>>>; D],
+    one_hot_e_fields: [Arc<Vec<Arc<Vec<Rep3PrimeFieldShare<F>>>>>; D],
+    rotation_slots: [Arc<Vec<Option<u8>>>; D],
 }
 
 pub struct Rep3BooleanitySumcheckWorker<F: JoltField> {
@@ -154,7 +155,12 @@ impl<F: JoltField> Rep3BooleanitySumcheckWorker<F> {
                     f
                 },
                 eq_r_r: F::zero(),
-                one_hot_e_fields: std::array::from_fn(|i| one_hot_polys[i].rand_ohv_e_field.clone()),
+                one_hot_e_fields: std::array::from_fn(|i| {
+                    one_hot_polys[i].rand_ohv_e_fields.clone()
+                }),
+                rotation_slots: std::array::from_fn(|i| {
+                    one_hot_polys[i].rotation_slot_by_cycle.clone()
+                }),
             },
         }
     }
@@ -425,8 +431,22 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Re
 
                 // Initialize H polynomials using shifted_table_from_rand_ohv
                 for i in 0..D {
-                    let shifted_table = shifted_table_from_rand_ohv(&f_table, &ps.one_hot_e_fields[i]);
-                    ps.H[i] = Rep3RaPolynomial::new(ps.masked_H_indices[i].clone(), shifted_table);
+                    let shifted_tables: Vec<Vec<Rep3PrimeFieldShare<F>>> = ps.one_hot_e_fields[i]
+                        .iter()
+                        .map(|e_field| shifted_table_from_rand_ohv(&f_table, e_field))
+                        .collect();
+                    ps.H[i] = if shifted_tables.len() == 1 {
+                        Rep3RaPolynomial::new(
+                            ps.masked_H_indices[i].clone(),
+                            shifted_tables.into_iter().next().unwrap(),
+                        )
+                    } else {
+                        Rep3RaPolynomial::new_shifted(
+                            ps.masked_H_indices[i].clone(),
+                            ps.rotation_slots[i].clone(),
+                            shifted_tables,
+                        )
+                    };
                 }
 
                 // Drop local refs to G (stage3 still needs it on the DAG worker).

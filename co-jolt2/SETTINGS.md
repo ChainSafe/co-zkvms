@@ -43,6 +43,12 @@ All knobs that control preprocessing and network performance in Rep3 Jolt.
 | `MPC_BULK_CHUNK_MB` | (internal) | Generic target chunk size for bulk networked work. |
 | `MPC_MIN_FORK_ELEMS` | (internal) | Generic minimum element count before splitting work across forks. |
 
+## Protocol Tuning
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RAND_OHV_ROTATIONS` | `1` | Number of independent RandOHV masks used for instruction-chunk one-hot polynomials. Active cycles are assigned round-robin to R slots (`slot = active_ordinal % R`). Higher R reduces within-slot statistical leakage at the cost of R× more preprocessing (RandOHV generation) and R× larger per-slot structures in `commit_rows`, `compute_g`, and read-raf histograms. Must be one of `1, 2, 4, 8, 16`. With R=1 (default), the code uses optimized flat-vector paths identical to the pre-rotation baseline. |
+
 ## Runtime / Profiling
 
 | Variable | Default | Description |
