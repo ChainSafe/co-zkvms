@@ -435,11 +435,18 @@ impl<F: JoltField, N: Rep3NetworkWorker> Rep3SumcheckInstanceWorker<F, N> for Re
                         .iter()
                         .map(|e_field| shifted_table_from_rand_ohv(&f_table, e_field))
                         .collect();
-                    ps.H[i] = Rep3RaPolynomial::new_shifted(
-                        ps.masked_H_indices[i].clone(),
-                        ps.rotation_slots[i].clone(),
-                        shifted_tables,
-                    );
+                    ps.H[i] = if shifted_tables.len() == 1 {
+                        Rep3RaPolynomial::new(
+                            ps.masked_H_indices[i].clone(),
+                            shifted_tables.into_iter().next().unwrap(),
+                        )
+                    } else {
+                        Rep3RaPolynomial::new_shifted(
+                            ps.masked_H_indices[i].clone(),
+                            ps.rotation_slots[i].clone(),
+                            shifted_tables,
+                        )
+                    };
                 }
 
                 // Drop local refs to G (stage3 still needs it on the DAG worker).

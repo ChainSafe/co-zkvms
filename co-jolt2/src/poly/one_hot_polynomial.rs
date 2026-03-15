@@ -296,6 +296,70 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
             let bases_group: Vec<G> = bases.iter().map(|b| b.into_group()).collect();
 
             debug_assert!(self.K.is_power_of_two(), "K must be power-of-two for FWHT");
+            let inv_k = F::from(self.K as u64)
+                .inverse()
+                .expect("K invertible in field");
+
+            let rows_per_k = t / row_len;
+
+            // Single-slot (R=1) fast path: flat vectors, in-place FWHT, no copy.
+            if self.num_rotation_slots() == 1 {
+                let g: Vec<F> = self.rand_ohv_e_field(0).iter().map(|s| s.a).collect();
+                let mut g_hat = g;
+                fwht_in_place(&mut g_hat);
+
+                let chunk_commitments: Vec<Vec<G>> = {
+                    let _guard = tracing::trace_span!("aligned_par").entered();
+
+                    (0..rows_per_k)
+                        .into_par_iter()
+                        .map(|chunk_index| -> eyre::Result<Vec<G>> {
+                            let _guard = tracing::trace_span!(
+                                "aligned_chunk",
+                                chunk_index,
+                                chunk_start = (chunk_index * row_len),
+                                rows_per_k
+                            )
+                            .entered();
+
+                            let mut s: Vec<G> = vec![G::zero(); self.K];
+                            {
+                                let _guard = tracing::trace_span!("aggregate_bases").entered();
+                                let chunk_start = chunk_index * row_len;
+                                for col in 0..row_len {
+                                    let idx_t = chunk_start + col;
+                                    if let Some(c) = self.masked_indices_c[idx_t] {
+                                        s[c as usize] += bases_group[col];
+                                    }
+                                }
+                            }
+
+                            {
+                                let _guard = tracing::trace_span!("fwht").entered();
+                                fwht_in_place(&mut s);
+                                for (si, &gi) in s.iter_mut().zip(g_hat.iter()) {
+                                    *si = *si * gi;
+                                }
+                                fwht_in_place(&mut s);
+                                for si in s.iter_mut() {
+                                    *si = *si * inv_k;
+                                }
+                            }
+
+                            Ok(s)
+                        })
+                        .collect::<eyre::Result<Vec<_>>>()?
+                };
+
+                for (chunk_index, rows_for_chunk) in chunk_commitments.into_iter().enumerate() {
+                    for (k, share) in rows_for_chunk.into_iter().enumerate() {
+                        out[k * rows_per_k + chunk_index] = share;
+                    }
+                }
+                return Ok(out);
+            }
+
+            // Multi-slot (R>1) path: per-slot scatter + accumulate.
             let g_hat_by_slot: Vec<Vec<F>> = (0..self.num_rotation_slots())
                 .map(|slot| {
                     let mut g_hat: Vec<F> = self
@@ -307,11 +371,7 @@ impl<F: JoltField> Rep3OneHotPolynomial<F> {
                     g_hat
                 })
                 .collect();
-            let inv_k = F::from(self.K as u64)
-                .inverse()
-                .expect("K invertible in field");
 
-            let rows_per_k = t / row_len;
             let chunk_commitments: Vec<Vec<G>> = {
                 let _guard = tracing::trace_span!("aligned_par").entered();
 
@@ -842,11 +902,18 @@ impl<F: JoltField> Rep3OneHotPolynomialProverOpening<F> {
                 assert_eq!(eq_u.len(), self.polynomial.K);
 
                 let shifted_tables = self.polynomial.shifted_tables_from_public_table(&eq_u);
-                *self.polynomial.H.write().unwrap() = Rep3RaPolynomial::new_shifted(
-                    self.polynomial.masked_indices_c.clone(),
-                    self.polynomial.rotation_slot_by_cycle.clone(),
-                    shifted_tables,
-                );
+                *self.polynomial.H.write().unwrap() = if self.polynomial.num_rotation_slots() == 1 {
+                    Rep3RaPolynomial::new(
+                        self.polynomial.masked_indices_c.clone(),
+                        shifted_tables.into_iter().next().unwrap(),
+                    )
+                } else {
+                    Rep3RaPolynomial::new_shifted(
+                        self.polynomial.masked_indices_c.clone(),
+                        self.polynomial.rotation_slot_by_cycle.clone(),
+                        shifted_tables,
+                    )
+                };
                 self.polynomial.G.clear();
             }
         } else {
@@ -879,7 +946,48 @@ pub(crate) fn compute_g_from_masked_indices<F: JoltField>(
     let num_chunks = rayon::current_num_threads().next_power_of_two().min(polynomial.masked_indices_c.len()).max(1);
     let chunk_size = (polynomial.masked_indices_c.len() / num_chunks).max(1);
 
-    let g_c = polynomial
+    if polynomial.num_rotation_slots() == 1 {
+        // Single-slot (R=1) fast path: flat Vec<F> histogram.
+        let g_c: Vec<F> = polynomial
+            .masked_indices_c
+            .par_chunks(chunk_size)
+            .enumerate()
+            .map(|(chunk_index, chunk)| {
+                let mut local = vec![F::zero(); k_len];
+                let chunk_start = chunk_index * chunk_size;
+                for (offset, opt_c) in chunk.iter().enumerate() {
+                    if let Some(c) = opt_c {
+                        local[*c as usize] += eq_cycle[chunk_start + offset];
+                    }
+                }
+                local
+            })
+            .reduce(
+                || vec![F::zero(); k_len],
+                |mut a, b| {
+                    for (ai, bi) in a.iter_mut().zip(b.into_iter()) {
+                        *ai += bi;
+                    }
+                    a
+                },
+            );
+
+        let e_field = polynomial.rand_ohv_e_field(0);
+        return (0..polynomial.K)
+            .into_par_iter()
+            .map(|k| {
+                let mut acc = Rep3PrimeFieldShare::zero_share();
+                for c in 0..polynomial.K {
+                    let idx = (c as u8) ^ (k as u8);
+                    acc += e_field[idx as usize] * g_c[c];
+                }
+                acc
+            })
+            .collect();
+    }
+
+    // Multi-slot (R>1) path.
+    let g_c: Vec<Vec<F>> = polynomial
         .masked_indices_c
         .par_chunks(chunk_size)
         .enumerate()
@@ -958,6 +1066,56 @@ pub fn compute_g_from_masked_indices_many<F: JoltField, const D: usize>(
     let num_chunks = rayon::current_num_threads().next_power_of_two().min(t).max(1);
     let chunk_size = (t / num_chunks).max(1);
 
+    if polynomials[0].num_rotation_slots() == 1 {
+        // Single-slot (R=1) fast path: flat Vec<F> histograms.
+        let g_c: [Vec<F>; D] = (0..num_chunks)
+            .into_par_iter()
+            .map(|chunk_index| {
+                let start = chunk_index * chunk_size;
+                let end = ((chunk_index + 1) * chunk_size).min(t);
+
+                let mut local: [Vec<F>; D] = std::array::from_fn(|_| vec![F::zero(); k_len]);
+                for j in start..end {
+                    let eq = eq_cycle[j];
+                    for i in 0..D {
+                        if let Some(c) = polynomials[i].masked_indices_c[j] {
+                            local[i][c as usize] += eq;
+                        }
+                    }
+                }
+                local
+            })
+            .reduce(
+                || std::array::from_fn(|_| vec![F::zero(); k_len]),
+                |mut a, b| {
+                    for i in 0..D {
+                        for (ai, bi) in a[i].iter_mut().zip(b[i].iter()) {
+                            *ai += *bi;
+                        }
+                    }
+                    a
+                },
+            );
+
+        return std::array::from_fn(|i| {
+            let g_c_i = &g_c[i];
+            let e_field = polynomials[i].rand_ohv_e_field(0);
+            let g_i: Vec<Rep3PrimeFieldShare<F>> = (0..k_len)
+                .into_par_iter()
+                .map(|k| {
+                    let mut acc = Rep3PrimeFieldShare::zero_share();
+                    for c in 0..k_len {
+                        let idx = (c as u8) ^ (k as u8);
+                        acc += e_field[idx as usize] * g_c_i[c];
+                    }
+                    acc
+                })
+                .collect();
+            Arc::new(g_i)
+        });
+    }
+
+    // Multi-slot (R>1) path.
     let g_c: [Vec<Vec<F>>; D] = (0..num_chunks)
         .into_par_iter()
         .map(|chunk_index| {
