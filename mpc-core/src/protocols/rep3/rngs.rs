@@ -10,7 +10,7 @@ use ark_ff::One;
 use ark_linear_sumcheck::rng::FeedableRNG;
 use num_bigint::BigUint;
 use parking_lot::Mutex;
-use rand::{Rng, RngCore, SeedableRng, distributions::Standard, prelude::Distribution, seq::SliceRandom};
+use rand::{Rng, RngCore, SeedableRng, distributions::Standard, prelude::Distribution};
 use rayon::prelude::*;
 use std::ops::Add;
 
@@ -247,15 +247,6 @@ impl Rep3Rand {
         let seed1 = self.rng1.r#gen();
         let seed2 = self.rng2.r#gen();
         (seed1, seed2)
-    }
-
-    /// Generate a random shared permutation
-    pub(crate) fn random_perm<T: Clone>(&mut self, input: Vec<T>) -> (Vec<T>, Vec<T>) {
-        let mut a = input.to_owned();
-        let mut b = input;
-        a.shuffle(&mut self.rng1);
-        b.shuffle(&mut self.rng2);
-        (a, b)
     }
 }
 

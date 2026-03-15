@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use rayon::prelude::*;
 
-use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::dense_mlpoly::DensePolynomial;
 use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;

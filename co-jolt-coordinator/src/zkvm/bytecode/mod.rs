@@ -1,9 +1,19 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use jolt_core::field::JoltField;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::opening_proof::SumcheckId;
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::witness::VirtualPolynomial;
+use strum::IntoEnumIterator;
+
+use crate::zkvm::dag::stage::BatchedSumcheckInstance;
+use crate::zkvm::dag::state_manager::StateManager;
+
+pub mod booleanity;
+pub mod hamming_weight;
+pub mod read_raf_checking;
+
 /// Init data for Bytecode stage4 instances, broadcast by coordinator.
 #[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct BytecodeStage4Init<F: JoltField> {
@@ -19,17 +29,6 @@ pub struct BytecodeStage4Init<F: JoltField> {
     // HammingWeight
     pub hw_gamma_powers: Vec<F>,
 }
-use rayon::iter::{IndexedParallelIterator, ParallelIterator};
-use rayon::prelude::ParallelSlice;
-use strum::IntoEnumIterator;
-
-use crate::zkvm::dag::stage::BatchedSumcheckInstance;
-use crate::zkvm::dag::state_manager::StateManager;
-use jolt_core::field::JoltField;
-
-pub mod booleanity;
-pub mod hamming_weight;
-pub mod read_raf_checking;
 
 // ---------------------------------------------------------------------------
 // Coordinator
@@ -241,88 +240,4 @@ impl Rep3BytecodeDag {
 
         (instances, init)
     }
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Compute bytecode stage4 histograms in one pass over `pc_indices`.
-///
-/// Returns:
-/// - `G`: `d` chunk histograms of `eq_r_cycle[j]` binned by `pc_indices[j]` chunk `i`
-/// - `F_polys`: `[r1, r2, r3]` where `rs[pc] = Σ_j eq_evals[s][j] * [pc_indices[j] == pc]`
-fn compute_pc_hists<F: JoltField>(
-    pc_indices: &[u64],
-    eq_r_cycle: &[F],
-    eq_evals: &[Vec<F>; 3],
-    d: usize,
-    log_K_chunk: usize,
-    K_chunk: usize,
-    K: usize,
-    chunk_size: usize,
-) -> (Vec<Vec<F>>, [Vec<F>; 3]) {
-    use jolt_core::utils::thread::unsafe_allocate_zero_vec;
-
-    debug_assert_eq!(pc_indices.len(), eq_r_cycle.len());
-    debug_assert_eq!(eq_evals[0].len(), pc_indices.len());
-    debug_assert_eq!(eq_evals[1].len(), pc_indices.len());
-    debug_assert_eq!(eq_evals[2].len(), pc_indices.len());
-
-    pc_indices
-        .par_chunks(chunk_size)
-        .enumerate()
-        .map(|(chunk_index, pcs): (usize, &[u64])| {
-            let mut local_G: Vec<Vec<F>> = (0..d).map(|_| unsafe_allocate_zero_vec(K_chunk)).collect();
-            let mut r1: Vec<F> = unsafe_allocate_zero_vec(K);
-            let mut r2: Vec<F> = unsafe_allocate_zero_vec(K);
-            let mut r3: Vec<F> = unsafe_allocate_zero_vec(K);
-
-            let j0 = chunk_index * chunk_size;
-            for (off, &pc_u64) in pcs.iter().enumerate() {
-                let j = j0 + off;
-                let pc = pc_u64 as usize;
-
-                r1[pc] += eq_evals[0][j];
-                r2[pc] += eq_evals[1][j];
-                r3[pc] += eq_evals[2][j];
-
-                let mut x = pc;
-                let w = eq_r_cycle[j];
-                for i in (0..d).rev() {
-                    let idx = x % K_chunk;
-                    local_G[i][idx] += w;
-                    x >>= log_K_chunk;
-                }
-            }
-
-            (local_G, [r1, r2, r3])
-        })
-        .reduce(
-            || {
-                let zeros_G: Vec<Vec<F>> = (0..d).map(|_| unsafe_allocate_zero_vec(K_chunk)).collect();
-                let zeros_F = [unsafe_allocate_zero_vec(K), unsafe_allocate_zero_vec(K), unsafe_allocate_zero_vec(K)];
-                (zeros_G, zeros_F)
-            },
-            |(mut running_G, mut running_F): (Vec<Vec<F>>, [Vec<F>; 3]), (new_G, new_F)| {
-                // NOTE: Avoid nested rayon in the reduce combiner. The outer reduction tree is
-                // already parallel; nesting can oversubscribe or add overhead.
-                for (x, y) in running_G.iter_mut().zip(new_G) {
-                    for (x, y) in x.iter_mut().zip(y) {
-                        *x += y;
-                    }
-                }
-                let [nf0, nf1, nf2] = new_F;
-                for (x, y) in running_F[0].iter_mut().zip(nf0) {
-                    *x += y;
-                }
-                for (x, y) in running_F[1].iter_mut().zip(nf1) {
-                    *x += y;
-                }
-                for (x, y) in running_F[2].iter_mut().zip(nf2) {
-                    *x += y;
-                }
-                (running_G, running_F)
-            },
-        )
 }

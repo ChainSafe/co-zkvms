@@ -80,8 +80,6 @@ pub trait SumcheckInstance<F: JoltField, T: Transcript> {
         unimplemented!("prover not available")
     }
 
-    #[cfg(feature = "allocative")]
-    fn update_flamegraph(&self, _flamegraph: &mut allocative::FlameGraphBuilder) {}
 }
 
 pub enum SingleSumcheck {}

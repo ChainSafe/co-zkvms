@@ -1,5 +1,4 @@
 use jolt_core::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
-use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::r1cs::inputs::{JoltR1CSInputs, ALL_R1CS_INPUTS};
 use jolt_core::zkvm::r1cs::key::UniformSpartanKey;

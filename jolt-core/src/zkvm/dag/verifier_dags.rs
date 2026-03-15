@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use strum::{EnumCount, IntoEnumIterator};
+use strum::IntoEnumIterator;
 
 use crate::curve::JoltCurve;
 use crate::field::JoltField;

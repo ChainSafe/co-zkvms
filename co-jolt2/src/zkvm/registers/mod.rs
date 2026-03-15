@@ -1,5 +1,4 @@
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
-use jolt_core::transcripts::Transcript;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3_ring::edabits::PreprocessingPool;
 

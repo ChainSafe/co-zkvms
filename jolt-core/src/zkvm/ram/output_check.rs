@@ -26,8 +26,6 @@ use crate::{
     },
 };
 use allocative::Allocative;
-#[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
 use common::constants::RAM_START_ADDRESS;
 use rayon::prelude::*;
 use tracer::JoltDevice;
@@ -53,48 +51,6 @@ struct OutputSumcheckProverState<F: JoltField> {
     /// EQ(x_1, ..., x_k, r_1, ..., r_k), where r_i is the
     /// random challenge for the i'th round of sumcheck.
     eq_table: ExpandingTable<F>,
-}
-
-impl<F: JoltField> OutputSumcheckProverState<F> {
-    fn new(
-        initial_ram_state: Vec<u64>,
-        final_ram_state: Vec<u64>,
-        program_io: &JoltDevice,
-        r_address: &[F::Challenge],
-    ) -> Self {
-        let K = final_ram_state.len();
-        debug_assert_eq!(initial_ram_state.len(), final_ram_state.len());
-        debug_assert!(K.is_power_of_two());
-
-        // Compute the witness indices corresponding to the start and end of the IO
-        // region of memory
-        let io_start = remap_address(program_io.memory_layout.input_start, &program_io.memory_layout).unwrap() as usize;
-        let io_end = remap_address(RAM_START_ADDRESS, &program_io.memory_layout).unwrap() as usize;
-
-        // Compute Val_io by copying the relevant slice of Val_final
-        let mut val_io = vec![0; K];
-        val_io[io_start..io_end]
-            .par_iter_mut()
-            .zip(final_ram_state[io_start..io_end].par_iter())
-            .for_each(|(dest, src)| *dest = *src);
-
-        // Compute io_mask by setting the relevant coefficients to 1
-        let mut io_mask = vec![0u8; K];
-        io_mask[io_start..io_end].par_iter_mut().for_each(|k| *k = 1);
-
-        // Initialize the EQ table
-        let mut eq_table = ExpandingTable::new(K);
-        eq_table.reset(F::one());
-
-        Self {
-            val_init: initial_ram_state.into(),
-            val_final: final_ram_state.into(),
-            val_io: val_io.into(),
-            eq_poly: EqPolynomial::<F>::evals(r_address).into(),
-            io_mask: io_mask.into(),
-            eq_table,
-        }
-    }
 }
 
 /// Sumcheck for the zero-check
@@ -314,11 +270,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for OutputSumcheck<F> {
         let eq_eval = EqPolynomial::<F>::mle(self.r_address.as_ref().unwrap(), sumcheck_challenges);
         let io_mask_eval = io_mask.evaluate_mle(sumcheck_challenges);
         vec![eq_eval * io_mask_eval, val_io.evaluate(sumcheck_challenges)]
-    }
-
-    #[cfg(feature = "allocative")]
-    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
-        flamegraph.visit_root(self);
     }
 }
 
@@ -604,10 +555,5 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValFinalSumcheck<F>
             ValueSource::opening(OpeningId::Committed(CommittedPolynomial::RamInc, SumcheckId::RamValFinalEvaluation)),
             ValueSource::opening(OpeningId::Virtual(VirtualPolynomial::RamRa, SumcheckId::RamValFinalEvaluation)),
         ]))
-    }
-
-    #[cfg(feature = "allocative")]
-    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
-        flamegraph.visit_root(self);
     }
 }

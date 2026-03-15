@@ -19,10 +19,8 @@ use mpc_core::protocols::rep3::network::{IoContext, IoContextPool, Rep3NetworkWo
 use mpc_core::protocols::rep3::PartyID;
 use mpc_core::protocols::rep3::{arithmetic::promote_to_trivial_share, Rep3PrimeFieldShare};
 use mpc_core::protocols::rep3_ring::casts;
-#[cfg(not(feature = "ring-msm"))]
-use mpc_core::protocols::rep3_ring::conversion as ring_conv;
 use mpc_core::protocols::rep3_ring::edabits::{
-    EdaBitsBatchScratch, EdaBitsRangeView, ForkedB2aScratch, PreprocessingPool,
+    EdaBitsBatchScratch, EdaBitsRangeView, PreprocessingPool,
 };
 use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
 use mpc_core::protocols::rep3_ring::Rep3RingShare;

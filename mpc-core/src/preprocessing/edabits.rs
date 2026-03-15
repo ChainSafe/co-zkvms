@@ -8,10 +8,7 @@
 use super::backing_store;
 use crate::field::PrimeField;
 use crate::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
-use crate::protocols::rep3::{
-    PartyID, Rep3PrimeFieldShare,
-    network::Rep3Network,
-};
+use crate::protocols::rep3::{PartyID, Rep3PrimeFieldShare};
 use crate::protocols::rep3_ring::{
     Rep3RingShare,
     ring::{int_ring::IntRing2k, ring_impl::RingElement},
@@ -1403,6 +1400,7 @@ where
     }
 
     /// Construct from RNG seeds + a pre-built BackingStore (e.g. file-backed for P2).
+    #[allow(dead_code)]
     pub fn new_with_store(
         seed1: [u8; crate::SEED_SIZE],
         pos1: u128,
@@ -1704,8 +1702,7 @@ mod tests {
 
     use crate::protocols::rep3::{combine_field_element, combine_field_elements, share_field_element};
     use crate::protocols::rep3_ring::{
-        combine_ring_element, combine_ring_element_binary, ring::bit::Bit as RingBit, share_ring_element,
-        share_ring_element_binary,
+        combine_ring_element, ring::bit::Bit as RingBit, share_ring_element, share_ring_element_binary,
     };
     use ark_bn254::Fr;
     use rand::{RngCore, SeedableRng};

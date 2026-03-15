@@ -30,12 +30,12 @@ use rayon::prelude::*;
 
 impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
     /// Inject pre-generated daPoints into this pool.
-    pub fn set_dapoints(&mut self, dp: super::daPoint::LazyDaPoints<C>) {
+    pub fn set_dapoints(&mut self, dp: super::dapoint::LazyDaPoints<C>) {
         self.dapoints = dp;
     }
 
     /// Drain `n` daPoint tuples from the lazy source.
-    pub fn take_dapoints(&mut self, n: usize) -> eyre::Result<super::daPoint::DaPointsBatch<C>> {
+    pub fn take_dapoints(&mut self, n: usize) -> eyre::Result<super::dapoint::DaPointsBatch<C>> {
         self.dapoints.take_batch(n)
     }
 
@@ -53,10 +53,10 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
                 current = num_columns,
                 "daPoints num_columns mismatch; discarding cached daPoints"
             );
-            self.dapoints = super::daPoint::LazyDaPoints::empty(party_id);
+            self.dapoints = super::dapoint::LazyDaPoints::empty(party_id);
             invalidated = true;
         } else if self.dapoints.num_columns() != Some(num_columns) {
-            self.dapoints = super::daPoint::LazyDaPoints::empty(party_id);
+            self.dapoints = super::dapoint::LazyDaPoints::empty(party_id);
         }
         if self.dapoints_iring.num_columns() != Some(num_columns) && self.dapoints_iring.remaining() > 0 {
             tracing::info!(
@@ -64,10 +64,10 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
                 current = num_columns,
                 "daPoints_iring num_columns mismatch; discarding cached daPoints"
             );
-            self.dapoints_iring = super::daPoint::LazyDaPoints::empty(party_id);
+            self.dapoints_iring = super::dapoint::LazyDaPoints::empty(party_id);
             invalidated = true;
         } else if self.dapoints_iring.num_columns() != Some(num_columns) {
-            self.dapoints_iring = super::daPoint::LazyDaPoints::empty(party_id);
+            self.dapoints_iring = super::dapoint::LazyDaPoints::empty(party_id);
         }
         invalidated
     }
@@ -87,12 +87,12 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
     }
 
     /// Inject pre-generated daPoints for IRingScalars into this pool.
-    pub fn set_dapoints_iring(&mut self, dp: super::daPoint::LazyDaPoints<C>) {
+    pub fn set_dapoints_iring(&mut self, dp: super::dapoint::LazyDaPoints<C>) {
         self.dapoints_iring = dp;
     }
 
     /// Drain `n` daPoint tuples for IRingScalars from the lazy source.
-    pub fn take_dapoints_iring(&mut self, n: usize) -> eyre::Result<super::daPoint::DaPointsBatch<C>> {
+    pub fn take_dapoints_iring(&mut self, n: usize) -> eyre::Result<super::dapoint::DaPointsBatch<C>> {
         self.dapoints_iring.take_batch(n)
     }
 
@@ -221,7 +221,7 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
                 tasks.push((
                     2,
                     Box::new(move |ctx: &mut IoContext<N>| {
-                        let dp = super::daPoint::random_dapoints_from_columns(&q0, &q1, num_coeffs, nc, ctx)?;
+                        let dp = super::dapoint::random_dapoints_from_columns(&q0, &q1, num_coeffs, nc, ctx)?;
                         Ok(Box::new(dp) as Box<dyn std::any::Any + Send>)
                     }),
                 ));
@@ -234,7 +234,7 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
                 tasks.push((
                     3,
                     Box::new(move |ctx: &mut IoContext<N>| {
-                        let dp = super::daPoint::random_dapoints_from_columns(&q0, &q1, num_coeffs, nc, ctx)?;
+                        let dp = super::dapoint::random_dapoints_from_columns(&q0, &q1, num_coeffs, nc, ctx)?;
                         Ok(Box::new(dp) as Box<dyn std::any::Any + Send>)
                     }),
                 ));
@@ -251,8 +251,8 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
                         self.set_wrap_masks(*val.downcast::<super::wrap_mask::LazyWrapMasks<DoryRingMsmInt>>().unwrap())
                     }
                     1 => self.set_wrap_masks_iring(*val.downcast::<super::wrap_mask::LazyWrapMasks<U66>>().unwrap()),
-                    2 => self.set_dapoints(*val.downcast::<super::daPoint::LazyDaPoints<C>>().unwrap()),
-                    3 => self.set_dapoints_iring(*val.downcast::<super::daPoint::LazyDaPoints<C>>().unwrap()),
+                    2 => self.set_dapoints(*val.downcast::<super::dapoint::LazyDaPoints<C>>().unwrap()),
+                    3 => self.set_dapoints_iring(*val.downcast::<super::dapoint::LazyDaPoints<C>>().unwrap()),
                     _ => unreachable!(),
                 }
             }
@@ -271,7 +271,7 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
                 )?);
             }
             if need_dp {
-                let dp = super::daPoint::random_dapoints_from_columns(
+                let dp = super::dapoint::random_dapoints_from_columns(
                     q0_xlen_cols,
                     q1_xlen_cols,
                     num_dapoints / 2,
@@ -281,7 +281,7 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
                 self.set_dapoints(dp);
             }
             if need_dp_iring {
-                let dp = super::daPoint::random_dapoints_from_columns(
+                let dp = super::dapoint::random_dapoints_from_columns(
                     q0_64_cols,
                     q1_64_cols,
                     num_dapoints_iring / 2,

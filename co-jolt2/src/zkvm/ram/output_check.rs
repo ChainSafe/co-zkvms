@@ -5,7 +5,6 @@ use jolt_core::poly::multilinear_polynomial::{
     BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
 };
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
-use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::ram::remap_address;
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};

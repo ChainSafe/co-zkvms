@@ -6,8 +6,6 @@ use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
 use jolt_core::zkvm::ram::remap_address;
 use jolt_core::zkvm::witness::{compute_d_parameter, VirtualPolynomial, DTH_ROOT_OF_K};
-use rayon::iter::{IndexedParallelIterator, ParallelIterator};
-use rayon::prelude::ParallelSlice;
 
 use crate::zkvm::dag::stage::{BatchedSumcheckInstance, SumcheckStagesCoordinator};
 use crate::zkvm::dag::state_manager::StateManager;
@@ -89,62 +87,6 @@ pub struct RamStage4Init<F: JoltField> {
     pub ra_r_cycle: [Vec<F::Challenge>; 3],
     /// RaSumcheck r_address_chunks
     pub ra_r_address_chunks: Vec<Vec<F::Challenge>>,
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Compute `d` eq-weighted address histograms in one pass over the trace.
-///
-/// For each chunk `i`, computes `H[i][k] = Σ_j weights[j] * [addr_chunk_i(j) == k]`.
-///
-/// Mirrors vanilla-style single-pass chunk extraction (shift-by-`log_root`).
-fn compute_address_chunk_hists<F: JoltField>(
-    addresses: &[Option<u64>],
-    weights: &[F],
-    d: usize,
-    chunk_size: usize,
-    log_root: usize,
-) -> Vec<Vec<F>> {
-    use jolt_core::utils::thread::unsafe_allocate_zero_vec;
-
-    debug_assert_eq!(addresses.len(), weights.len());
-    let root = DTH_ROOT_OF_K;
-
-    addresses
-        .par_chunks(chunk_size)
-        .enumerate()
-        .map(|(chunk_index, addr_chunk): (usize, &[Option<u64>])| {
-            let mut local: Vec<Vec<F>> = (0..d).map(|_| unsafe_allocate_zero_vec(root)).collect();
-            let j0 = chunk_index * chunk_size;
-            for (off, addr_opt) in addr_chunk.iter().enumerate() {
-                let j = j0 + off;
-                let w = weights[j];
-                if let Some(addr) = addr_opt {
-                    let mut x = *addr;
-                    for i in (0..d).rev() {
-                        let idx = (x % root as u64) as usize;
-                        local[i][idx] += w;
-                        x >>= log_root;
-                    }
-                }
-            }
-            local
-        })
-        .reduce(
-            || (0..d).map(|_| unsafe_allocate_zero_vec(root)).collect(),
-            |mut running: Vec<Vec<F>>, new| {
-                // Avoid nested rayon in the reduce combiner. The reduction tree already
-                // runs in parallel; nesting can oversubscribe or add overhead.
-                for (x, y) in running.iter_mut().zip(new) {
-                    for (x, y) in x.iter_mut().zip(y) {
-                        *x += y;
-                    }
-                }
-                running
-            },
-        )
 }
 
 // ---------------------------------------------------------------------------

@@ -10,7 +10,7 @@ use std::marker::PhantomData;
 
 /// Re-export preprocessing module for backwards compatibility.
 pub use crate::preprocessing;
-pub use crate::preprocessing::{daPoint, dabits, edabits, wrap_mask};
+pub use crate::preprocessing::{dapoint, dabits, edabits, wrap_mask};
 mod detail;
 pub mod gadgets;
 pub mod ring;

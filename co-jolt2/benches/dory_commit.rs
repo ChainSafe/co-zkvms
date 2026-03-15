@@ -104,7 +104,7 @@ fn main() {
             )?;
 
             let qs = precompute_dapoint_qs(&setup2, total_coeffs, num_columns);
-            let lazy_dp = rep3_ring::preprocessing::daPoint::random_dapoints(&qs, &mut io_ctx)?;
+            let lazy_dp = rep3_ring::preprocessing::dapoint::random_dapoints(&qs, &mut io_ctx)?;
             preproc.set_dapoints(lazy_dp);
             let preproc_elapsed = preproc_start.elapsed();
 

@@ -16,7 +16,7 @@ use jolt_core::ark_bn254::{Fr, G1Projective};
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
-use mpc_core::preprocessing::daPoint::DaPointsBatch;
+use mpc_core::preprocessing::dapoint::DaPointsBatch;
 use mpc_core::preprocessing::edabits::EdaBitsRingBatch;
 use mpc_core::preprocessing::wrap_mask::WrapMaskBatch;
 use mpc_core::protocols::rep3;
@@ -801,7 +801,7 @@ mod tests {
 
                 // daPoints for Dory wrap correction (depend on SRS)
                 let qs = precompute_dapoint_qs(&setup, len, num_columns);
-                let lazy_dp = rep3_ring::daPoint::random_dapoints(&qs, &mut io_ctx)?;
+                let lazy_dp = rep3_ring::dapoint::random_dapoints(&qs, &mut io_ctx)?;
                 preproc.set_dapoints(lazy_dp);
 
                 let polys = vec![&poly];
@@ -919,7 +919,7 @@ mod tests {
 
                 // daPoints (depend on SRS)
                 let qs = precompute_dapoint_qs(&setup, len, num_columns);
-                let lazy_dp = rep3_ring::daPoint::random_dapoints(&qs, &mut io_ctx)?;
+                let lazy_dp = rep3_ring::dapoint::random_dapoints(&qs, &mut io_ctx)?;
                 preproc.set_dapoints(lazy_dp);
 
                 let polys = vec![&poly];
@@ -1025,7 +1025,7 @@ mod tests {
                 q_all.extend(q0.iter().copied());
                 q_all.extend(q1.iter().copied());
 
-                let mut lazy_dapoints = rep3_ring::daPoint::random_dapoints(&q_all, &mut io_ctx)?;
+                let mut lazy_dapoints = rep3_ring::dapoint::random_dapoints(&q_all, &mut io_ctx)?;
                 let batch = lazy_dapoints.take_batch(q_all.len())?;
 
                 let mut bits_all: Vec<Rep3RingShare<Bit>> = Vec::with_capacity(2 * m0_bin.len());

@@ -1,6 +1,5 @@
 use jolt_core::poly::multilinear_polynomial::BindingOrder;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
-use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::instruction_lookups::{D, LOG_K_CHUNK};
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
 use mpc_core::protocols::additive::AdditiveShare;

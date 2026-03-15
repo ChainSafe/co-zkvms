@@ -3,7 +3,6 @@ use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::multilinear_polynomial::BindingOrder;
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::poly::unipoly::UniPoly;
-use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::instruction_lookups::{D, LOG_K_CHUNK};
 
 const LOG_K: usize = D * LOG_K_CHUNK;

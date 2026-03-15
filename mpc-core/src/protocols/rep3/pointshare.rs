@@ -2,7 +2,7 @@
 //!
 //! Contains dot product operations using daPoint preprocessing tuples.
 
-use crate::preprocessing::daPoint::DaPointsBatch;
+use crate::preprocessing::dapoint::DaPointsBatch;
 use crate::protocols::rep3::PartyID;
 use crate::protocols::rep3::network::{IoContext, Rep3Network};
 use crate::protocols::rep3_ring::Rep3RingShare;

@@ -28,12 +28,9 @@ use super::super::Rep3CommitmentScheme;
 
 type DoryOpenParams = (usize, usize, usize, Vec<Fr>, Vec<Fr>);
 type DoryMaskedRowsRequest = (Vec<G1Affine>, Vec<Rep3PrimeFieldShare<Fr>>);
-type DoryVmvShareMsg = ((Fq12, Fq12), Option<G1Affine>, Fr);
 type DoryFirstReducePublicMsg = (Option<Fq12>, Option<Fq12>, Option<G1Affine>, Option<G2Affine>);
-type DoryFirstReduceShareMsg = ((Fq12, Fq12), DoryFirstReducePublicMsg);
 type DorySecondReducePublicMsg = (Option<G1Affine>, Option<G1Affine>);
-type DorySecondReduceShareMsg = (((Fq12, Fq12), (G2Affine, G2Affine)), DorySecondReducePublicMsg, (G2Affine, G2Affine));
-type DoryInitShareMsg = (usize, Vec<G1Affine>);
+
 #[cfg(all(feature = "ring-msm", feature = "rv64"))]
 pub(super) type DoryCarryRing = U66;
 #[cfg(all(feature = "ring-msm", not(feature = "rv64")))]
@@ -836,11 +833,6 @@ pub fn msm_g1_affine(bases_aff: &[G1Affine], scalars: &[Fr]) -> G1Projective {
     ArkVariableBaseMSM::msm(&bases_aff[..scalars.len()], scalars).expect("msm should succeed")
 }
 
-fn msm_g2(bases: &[G2Projective], scalars: &[Fr]) -> G2Projective {
-    let bases_aff = G2Projective::normalize_batch(bases);
-    ArkVariableBaseMSM::msm(&bases_aff, scalars).expect("msm should succeed")
-}
-
 fn fixed_base_vector_msm_g2(
     setup: &<DoryCommitmentScheme as CommitmentScheme>::ProverSetup,
     scalars: &[Fr],
@@ -857,27 +849,6 @@ pub fn msm_g2_affine(bases_aff: &[G2Affine], scalars: &[Fr]) -> G2Projective {
     ArkVariableBaseMSM::msm(&bases_aff[..scalars.len()], scalars).expect("msm should succeed")
 }
 
-type Bn254EllCoeff = (jolt_core::ark_bn254::Fq2, jolt_core::ark_bn254::Fq2, jolt_core::ark_bn254::Fq2);
-
-fn bn254_ell(f: &mut Fq12, coeffs: &Bn254EllCoeff, p: &G1Affine) {
-    let (mut c0, mut c1, c2) = *coeffs;
-    // BN254 has D-twist.
-    c0.mul_assign_by_fp(&p.y);
-    c1.mul_assign_by_fp(&p.x);
-    f.mul_by_034(&c0, &c1, &c2);
-}
-
-fn bn254_miller_loop_from_cached_g2_chunk(ps_aff: &[G1Affine], qs: &[G2Affine]) -> Fq12 {
-    debug_assert_eq!(ps_aff.len(), qs.len());
-    Bn254::multi_pairing(ps_aff, qs).0
-}
-
-fn multi_pairing(ps: &[G1Projective], qs: &[G2Projective]) -> Fq12 {
-    let ps_aff = G1Projective::normalize_batch(ps);
-    let qs_aff = G2Projective::normalize_batch(qs);
-    Bn254::multi_pairing(ps_aff, qs_aff).0
-}
-
 fn multi_pairing_both_affine(ps_aff: &[G1Affine], qs_aff: &[G2Affine]) -> Fq12 {
     let n = ps_aff.len().min(qs_aff.len());
     Bn254::multi_pairing(&ps_aff[..n], &qs_aff[..n]).0
@@ -889,12 +860,6 @@ fn multi_pairing_setup_g2_cached_affine(
     g2_affine_all: &[G2Affine],
 ) -> Fq12 {
     Bn254::multi_pairing(ps_aff, &g2_affine_all[..ps_aff.len()]).0
-}
-
-/// Pairing with pre-computed G1 affine bases.
-fn multi_pairing_g1_affine(ps_aff: &[G1Affine], qs: &[G2Projective]) -> Fq12 {
-    let qs_aff = G2Projective::normalize_batch(qs);
-    Bn254::multi_pairing(&ps_aff[..qs_aff.len()], qs_aff).0
 }
 
 /// Pairing with pre-computed G2 affine bases.
@@ -921,7 +886,6 @@ mod tests {
     use super::*;
     use ark_ff::One;
     use ark_std::UniformRand;
-    use itertools::Itertools;
     use jolt_core::field::JoltField;
     use jolt_core::poly::multilinear_polynomial::MultilinearPolynomial;
     use jolt_core::poly::multilinear_polynomial::PolynomialEvaluation;
@@ -930,12 +894,6 @@ mod tests {
     use mpc_core::protocols::rep3;
     use mpc_core::protocols::rep3::test_utils::run_rep3_local_test_with_coordinator;
     use mpc_core::protocols::rep3::Rep3PrimeFieldShare;
-    use mpc_core::protocols::rep3_ring;
-    use mpc_core::protocols::rep3_ring::conversion as ring_conv;
-    use mpc_core::protocols::rep3_ring::ring::bit::Bit;
-    use mpc_core::protocols::rep3_ring::ring::ring_impl::RingElement;
-    use mpc_core::protocols::rep3_ring::Rep3RingShare;
-    use rand::Rng;
     use rand::SeedableRng;
     use rand_chacha::ChaCha12Rng;
     use std::sync::Arc;
@@ -952,13 +910,6 @@ mod tests {
         }
 
         std::array::from_fn(|pid| Rep3DensePolynomial::new(party_coeffs[pid].clone()))
-    }
-
-    fn unwrap_shared_hint(hint: MaybeShared<DoryOpeningProofHint>) -> DoryOpeningProofHint {
-        match hint {
-            MaybeShared::Shared(hint) => hint,
-            _ => panic!("expected shared hint"),
-        }
     }
 
     #[test]

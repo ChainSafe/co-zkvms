@@ -13,7 +13,7 @@ use crate::protocols::rep3::network::{IoContext, IoContextPool, Rep3Network, Rep
 use crate::protocols::rep3_ring::ring::int_ring::IntRing2k;
 use crate::protocols::rep3_ring::ring::u34::U34;
 use crate::protocols::rep3_ring::ring::u66::U66;
-use rand::RngCore;
+
 use rand::distributions::Standard;
 use rand::prelude::Distribution;
 use rayon::prelude::*;
@@ -34,7 +34,7 @@ pub(super) type DoryRingMsmInt = U34;
 /// DaBits are stored via [`LazyDaBits`] (Cheng23 Π₁ partial-lazy).
 ///
 /// When the `ring-msm` feature is enabled, also stores:
-/// - DaPoints via [`super::daPoint::LazyDaPoints`]
+/// - DaPoints via [`super::dapoint::LazyDaPoints`]
 /// - Wrap masks via [`super::wrap_mask::LazyWrapMasks`]
 /// - Dory carry ring edaBits via [`LazyEdaBitsRing`]
 pub struct PreprocessingPool<F: PrimeField, C: ark_ec::CurveGroup = ark_bn254::G1Projective> {
@@ -45,7 +45,7 @@ pub struct PreprocessingPool<F: PrimeField, C: ark_ec::CurveGroup = ark_bn254::G
     pub(crate) edabits_u128: LazyEdaBits<u128, F>,
     pub(crate) dabits: LazyDaBits<F>,
     #[cfg(feature = "ring-msm")]
-    pub(crate) dapoints: super::daPoint::LazyDaPoints<C>,
+    pub(crate) dapoints: super::dapoint::LazyDaPoints<C>,
     #[cfg(feature = "ring-msm")]
     pub(crate) wrap_masks: super::wrap_mask::LazyWrapMasks<DoryRingMsmInt>,
     pub(crate) ring_edabits_u64: LazyEdaBitsRing<u64>,
@@ -55,7 +55,7 @@ pub struct PreprocessingPool<F: PrimeField, C: ark_ec::CurveGroup = ark_bn254::G
     #[cfg(feature = "ring-msm")]
     pub(crate) ring_edabits_u66: LazyEdaBitsRing<U66>,
     #[cfg(feature = "ring-msm")]
-    pub(crate) dapoints_iring: super::daPoint::LazyDaPoints<C>,
+    pub(crate) dapoints_iring: super::dapoint::LazyDaPoints<C>,
     #[cfg(feature = "ring-msm")]
     pub(crate) wrap_masks_iring: super::wrap_mask::LazyWrapMasks<U66>,
     #[cfg(not(feature = "ring-msm"))]
@@ -88,7 +88,7 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             ring_edabits_u64: LazyEdaBitsRing::empty(party_id),
             ring_edabits_u128: LazyEdaBitsRing::empty(party_id),
             #[cfg(feature = "ring-msm")]
-            dapoints: super::daPoint::LazyDaPoints::empty(party_id),
+            dapoints: super::dapoint::LazyDaPoints::empty(party_id),
             #[cfg(feature = "ring-msm")]
             wrap_masks: super::wrap_mask::LazyWrapMasks::empty(party_id),
             #[cfg(feature = "ring-msm")]
@@ -96,7 +96,7 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             #[cfg(feature = "ring-msm")]
             ring_edabits_u66: LazyEdaBitsRing::empty(party_id),
             #[cfg(feature = "ring-msm")]
-            dapoints_iring: super::daPoint::LazyDaPoints::empty(party_id),
+            dapoints_iring: super::dapoint::LazyDaPoints::empty(party_id),
             #[cfg(feature = "ring-msm")]
             wrap_masks_iring: super::wrap_mask::LazyWrapMasks::empty(party_id),
             #[cfg(not(feature = "ring-msm"))]
@@ -124,7 +124,7 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             ring_edabits_u64: LazyEdaBitsRing::empty(party_id),
             ring_edabits_u128: LazyEdaBitsRing::empty(party_id),
             #[cfg(feature = "ring-msm")]
-            dapoints: super::daPoint::LazyDaPoints::empty(party_id),
+            dapoints: super::dapoint::LazyDaPoints::empty(party_id),
             #[cfg(feature = "ring-msm")]
             wrap_masks: super::wrap_mask::LazyWrapMasks::empty(party_id),
             #[cfg(feature = "ring-msm")]
@@ -132,7 +132,7 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             #[cfg(feature = "ring-msm")]
             ring_edabits_u66: LazyEdaBitsRing::empty(party_id),
             #[cfg(feature = "ring-msm")]
-            dapoints_iring: super::daPoint::LazyDaPoints::empty(party_id),
+            dapoints_iring: super::dapoint::LazyDaPoints::empty(party_id),
             #[cfg(feature = "ring-msm")]
             wrap_masks_iring: super::wrap_mask::LazyWrapMasks::empty(party_id),
             #[cfg(not(feature = "ring-msm"))]
@@ -439,7 +439,7 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             ring_edabits_u64: LazyEdaBitsRing::<u64>::load(dir, party_id)?,
             ring_edabits_u128: LazyEdaBitsRing::<u128>::load(dir, party_id)?,
             #[cfg(feature = "ring-msm")]
-            dapoints: super::daPoint::LazyDaPoints::load(dir, party_id)?,
+            dapoints: super::dapoint::LazyDaPoints::load(dir, party_id)?,
             #[cfg(feature = "ring-msm")]
             wrap_masks: super::wrap_mask::LazyWrapMasks::load(dir, party_id)?,
             #[cfg(feature = "ring-msm")]
@@ -447,7 +447,7 @@ impl<F: PrimeField, C: ark_ec::CurveGroup> PreprocessingPool<F, C> {
             #[cfg(feature = "ring-msm")]
             ring_edabits_u66: LazyEdaBitsRing::<U66>::load(dir, party_id)?,
             #[cfg(feature = "ring-msm")]
-            dapoints_iring: super::daPoint::LazyDaPoints::load(&dir.join("iring"), party_id)?,
+            dapoints_iring: super::dapoint::LazyDaPoints::load(&dir.join("iring"), party_id)?,
             #[cfg(feature = "ring-msm")]
             wrap_masks_iring: super::wrap_mask::LazyWrapMasks::load(&dir.join("iring"), party_id)?,
             #[cfg(not(feature = "ring-msm"))]
@@ -505,305 +505,8 @@ impl<'a, F: PrimeField, C: ark_ec::CurveGroup> ForkablePreprocessingSession<'a, 
 }
 
 // ---------------------------------------------------------------------------
-// Pool generation / extension functions (moved from edabits.rs)
+// Pool generation / extension functions
 // ---------------------------------------------------------------------------
-// Ring-MSM free functions (ring_edabit_alpha2_seed_chunk, stream_ring_edabits,
-// preprocess_ring_edabits) have been moved to pool_experimental.rs.
-
-/// instead of 7 sequential rounds (5 edaBit + 2 daBit).
-///
-/// Round 1: P0→P2 sends all edaBit α₂ + daBit α₂; P1→P2 sends daBit s₁₂.
-/// Round 2: P2→P0 sends daBit s₂₀.
-#[tracing::instrument(skip_all, name = "preprocess_pool_batched")]
-fn preprocess_pool_batched<F: PrimeField, N: Rep3NetworkWorker>(
-    counts: [usize; 5], // [u8, u16, u32, u64, u128]
-    num_dabits: usize,
-    io: &mut IoContextPool<N>,
-) -> eyre::Result<PreprocessingPool<F>> {
-    use super::dabits;
-    use crate::protocols::rep3::rngs::Rep3Rand;
-
-    let party_id = io.party_id();
-    let fb = usize::try_from(F::MODULUS_BIT_SIZE).expect("u32 fits into usize").div_ceil(8);
-
-    // Phase 1: Fork 6 Rep3Rands and snapshot seeds (local, no communication).
-    let mut rands: [Rep3Rand; 6] = std::array::from_fn(|_| io.main().rngs.rand.fork());
-    let snaps: [_; 6] = std::array::from_fn(|i| rands[i].snapshot());
-
-    // Helper: compute edaBit α₂ for P0 given a forked Rep3Rand.
-    #[tracing::instrument(skip(eda_rand))]
-    fn edabit_alpha2_p0<T: IntRing2k, Fp: PrimeField>(num: usize, eda_rand: &mut Rep3Rand, fb: usize) -> Vec<Fp>
-    where
-        Standard: Distribution<T>,
-    {
-        if num == 0 {
-            return Vec::new();
-        }
-        let t_bytes = std::mem::size_of::<T>();
-        let k = T::K;
-        let stride = t_bytes + k * fb;
-        let gamma_total = num * t_bytes;
-        let (all1, g2) = {
-            let mut a = vec![0u8; num * stride];
-            let mut b = vec![0u8; gamma_total];
-            rayon::join(|| eda_rand.rng1.fill_bytes(&mut a), || eda_rand.rng2.fill_bytes(&mut b));
-            (a, b)
-        };
-        let mut out = vec![Fp::zero(); num * k];
-        out.par_chunks_mut(k).enumerate().with_min_len(256).for_each(|(i, chunk)| {
-            let base = i * stride;
-            let g1v = T::from_le_bytes(&all1[base..base + t_bytes]);
-            let g2v = T::from_le_bytes(&g2[i * t_bytes..(i + 1) * t_bytes]);
-            let gamma = g1v ^ g2v;
-            for j in 0..k {
-                let s = base + t_bytes + j * fb;
-                let alpha1 = dabits::parse_field::<Fp>(&all1, s);
-                let gbit = ((gamma >> j) & T::one()) == T::one();
-                chunk[j] = Fp::from(gbit as u64) - alpha1;
-            }
-        });
-        out
-    }
-
-    // Phase 2: Compute data to send (local, parallelizable).
-    match party_id {
-        PartyID::ID0 => {
-            // Compute all edaBit α₂ + daBit α₂.
-            let ea0 = edabit_alpha2_p0::<u8, F>(counts[0], &mut rands[0], fb);
-            let ea1 = edabit_alpha2_p0::<u16, F>(counts[1], &mut rands[1], fb);
-            let ea2 = edabit_alpha2_p0::<u32, F>(counts[2], &mut rands[2], fb);
-            let ea3 = edabit_alpha2_p0::<u64, F>(counts[3], &mut rands[3], fb);
-            let ea4 = edabit_alpha2_p0::<u128, F>(counts[4], &mut rands[4], fb);
-
-            // daBit α₂ (same logic as random_dabits_lazy P0 branch)
-            // daBit α₂ — per-item interleaved layout in rng1:
-            //   [g₀(1) a1₀(fb) r1₀(fb) | g₁(1) a1₁(fb) r1₁(fb) | ...]
-            let da_alpha2 = if num_dabits > 0 {
-                let r = &mut rands[5];
-                let da_stride = 1 + 2 * fb;
-                let slen1 = num_dabits * da_stride;
-                let slen2 = num_dabits;
-                let (s1, s2) = {
-                    let mut a = vec![0u8; slen1];
-                    let mut b = vec![0u8; slen2];
-                    rayon::join(|| r.rng1.fill_bytes(&mut a), || r.rng2.fill_bytes(&mut b));
-                    (a, b)
-                };
-                (0..num_dabits)
-                    .into_par_iter()
-                    .with_min_len(256)
-                    .map(|i| {
-                        let gbit = ((s1[i * da_stride] ^ s2[i]) & 1) != 0;
-                        let alpha1: F = dabits::parse_field(&s1, i * da_stride + 1);
-                        F::from(gbit as u64) - alpha1
-                    })
-                    .collect::<Vec<F>>()
-            } else {
-                Vec::new()
-            };
-
-            // Round 1: P0 → P2 — distribute across parallel fork channels
-            let mut combined: Vec<F> =
-                Vec::with_capacity(ea0.len() + ea1.len() + ea2.len() + ea3.len() + ea4.len() + da_alpha2.len());
-            combined.extend_from_slice(&ea0);
-            combined.extend_from_slice(&ea1);
-            combined.extend_from_slice(&ea2);
-            combined.extend_from_slice(&ea3);
-            combined.extend_from_slice(&ea4);
-            combined.extend_from_slice(&da_alpha2);
-            io.par_chunks(combined.into_par_iter(), None, |chunk: Vec<F>, ctx| -> eyre::Result<Vec<()>> {
-                ctx.network.send_many(PartyID::ID2, &chunk)?;
-                Ok(vec![])
-            })?;
-
-            // Round 2: P0 ← P2 receives daBit s₂₀ across fork channels
-            let s20: Vec<F> = if num_dabits > 0 {
-                let _span = info_span!("resv_s20").entered();
-                io.par_chunks(0..num_dabits, None, |_: Vec<usize>, ctx| -> eyre::Result<Vec<F>> {
-                    Ok(ctx.network.recv_many::<F>(PartyID::ID2)?)
-                })?
-            } else {
-                Vec::new()
-            };
-
-            let mk = |i: usize| snaps[i];
-            let (s1, p1, s2, p2) = mk(0);
-            let e0 = LazyEdaBits::<u8, F>::new(s1, p1, s2, p2, counts[0], Vec::new(), party_id);
-            let (s1, p1, s2, p2) = mk(1);
-            let e1 = LazyEdaBits::<u16, F>::new(s1, p1, s2, p2, counts[1], Vec::new(), party_id);
-            let (s1, p1, s2, p2) = mk(2);
-            let e2 = LazyEdaBits::<u32, F>::new(s1, p1, s2, p2, counts[2], Vec::new(), party_id);
-            let (s1, p1, s2, p2) = mk(3);
-            let e3 = LazyEdaBits::<u64, F>::new(s1, p1, s2, p2, counts[3], Vec::new(), party_id);
-            let (s1, p1, s2, p2) = mk(4);
-            let e4 = LazyEdaBits::<u128, F>::new(s1, p1, s2, p2, counts[4], Vec::new(), party_id);
-            let (ds1, dp1, ds2, dp2) = snaps[5];
-            Ok(PreprocessingPool::new(
-                party_id,
-                e0,
-                e1,
-                e2,
-                e3,
-                e4,
-                dabits::LazyDaBits::new(ds1, dp1, ds2, dp2, num_dabits, s20, party_id),
-            ))
-        }
-        PartyID::ID1 => {
-            // P1 only sends daBit s₁₂ to P2 (edaBits are local-only for P1).
-            // Per-item interleaved layout in rng2 (P1↔P0 stream):
-            //   [g₀(1) a1₀(fb) r1₀(fb) | g₁(1) a1₁(fb) r1₁(fb) | ...]
-            if num_dabits > 0 {
-                let r = &mut rands[5];
-                let da_stride = 1 + 2 * fb;
-                let slen2 = num_dabits * da_stride;
-                let slen1 = num_dabits;
-                let (s2, s1) = {
-                    let mut a = vec![0u8; slen2];
-                    let mut b = vec![0u8; slen1];
-                    rayon::join(|| r.rng2.fill_bytes(&mut a), || r.rng1.fill_bytes(&mut b));
-                    (a, b)
-                };
-                let theta_bytes = &s1;
-
-                let s12: Vec<F> = (0..num_dabits)
-                    .into_par_iter()
-                    .with_min_len(256)
-                    .map(|i| {
-                        let theta = (theta_bytes[i] & 1) != 0;
-                        let neg1_theta = if theta { -F::one() } else { F::one() };
-                        let alpha1: F = dabits::parse_field(&s2, i * da_stride + 1);
-                        let r1_val: F = dabits::parse_field(&s2, i * da_stride + 1 + fb);
-                        neg1_theta * alpha1 - r1_val
-                    })
-                    .collect();
-                io.network().send_many(PartyID::ID2, &s12)?;
-            }
-
-            let mk = |i: usize| snaps[i];
-            let (s1, p1, s2, p2) = mk(0);
-            let e0 = LazyEdaBits::<u8, F>::new(s1, p1, s2, p2, counts[0], Vec::new(), party_id);
-            let (s1, p1, s2, p2) = mk(1);
-            let e1 = LazyEdaBits::<u16, F>::new(s1, p1, s2, p2, counts[1], Vec::new(), party_id);
-            let (s1, p1, s2, p2) = mk(2);
-            let e2 = LazyEdaBits::<u32, F>::new(s1, p1, s2, p2, counts[2], Vec::new(), party_id);
-            let (s1, p1, s2, p2) = mk(3);
-            let e3 = LazyEdaBits::<u64, F>::new(s1, p1, s2, p2, counts[3], Vec::new(), party_id);
-            let (s1, p1, s2, p2) = mk(4);
-            let e4 = LazyEdaBits::<u128, F>::new(s1, p1, s2, p2, counts[4], Vec::new(), party_id);
-            let (ds1, dp1, ds2, dp2) = snaps[5];
-            Ok(PreprocessingPool::new(
-                party_id,
-                e0,
-                e1,
-                e2,
-                e3,
-                e4,
-                dabits::LazyDaBits::new(ds1, dp1, ds2, dp2, num_dabits, Vec::new(), party_id),
-            ))
-        }
-        PartyID::ID2 => {
-            // P2 advances daBit RNGs (to stay in sync) but doesn't use them.
-            if num_dabits > 0 {
-                let r = &mut rands[5];
-                let slen2 = num_dabits;
-                let slen1 = num_dabits;
-                let mut s2 = vec![0u8; slen2];
-                let mut s1 = vec![0u8; slen1];
-                rayon::join(|| r.rng2.fill_bytes(&mut s2), || r.rng1.fill_bytes(&mut s1));
-            }
-
-            // Round 1: receive combined α₂ from P0 + s₁₂ from P1
-            let total_eda =
-                counts.iter().enumerate().map(|(i, &c)| c * [u8::K, u16::K, u32::K, u64::K, u128::K][i]).sum::<usize>();
-            let total_recv = total_eda + num_dabits;
-
-            let combined: Vec<F> = if total_recv > 0 {
-                let _span = info_span!("resv_combined").entered();
-                io.par_chunks(0..total_recv, None, |_: Vec<usize>, ctx| -> eyre::Result<Vec<F>> {
-                    Ok(ctx.network.recv_many::<F>(PartyID::ID0)?)
-                })?
-            } else {
-                Vec::new()
-            };
-            debug_assert_eq!(combined.len(), total_recv);
-
-            let s12_recv: Vec<F> = if num_dabits > 0 {
-                let _span = info_span!("s12_recv").entered();
-                io.network().recv_many(PartyID::ID1)?
-            } else {
-                Vec::new()
-            };
-
-            // Split combined into 5 edaBit α₂ slices + 1 daBit α₂
-            let mut offset = 0;
-            let mut eda_alphas: [Vec<F>; 5] = Default::default();
-            for (idx, &c) in counts.iter().enumerate() {
-                let k = [u8::K, u16::K, u32::K, u64::K, u128::K][idx];
-                let len = c * k;
-                eda_alphas[idx] = combined[offset..offset + len].to_vec();
-                offset += len;
-            }
-            let dabit_alpha2 = &combined[offset..offset + num_dabits];
-
-            // Compute daBit s₂₀ and send to P0
-            let dabit_stored = if num_dabits > 0 {
-                // Re-derive theta from P2↔P1 seed (rng2 was advanced above, use snapshot).
-                let (_, _, ds2_seed, ds2_pos) = snaps[5];
-                let theta_buf = dabits::seek_and_generate(ds2_seed, ds2_pos, 0, num_dabits);
-
-                let s20: Vec<F> = (0..num_dabits)
-                    .into_par_iter()
-                    .with_min_len(256)
-                    .map(|i| {
-                        let theta = (theta_buf[i] & 1) != 0;
-                        let neg1_theta = if theta { -F::one() } else { F::one() };
-                        neg1_theta * dabit_alpha2[i]
-                    })
-                    .collect();
-
-                // Interleave s20 + s12 for LazyDaBits stored format (before send consumes s20)
-                let mut stored = Vec::with_capacity(2 * num_dabits);
-                for i in 0..num_dabits {
-                    stored.push(s20[i]);
-                    stored.push(s12_recv[i]);
-                }
-
-                // Round 2: P2 → P0 sends s₂₀ across fork channels
-                io.par_chunks(s20.into_par_iter(), None, |chunk: Vec<F>, ctx| -> eyre::Result<Vec<()>> {
-                    ctx.network.send_many(PartyID::ID0, &chunk)?;
-                    Ok(vec![])
-                })?;
-
-                stored
-            } else {
-                Vec::new()
-            };
-
-            let [a0, a1, a2, a3, a4] = eda_alphas;
-            let mk = |i: usize| snaps[i];
-            let (s1, p1, s2, p2) = mk(0);
-            let e0 = LazyEdaBits::<u8, F>::new(s1, p1, s2, p2, counts[0], a0, party_id);
-            let (s1, p1, s2, p2) = mk(1);
-            let e1 = LazyEdaBits::<u16, F>::new(s1, p1, s2, p2, counts[1], a1, party_id);
-            let (s1, p1, s2, p2) = mk(2);
-            let e2 = LazyEdaBits::<u32, F>::new(s1, p1, s2, p2, counts[2], a2, party_id);
-            let (s1, p1, s2, p2) = mk(3);
-            let e3 = LazyEdaBits::<u64, F>::new(s1, p1, s2, p2, counts[3], a3, party_id);
-            let (s1, p1, s2, p2) = mk(4);
-            let e4 = LazyEdaBits::<u128, F>::new(s1, p1, s2, p2, counts[4], a4, party_id);
-            let (ds1, dp1, ds2, dp2) = snaps[5];
-            Ok(PreprocessingPool::new(
-                party_id,
-                e0,
-                e1,
-                e2,
-                e3,
-                e4,
-                dabits::LazyDaBits::new(ds1, dp1, ds2, dp2, num_dabits, dabit_stored, party_id),
-            ))
-        }
-    }
-}
 
 fn env_usize(name: &str, default: usize) -> usize {
     std::env::var(name).ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(default)
@@ -1096,28 +799,6 @@ fn recv_field_messages_into_store<F: PrimeField + Copy, N: Rep3NetworkWorker + R
     Ok(())
 }
 
-fn receive_field_store_batch<F: PrimeField + Copy, N: Rep3NetworkWorker + Rep3RawFieldTransport>(
-    from: PartyID,
-    start_elem: usize,
-    expected_len: usize,
-    io: &mut IoContextPool<N>,
-    max_msg_elems: usize,
-    store: &mut backing_store::BackingStore<F>,
-) -> eyre::Result<()> {
-    recv_field_messages_into_store(from, start_elem, expected_len, io, max_msg_elems, store)
-}
-
-fn receive_field_writer_batch_ctx<F: PrimeField + Copy, N: Rep3Network + Rep3RawFieldTransport>(
-    from: PartyID,
-    start_elem: usize,
-    expected_len: usize,
-    io: &mut IoContext<N>,
-    max_msg_elems: usize,
-    writer: &backing_store::FileBackedWriter<F>,
-) -> eyre::Result<()> {
-    recv_field_messages_into_writer_ctx(from, start_elem, expected_len, io, max_msg_elems, writer)
-}
-
 fn recv_field_messages_into_writer_ctx<F: PrimeField + Copy, N: Rep3Network + Rep3RawFieldTransport>(
     from: PartyID,
     start_elem: usize,
@@ -1166,22 +847,6 @@ fn recv_field_messages_into_writer_ctx<F: PrimeField + Copy, N: Rep3Network + Re
     Ok(())
 }
 
-fn write_to_store<F: PrimeField + Copy>(
-    store: &mut backing_store::BackingStore<F>,
-    start_elem: usize,
-    data: &[F],
-) -> eyre::Result<()> {
-    let _span = tracing::trace_span!(
-        "append_to_store",
-        start_elem,
-        elems = data.len(),
-        bytes = data.len() * std::mem::size_of::<F>()
-    )
-    .entered();
-    store.write_at(start_elem, data)?;
-    Ok(())
-}
-
 fn write_bytes_to_store<F: PrimeField + Copy>(
     store: &mut backing_store::BackingStore<F>,
     start_elem: usize,
@@ -1218,47 +883,6 @@ fn field_vec_from_raw_bytes<F: PrimeField>(bytes: &[u8]) -> eyre::Result<Vec<F>>
     out_bytes.copy_from_slice(bytes);
     let out: Vec<F> = unsafe { std::mem::transmute(out) };
     Ok(out)
-}
-
-fn read_file_backed_range<F: PrimeField + Copy>(
-    file: &std::fs::File,
-    start: usize,
-    end: usize,
-) -> std::io::Result<Vec<F>> {
-    const { backing_store::assert_field_layout::<F>() };
-    if start >= end {
-        return std::result::Result::Ok(Vec::new());
-    }
-    let count = end - start;
-    let elem_size = std::mem::size_of::<F>();
-    let byte_offset = start * elem_size;
-    let byte_len = count * elem_size;
-
-    // SAFETY: same contract as BackingStore::read_file_backed_range.
-    let mut out: Vec<std::mem::MaybeUninit<F>> = Vec::with_capacity(count);
-    unsafe { out.set_len(count) };
-    let out_bytes = unsafe { std::slice::from_raw_parts_mut(out.as_mut_ptr() as *mut u8, byte_len) };
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::FileExt;
-        file.read_exact_at(out_bytes, byte_offset as u64)?;
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::FileExt;
-        file.seek_read(out_bytes, byte_offset as u64)?;
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        use std::io::{Read, Seek, SeekFrom};
-        let mut f = file.try_clone()?;
-        f.seek(SeekFrom::Start(byte_offset as u64))?;
-        f.read_exact(out_bytes)?;
-    }
-
-    let out: Vec<F> = unsafe { std::mem::transmute(out) };
-    std::result::Result::Ok(out)
 }
 
 /// Batched preprocessing into a persistence directory, using bounded-memory chunking.

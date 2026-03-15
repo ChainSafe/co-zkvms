@@ -21,8 +21,6 @@ use crate::{
     zkvm::witness::CommittedPolynomial,
 };
 use allocative::Allocative;
-#[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
 use common::constants::REGISTER_COUNT;
 use fixedbitset::FixedBitSet;
 use num_traits::Zero;
@@ -1233,8 +1231,4 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RegistersReadWriteC
         vec![eq_eval_cycle, self.gamma, self.gamma_sqr]
     }
 
-    #[cfg(feature = "allocative")]
-    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
-        flamegraph.visit_root(self);
-    }
 }

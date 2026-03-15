@@ -3,7 +3,6 @@ use std::sync::Arc;
 use jolt_core::poly::commitment::commitment_scheme::CommitmentScheme;
 use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::opening_proof::SumcheckId;
-use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::instruction_lookups::D;
 use jolt_core::zkvm::witness::VirtualPolynomial;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};

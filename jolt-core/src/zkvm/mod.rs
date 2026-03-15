@@ -268,12 +268,13 @@ where
     where
         PCS: ZkEvalCommitment<Bn254Curve>,
     {
-        let _pprof_verify = pprof_scope!("verify");
-
         #[cfg(test)]
         let T = proof.trace_length.next_power_of_two();
         #[cfg(test)]
-        let _guard = DoryGlobals::initialize(DTH_ROOT_OF_K, T);
+        {
+            use crate::poly::commitment::dory::DoryGlobals;
+            let _guard = DoryGlobals::initialize(DTH_ROOT_OF_K, T);
+        }
 
         if program_io.memory_layout != preprocessing.shared.memory_layout {
             return Err(ProofVerifyError::MemoryLayoutMismatch);

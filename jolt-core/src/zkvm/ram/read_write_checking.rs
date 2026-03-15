@@ -26,8 +26,6 @@ use crate::{
     zkvm::witness::{CommittedPolynomial, VirtualPolynomial},
 };
 use allocative::Allocative;
-#[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rayon::prelude::*;
 
@@ -1051,8 +1049,4 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for RamReadWriteCheckin
         vec![eq_eval, self.gamma]
     }
 
-    #[cfg(feature = "allocative")]
-    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
-        flamegraph.visit_root(self);
-    }
 }

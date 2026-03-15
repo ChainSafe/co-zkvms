@@ -202,7 +202,7 @@ fn build_dag_fixture(trace_file: &str) -> DagFixture {
                         );
                     if budget.dapoints > 0 {
                         let lazy_dp =
-                            mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints_from_columns(
+                            mpc_core::protocols::rep3_ring::preprocessing::dapoint::random_dapoints_from_columns(
                                 &q0_xlen,
                                 &q1_xlen,
                                 budget.dapoints / 2,
@@ -213,7 +213,7 @@ fn build_dag_fixture(trace_file: &str) -> DagFixture {
                     }
                     if budget.dapoints_iring > 0 {
                         let lazy_dp_iring =
-                            mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints_from_columns(
+                            mpc_core::protocols::rep3_ring::preprocessing::dapoint::random_dapoints_from_columns(
                                 &q0_64,
                                 &q1_64,
                                 budget.dapoints_iring / 2,

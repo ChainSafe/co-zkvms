@@ -6,7 +6,7 @@ use mpc_core::protocols::{
     },
     rep3_ring::{
         self,
-        edabits::{EdaBitsBatchScratch, EdaBitsRangeView, ForkedB2aScratch, PreprocessingPool},
+        edabits::{EdaBitsRangeView, ForkedB2aScratch, PreprocessingPool},
         ring::{bit::Bit, int_ring::IntRing2k},
         Rep3RingShare, Rep3RingSignedShare,
     },

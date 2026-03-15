@@ -4,7 +4,6 @@ use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::multilinear_polynomial::{BindingOrder, MultilinearPolynomial, PolynomialBinding};
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::poly::split_eq_poly::GruenSplitEqPolynomial;
-use jolt_core::transcripts::Transcript;
 use jolt_core::utils::math::Math;
 use jolt_core::utils::thread::unsafe_allocate_zero_vec;
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};

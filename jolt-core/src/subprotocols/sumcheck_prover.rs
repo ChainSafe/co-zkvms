@@ -52,7 +52,4 @@ pub trait SumcheckInstanceProver<F: JoltField, T: Transcript>: Send + Sync + May
     /// Caches polynomial opening claims needed after the sumcheck protocol completes.
     /// These openings will later be proven using either an opening proof or another sumcheck.
     fn cache_openings(&self, accumulator: &mut ProverOpeningAccumulator<F>, sumcheck_challenges: &[F::Challenge]);
-
-    #[cfg(feature = "allocative")]
-    fn update_flamegraph(&self, flamegraph: &mut allocative::FlameGraphBuilder);
 }

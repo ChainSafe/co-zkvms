@@ -384,37 +384,6 @@ impl<F> BackingStore<F> {
         }
     }
 
-    /// Read a range of elements in **consume** mode into an existing vec.
-    #[cfg(not(feature = "reuse-preproc"))]
-    pub(crate) fn read_consume_into(&self, start: usize, end: usize, out: &mut Vec<F>) -> io::Result<()>
-    where
-        F: Copy,
-    {
-        match self {
-            BackingStore::InMemory(v) => {
-                self.validate_range(start, end)?;
-                out.clear();
-                out.extend_from_slice(&v[start..end]);
-                Ok(())
-            }
-            BackingStore::FileBacked { file, path, .. } => {
-                if tracing::enabled!(tracing::Level::DEBUG) {
-                    tracing::debug!(
-                        path = %path.display(),
-                        start,
-                        end,
-                        "BackingStore::read_consume_into"
-                    );
-                }
-                self.read_file_backed_range_into(file, start, end, out)
-            }
-            BackingStore::Empty => {
-                out.clear();
-                Ok(())
-            }
-        }
-    }
-
     /// Read a range of elements in **consume** mode into an existing slice.
     #[cfg(not(feature = "reuse-preproc"))]
     pub(crate) fn read_consume_into_slice(&self, start: usize, end: usize, out: &mut [F]) -> io::Result<()>
@@ -462,13 +431,6 @@ impl<F> BackingStore<F> {
     /// Wrap a `Vec<F>`, returning `Empty` if the vec is empty.
     pub(crate) fn from_vec(v: Vec<F>) -> Self {
         if v.is_empty() { BackingStore::Empty } else { BackingStore::InMemory(v) }
-    }
-
-    /// Create a file-backed store at `path` for incremental `extend()` appends.
-    ///
-    /// The file is created (or truncated if it exists) and opened read+write.
-    pub(crate) fn create_file_backed(path: &Path) -> io::Result<Self> {
-        Self::create_file_backed_sized(path, 0)
     }
 
     /// Create a file-backed store at `path` with space reserved for `capacity_elems`.

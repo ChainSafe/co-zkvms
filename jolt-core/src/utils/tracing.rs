@@ -1,6 +1,5 @@
 
 use tracing::info;
-use tracing_subscriber::Layer;
 
 pub struct TracingGuard {
     _guard: Option<tracing_chrome::FlushGuard>,

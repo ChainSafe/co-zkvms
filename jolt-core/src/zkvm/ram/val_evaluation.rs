@@ -23,8 +23,6 @@ use crate::{
     },
 };
 use allocative::Allocative;
-#[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
 use rayon::prelude::*;
 
 #[derive(Allocative)]
@@ -339,10 +337,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstance<F, T> for ValEvaluationSumche
         vec![lt_eval(sumcheck_challenges, &self.r_cycle)]
     }
 
-    #[cfg(feature = "allocative")]
-    fn update_flamegraph(&self, flamegraph: &mut FlameGraphBuilder) {
-        flamegraph.visit_root(self);
-    }
 }
 
 #[cfg(feature = "zk")]

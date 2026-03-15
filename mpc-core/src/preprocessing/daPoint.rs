@@ -111,9 +111,8 @@ impl<C: CurveGroup> LazyDaPoints<C> {
         let data_path = dir.join("dapoints.data");
         if self.party_id == PartyID::ID0 {
             if !self.gammas.is_empty() {
-                let bytes: &[u8] = unsafe {
-                    std::slice::from_raw_parts(self.gammas.as_ptr() as *const u8, self.gammas.len())
-                };
+                let bytes: &[u8] =
+                    unsafe { std::slice::from_raw_parts(self.gammas.as_ptr() as *const u8, self.gammas.len()) };
                 let file = std::fs::File::create(&data_path)?;
                 let mut w = std::io::BufWriter::new(file);
                 std::io::Write::write_all(&mut w, bytes)?;
@@ -208,9 +207,13 @@ impl<C: CurveGroup> LazyDaPoints<C> {
         let alphas = if self.party_id != PartyID::ID0 {
             let points = {
                 #[cfg(feature = "reuse-preproc")]
-                { self.alphas.read_reuse(start, end)? }
+                {
+                    self.alphas.read_reuse(start, end)?
+                }
                 #[cfg(not(feature = "reuse-preproc"))]
-                { self.alphas.read_consume(start, end)? }
+                {
+                    self.alphas.read_consume(start, end)?
+                }
             };
             self.alphas.consume(start, end);
             points
@@ -367,8 +370,9 @@ mod tests {
     use super::*;
     use crate::protocols::rep3::pointshare::dot_product_dapoints;
     use crate::protocols::rep3::test_utils::run_rep3_local_test_with_coordinator;
+    use crate::protocols::rep3_ring::Rep3RingShare;
     use crate::protocols::rep3_ring::ring::ring_impl::RingElement;
-    use ark_bn254::{Fr, G1Projective};
+    use ark_bn254::G1Projective;
     use ark_std::UniformRand;
     use ark_std::Zero;
     use rand::RngCore;

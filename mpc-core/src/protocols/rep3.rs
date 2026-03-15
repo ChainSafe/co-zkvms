@@ -18,7 +18,7 @@ use num_bigint::BigUint;
 
 use crate::field::PrimeField;
 use ark_ff::One;
-use rand::{CryptoRng, Rng, prelude::Distribution};
+use rand::{CryptoRng, Rng};
 
 pub use crate::network::PartyID;
 pub use arithmetic::Rep3PrimeFieldShare;

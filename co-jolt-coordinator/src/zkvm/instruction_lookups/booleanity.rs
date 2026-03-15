@@ -3,7 +3,6 @@ use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::transcripts::Transcript;
 use jolt_core::zkvm::instruction_lookups::{D, LOG_K_CHUNK};
 use jolt_core::zkvm::witness::{CommittedPolynomial, VirtualPolynomial};
-use mpc_core::protocols::additive::AdditiveShare;
 
 use crate::poly::opening_proof::Rep3OpeningAccumulator;
 use jolt_core::field::JoltField;
@@ -102,58 +101,4 @@ impl<F: JoltField, T: Transcript> Rep3SumcheckInstance<F, T> for Rep3BooleanityS
             claims,
         );
     }
-}
-
-pub(crate) fn extend_degree_3_evals<F: JoltField>(
-    previous_claim: AdditiveShare<F>,
-    base: &[AdditiveShare<F>],
-    max_degree: usize,
-) -> Vec<AdditiveShare<F>> {
-    debug_assert_eq!(base.len(), DEGREE);
-    debug_assert!(max_degree >= DEGREE);
-
-    if max_degree == DEGREE {
-        return base.to_vec();
-    }
-
-    // Nodes for degree-3 polynomial at x=0..3.
-    let y0 = base[0];
-    let y1 = previous_claim - y0;
-    let y2 = base[1]; // eval at 2
-    let y3 = base[2]; // eval at 3
-
-    let mut evals = vec![AdditiveShare::<F>::zero(); max_degree];
-    evals[0] = y0;
-    evals[1] = y2;
-    evals[2] = y3;
-
-    // Evaluate at x = 4..=max_degree via Lagrange on nodes 0..3.
-    for x in 4..=max_degree {
-        let xf = F::from(x as u64);
-        let coeffs = lagrange_coeffs_consecutive_3::<F>(xf);
-        evals[x - 1] = y0 * coeffs[0] + y1 * coeffs[1] + y2 * coeffs[2] + y3 * coeffs[3];
-    }
-
-    evals
-}
-
-fn lagrange_coeffs_consecutive_3<F: JoltField>(x: F) -> [F; 4] {
-    // degree=3 nodes {0,1,2,3}. Precompute denominators and compute numerators on the fly.
-    // denom(k) = Π_{m!=k} (k - m).
-    let den0 = (F::from(0u64) - F::from(1u64)) * (F::from(0u64) - F::from(2u64)) * (F::from(0u64) - F::from(3u64));
-    let den1 = (F::from(1u64) - F::from(0u64)) * (F::from(1u64) - F::from(2u64)) * (F::from(1u64) - F::from(3u64));
-    let den2 = (F::from(2u64) - F::from(0u64)) * (F::from(2u64) - F::from(1u64)) * (F::from(2u64) - F::from(3u64));
-    let den3 = (F::from(3u64) - F::from(0u64)) * (F::from(3u64) - F::from(1u64)) * (F::from(3u64) - F::from(2u64));
-
-    let num0 = (x - F::from(1u64)) * (x - F::from(2u64)) * (x - F::from(3u64));
-    let num1 = (x - F::from(0u64)) * (x - F::from(2u64)) * (x - F::from(3u64));
-    let num2 = (x - F::from(0u64)) * (x - F::from(1u64)) * (x - F::from(3u64));
-    let num3 = (x - F::from(0u64)) * (x - F::from(1u64)) * (x - F::from(2u64));
-
-    [
-        num0 * den0.inverse().unwrap(),
-        num1 * den1.inverse().unwrap(),
-        num2 * den2.inverse().unwrap(),
-        num3 * den3.inverse().unwrap(),
-    ]
 }

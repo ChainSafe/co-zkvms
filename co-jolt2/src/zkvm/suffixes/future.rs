@@ -7,7 +7,7 @@ use crate::utils::types::rep3_value::Rep3Value;
 use jolt_core::field::JoltField;
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3_ring::edabits::{
-    EdaBitsBatchScratch, EdaBitsRangeView, ForkedB2aScratch, PreprocessingPool,
+    EdaBitsRangeView, ForkedB2aScratch, PreprocessingPool,
 };
 use mpc_core::protocols::rep3_ring::ring::bit::Bit;
 use mpc_core::protocols::rep3_ring::ring::int_ring::IntRing2k;

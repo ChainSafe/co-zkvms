@@ -346,7 +346,7 @@ fn prove_loop(
         // Ring MSM preprocessing: wrap masks + daPoints in parallel on forks.
         #[cfg(feature = "ring-msm")]
         {
-            use mpc_core::protocols::rep3_ring::preprocessing::daPoint::random_dapoints_from_columns;
+            use mpc_core::protocols::rep3_ring::preprocessing::dapoint::random_dapoints_from_columns;
             use mpc_core::protocols::rep3_ring::preprocessing::wrap_mask::generate_wrap_masks_lazy;
 
             let (q0_xlen, q1_xlen, q0_64, q1_64) = co_jolt2::poly::commitment::dory::precompute_dapoint_q_columns(

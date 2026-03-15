@@ -323,13 +323,7 @@ pub trait MulTrunc {
     fn mul_trunc<const M: usize, const P: usize>(&self, other: &Self::Other<M>) -> Self::Output<P>;
 }
 
-#[cfg(feature = "allocative")]
-pub trait MaybeAllocative: Allocative {}
-#[cfg(feature = "allocative")]
-impl<T: Allocative> MaybeAllocative for T {}
-#[cfg(not(feature = "allocative"))]
 pub trait MaybeAllocative {}
-#[cfg(not(feature = "allocative"))]
 impl<T> MaybeAllocative for T {}
 
 pub trait OptimizedMul<Rhs, Output>: Sized + Mul<Rhs, Output = Output> {

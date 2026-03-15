@@ -98,13 +98,6 @@ pub struct BlindFoldSpartanProver<'a, F: JoltField> {
     z: Vec<F>,
 }
 
-#[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for BlindFoldSpartanProver<'_, F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        let _ = visitor;
-    }
-}
-
 impl<'a, F: JoltField> BlindFoldSpartanProver<'a, F> {
     #[tracing::instrument(skip_all, name = "BlindFoldSpartanProver::new")]
     pub fn new(r1cs: &'a VerifierR1CS<F>, u: F, z: Vec<F>, e: Vec<F>, tau: Vec<F::Challenge>) -> Self {
@@ -253,10 +246,6 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T> for BlindFoldSpar
         // eq(τ, r) * (Az(r)*Bz(r) - u*Cz(r) - E(r)) = final_sumcheck_claim
     }
 
-    #[cfg(feature = "allocative")]
-    fn update_flamegraph(&self, _flamegraph: &mut allocative::FlameGraphBuilder) {
-        // No-op
-    }
 }
 
 /// Final claims from the Spartan sumcheck prover

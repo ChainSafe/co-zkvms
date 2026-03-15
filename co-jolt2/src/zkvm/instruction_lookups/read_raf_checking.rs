@@ -9,11 +9,10 @@ use jolt_core::field::JoltField;
 use jolt_core::poly::eq_poly::EqPolynomial;
 use jolt_core::poly::identity_poly::{IdentityPolynomial, OperandPolynomial, OperandSide};
 use jolt_core::poly::multilinear_polynomial::{
-    BindingOrder, MultilinearPolynomial, PolynomialBinding, PolynomialEvaluation,
+    BindingOrder, MultilinearPolynomial, PolynomialBinding,
 };
 use jolt_core::poly::opening_proof::{OpeningPoint, SumcheckId, BIG_ENDIAN};
 use jolt_core::poly::prefix_suffix::{Prefix, PrefixRegistry, PrefixSuffixDecomposition};
-use jolt_core::transcripts::Transcript;
 use jolt_core::utils::expanding_table::ExpandingTable;
 use jolt_core::utils::lookup_bits::LookupBits;
 use jolt_core::utils::math::Math;

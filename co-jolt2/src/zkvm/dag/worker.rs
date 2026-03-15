@@ -14,6 +14,7 @@ use crate::utils::memory::maybe_purge_jemalloc;
 use crate::utils::types::MaybeShared;
 use crate::zkvm::dag::stage::{Rep3JoltDagStagesWorker, SumcheckStagesWorker};
 use crate::zkvm::dag::state_manager::StateManagerWorker;
+#[cfg(feature = "ring-msm")]
 use crate::zkvm::inc_biased_b2a::biased_inc_b2a_many;
 use crate::zkvm::spartan::Rep3SpartanDagWorker;
 use crate::zkvm::witness::{generate_witness_batch_rep3, populate_cycle_witness_rep3};
@@ -194,6 +195,7 @@ impl Rep3JoltDagWorker {
         // Populate the field-domain per-cycle witness cache (used for Spartan Stage1 and later).
         populate_cycle_witness_rep3(state, io_ctx, preproc)?;
 
+        #[cfg_attr(not(feature = "ring-msm"), allow(unused_mut))]
         let mut witness_polys = generate_witness_batch_rep3(&poly_keys, state, io_ctx, preproc)?;
 
         let instruction_one_hot_polys: [Rep3OneHotPolynomial<F>; D] = std::array::from_fn(|i| {
@@ -277,7 +279,7 @@ impl Rep3JoltDagWorker {
                         // A2B → r2f_b2a → sub bias, chunked to limit RSS.
                         let inc_b2a_chunk: usize =
                             std::env::var("INC_B2A_CHUNK").ok().and_then(|s| s.parse().ok()).unwrap_or(8 * 1024);
-                        let inc = biased_inc_b2a_many(&arith_shares, io_ctx, preproc, inc_b2a_chunk, 1, party_id)?;
+                        let inc = biased_inc_b2a_many(&arith_shares, io_ctx, preproc, inc_b2a_chunk, 1, _party_id)?;
 
                         let dense = crate::poly::dense_mlpoly::Rep3DensePolynomial::new(inc);
                         match key {

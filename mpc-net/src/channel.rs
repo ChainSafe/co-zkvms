@@ -1,6 +1,6 @@
 //! A channel abstraction for sending and receiving messages.
 use bytes::{Bytes, BytesMut};
-use futures::{Sink, SinkExt, Stream, StreamExt, TryStreamExt};
+use futures::{Sink, SinkExt, Stream, StreamExt};
 use quinn::{RecvStream, SendStream};
 use std::{
     io,
@@ -830,11 +830,6 @@ fn quic_default_write_chunk_bytes() -> usize {
 
 fn quic_bulk_write_chunk_bytes() -> usize {
     parse_quic_chunk_kb("MPC_QUIC_BULK_WRITE_CHUNK_KB", 1024)
-}
-
-#[inline]
-fn err(msg: &str) -> Result<(), io::Error> {
-    Err(io::Error::new(io::ErrorKind::Other, msg))
 }
 
 #[inline]

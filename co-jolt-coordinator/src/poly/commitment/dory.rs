@@ -33,7 +33,6 @@ use tracing::trace_span;
 
 use crate::poly::commitment::Rep3CommitmentScheme;
 
-type DoryMaskedRowsRequest = (Vec<G1Affine>, Vec<Rep3PrimeFieldShare<Fr>>);
 type DoryVmvShareMsg = ((Fq12, Fq12), Option<G1Affine>, Fr);
 type DoryFirstReducePublicMsg = (Option<Fq12>, Option<Fq12>, Option<G1Affine>, Option<G2Affine>);
 type DoryFirstReduceShareMsg = ((Fq12, Fq12), DoryFirstReducePublicMsg);

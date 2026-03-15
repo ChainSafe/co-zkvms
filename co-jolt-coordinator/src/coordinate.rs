@@ -11,7 +11,6 @@ use jolt_core::zkvm::witness::{compute_d_parameter, AllCommittedPolynomials, DTH
 use jolt_core::zkvm::{Jolt, JoltVerifierPreprocessing};
 use mpc_core::protocols::rep3::network::Rep3NetworkCoordinator;
 use mpc_core::protocols::rep3::PartyID;
-use mpc_net::topology::MpcStarNetCoordinator;
 use tracer::JoltDevice;
 use tracing::info;
 

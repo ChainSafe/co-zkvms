@@ -3,7 +3,6 @@
 use eyre::Context;
 use jolt_core::poly::opening_proof::{OpeningPoint, BIG_ENDIAN};
 use jolt_core::poly::unipoly::UniPoly;
-use jolt_core::transcripts::Transcript;
 use mpc_core::protocols::additive::{self, AdditiveShare};
 use mpc_core::protocols::rep3::network::{IoContextPool, Rep3NetworkWorker};
 use mpc_core::protocols::rep3::{PartyID, Rep3PrimeFieldShare};

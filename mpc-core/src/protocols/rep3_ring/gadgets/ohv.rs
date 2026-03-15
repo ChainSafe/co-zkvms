@@ -11,7 +11,7 @@ use crate::protocols::{
     },
 };
 use ark_ff::One;
-use itertools::{Itertools, izip};
+use itertools::izip;
 use rand::{distributions::Standard, prelude::Distribution};
 use rayon::prelude::*;
 

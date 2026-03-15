@@ -25,8 +25,6 @@ use itertools::{Itertools, izip};
 use rand::{distributions::Standard, prelude::Distribution};
 use std::ops::Neg;
 
-use rayon::prelude::*;
-
 /// Transforms the replicated shared value x from an arithmetic sharing to a binary sharing. I.e., x = x_1 + x_2 + x_3 gets transformed into x = x'_1 xor x'_2 xor x'_3.
 pub fn a2b<T: IntRing2k, N: Rep3Network>(
     x: Rep3RingShare<T>,
