@@ -77,8 +77,8 @@ getrandom_v03 = { version = "0.3.3", package = "getrandom", default-features = f
 hex-literal = "0.4.1"
 
 [patch.crates-io]
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", rev = "2b22f4959e89bd0656f4f261c3a854c29b87a7da" }
-ark-ec = { git = "https://github.com/a16z/arkworks-algebra", rev = "2b22f4959e89bd0656f4f261c3a854c29b87a7da" }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", rev = "2b22f4959e89bd0656f4f261c3a854c29b87a7da", default-features = false }
-ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", rev = "2b22f4959e89bd0656f4f261c3a854c29b87a7da" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }

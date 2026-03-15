@@ -23,7 +23,7 @@
 //!
 //! Custom evaluators in `eval_az_by_name`/`eval_bz_by_name` provide optimized Az/Bz evaluation
 //! using `SmallScalar` types to avoid field conversions. They should:
-//! - Use appropriate `I8OrI96` variants (prefer `Bool` or `I8` for flags/small sums)
+//! - Use appropriate `i128` values (prefer small values for flags/small sums)
 //! - Use appropriate `S160` variants (prefer `U64AndSign` for u64-u64 diffs)
 //! - Only use `U128AndSign` when 128-bit arithmetic is inherently required
 
@@ -31,7 +31,7 @@ use super::inputs::{JoltR1CSInputs, R1CSCycleInputs};
 use crate::field::JoltField;
 use crate::poly::multilinear_polynomial::MultilinearPolynomial;
 use crate::zkvm::instruction::CircuitFlags;
-use ark_ff::biginteger::{I8OrI96, S160};
+use ark_ff::biginteger::S160;
 use common::constants::XLEN;
 
 pub use super::ops::{Term, LC};
@@ -491,7 +491,7 @@ pub static UNIFORM_R1CS: [NamedConstraint; NUM_R1CS_CONSTRAINTS] = [
 ];
 
 /// Evaluate Az by name using a fully materialized R1CS cycle inputs
-pub fn eval_az_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs) -> I8OrI96 {
+pub fn eval_az_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs) -> i128 {
     use ConstraintName as N;
     match c.name {
         // Az: LeftOperandIsRs1Value flag (0/1)
@@ -551,15 +551,15 @@ pub fn eval_az_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
         // Az: Assert flag (0/1)
         N::AssertLookupOne => row.flags[CircuitFlags::Assert].into(),
         // Az: Rd register index (0 disables write)
-        N::WriteLookupOutputToRDDef => I8OrI96::from_i8(row.rd_addr as i8),
+        N::WriteLookupOutputToRDDef => (row.rd_addr as i128),
         N::RdWriteEqLookupIfWriteLookupToRd => {
             // Az: WriteLookupOutputToRD indicator (0/1)
-            I8OrI96::from_i8(row.write_lookup_output_to_rd_addr as i8)
+            (row.write_lookup_output_to_rd_addr as i128)
         }
         // Az: Rd register index (0 disables write)
-        N::WritePCtoRDDef => I8OrI96::from_i8(row.rd_addr as i8),
+        N::WritePCtoRDDef => (row.rd_addr as i128),
         // Az: WritePCtoRD indicator (0/1)
-        N::RdWriteEqPCPlusConstIfWritePCtoRD => I8OrI96::from_i8(row.write_pc_to_rd_addr as i8),
+        N::RdWriteEqPCPlusConstIfWritePCtoRD => (row.write_pc_to_rd_addr as i128),
         // Az: Jump flag (0/1)
         N::ShouldJumpDef => row.flags[CircuitFlags::Jump].into(),
         // Az: ShouldJump indicator (0/1)
@@ -568,13 +568,13 @@ pub fn eval_az_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
         N::ShouldBranchDef => row.flags[CircuitFlags::Branch].into(),
         // Note: Az uses ShouldBranch in the u64 domain (product Branch * LookupOutput)
         // Az: ShouldBranch indicator (0/1)
-        N::NextUnexpPCEqPCPlusImmIfShouldBranch => I8OrI96::from(row.should_branch),
+        N::NextUnexpPCEqPCPlusImmIfShouldBranch => row.should_branch as i128,
         N::NextUnexpPCUpdateOtherwise => {
             // Az encodes 1 - ShouldBranch - Jump = (1 - Jump) - ShouldBranch.
             let jump = row.flags[CircuitFlags::Jump];
             let not_jump: i128 = if jump { 0 } else { 1 };
             let diff = not_jump - (row.should_branch as i128);
-            I8OrI96::from(diff)
+            diff
         }
         // Az: InlineSequenceInstruction flag (0/1)
         N::NextPCEqPCPlusOneIfInline => row.flags[CircuitFlags::InlineSequenceInstruction].into(),
@@ -702,7 +702,7 @@ pub fn eval_bz_by_name<F: JoltField>(c: &NamedConstraint, row: &R1CSCycleInputs)
 pub fn eval_az_bz_batch_from_row<F: JoltField>(
     constraints: &[NamedConstraint],
     row: &R1CSCycleInputs,
-    az_output: &mut [I8OrI96],
+    az_output: &mut [i128],
     bz_output: &mut [S160],
 ) {
     assert_eq!(constraints.len(), az_output.len());

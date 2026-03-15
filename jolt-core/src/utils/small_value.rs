@@ -5,7 +5,7 @@ use crate::field::JoltField;
 // Accumulation primitives for SVO (moved from zkvm/r1cs/types.rs)
 pub mod accum {
     use crate::field::{FmaddTrunc, JoltField};
-    use ark_ff::biginteger::{I8OrI96, S160, S224};
+    use ark_ff::biginteger::{S160, S224};
     use num_traits::Zero;
 
     /// Final unreduced product after multiplying by a 256-bit field element (512-bit unsigned)
@@ -51,11 +51,11 @@ pub mod accum {
             self.neg = UnreducedProduct::<F>::zero();
         }
 
-        /// fmadd with an `I8OrI96` (signed, up to 2 limbs)
+        /// fmadd with an `i128` Az coefficient
         #[inline(always)]
-        pub fn fmadd_az(&mut self, field: &F, az: I8OrI96) {
+        pub fn fmadd_az(&mut self, field: &F, az: i128) {
             let field_bigint = field.as_unreduced_ref();
-            let v = az.to_i128();
+            let v = az;
             if v != 0 {
                 let abs = v.unsigned_abs();
                 let mag = F::Unreduced::<2>::from(abs);
@@ -117,7 +117,39 @@ pub mod svo_helpers {
     use crate::poly::unipoly::CompressedUniPoly;
     use crate::subprotocols::sumcheck::process_eq_sumcheck_round;
     use crate::transcripts::Transcript;
-    use ark_ff::biginteger::{I8OrI96, S160};
+    use ark_ff::biginteger::{S160, S224};
+
+    /// Multiply an i128 (Az coefficient) by an S160 (Bz value) to produce an S224 product.
+    /// Replaces the removed `I8OrI96 * S160 -> S224` operator.
+    #[inline]
+    fn mul_az_bz(az: i128, bz: S160) -> S224 {
+        if az == 0 || bz.is_zero() {
+            return S224::zero();
+        }
+        let az_positive = az >= 0;
+        let az_abs = az.unsigned_abs();
+        // az_abs fits in 128 bits; bz magnitude is 160 bits (2 u64 limbs + 1 u32)
+        // product fits in 288 bits but S224 truncates to 224 bits — same as old I8OrI96*S160
+        let bz_lo = bz.magnitude_lo();
+        let b0 = bz_lo[0] as u128;
+        let b1 = bz_lo[1] as u128;
+        let b2 = bz.magnitude_hi() as u128;
+
+        // Schoolbook multiply: az_abs (128-bit) * [b0, b1, b2] (160-bit)
+        let p0 = az_abs * b0;
+        let p1 = az_abs * b1;
+        let p2 = az_abs * b2;
+
+        let (r0, carry0) = (p0 as u64, p0 >> 64);
+        let sum1 = carry0 + p1;
+        let (r1, carry1) = (sum1 as u64, sum1 >> 64);
+        let sum2 = carry1 + p2;
+        let (r2, carry2) = (sum2 as u64, sum2 >> 64);
+        let r3_hi = carry2 as u32; // top 32 bits
+
+        let result_positive = az_positive == bz.is_positive();
+        S224::new([r0, r1, r2], r3_hi, result_positive)
+    }
 
     // SVOEvalPoint enum definition
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -411,7 +443,7 @@ pub mod svo_helpers {
         const NUM_TERNARY_POINTS_CONST: usize,  // pow(3, NUM_SVO_ROUNDS)
         F: JoltField,
     >(
-        binary_az_evals_input: &[I8OrI96], // 2^N Az at binary points
+        binary_az_evals_input: &[i128], // 2^N Az at binary points
         binary_bz_evals_input: &[S160],    // 2^N Bz at binary points
         e_in_val: &F,
         tA_pos_acc: &mut [UnreducedProduct<F>],
@@ -440,17 +472,17 @@ pub mod svo_helpers {
             precompute_ternary_point_infos::<NUM_SVO_ROUNDS, NUM_TERNARY_POINTS_CONST>();
 
         // Memo tables (const-size arrays)
-        let mut memoized_az_evals: [Option<I8OrI96>; NUM_TERNARY_POINTS_CONST] = [None; NUM_TERNARY_POINTS_CONST];
+        let mut memoized_az_evals: [Option<i128>; NUM_TERNARY_POINTS_CONST] = [None; NUM_TERNARY_POINTS_CONST];
         let mut memoized_bz_evals: [Option<S160>; NUM_TERNARY_POINTS_CONST] = [None; NUM_TERNARY_POINTS_CONST];
 
         // Recursive helper: Az extension at ternary index k with memoization
         #[inline]
         fn get_az_ext_const<const N: usize, const NUM_TERN: usize>(
             k: usize,
-            bin: &[I8OrI96],
-            memo: &mut [Option<I8OrI96>; NUM_TERN],
+            bin: &[i128],
+            memo: &mut [Option<i128>; NUM_TERN],
             info: &[TernaryPointInfo<N>; NUM_TERN],
-        ) -> I8OrI96 {
+        ) -> i128 {
             if let Some(v) = memo[k] {
                 return v;
             }
@@ -505,7 +537,7 @@ pub mod svo_helpers {
             );
 
             // `az_ext` is likely to be zero
-            if az_ext.is_zero() {
+            if az_ext == 0 {
                 continue;
             }
 
@@ -519,7 +551,7 @@ pub mod svo_helpers {
             // No need for this - `bz_ext` is less likely to be zero than `az_ext`
             // if bz_ext.is_zero() { continue; }
 
-            let prod = az_ext * bz_ext;
+            let prod = mul_az_bz(az_ext, bz_ext);
             fmadd_unreduced::<F>(&mut tA_pos_acc[i_temp_tA], &mut tA_neg_acc[i_temp_tA], e_in_val, prod);
         }
     }
@@ -529,7 +561,7 @@ pub mod svo_helpers {
     /// (0,I), (1,I), (I,0), (I,1), (I,I) in this order.
     #[inline]
     pub fn compute_and_update_tA_inplace_2<F: JoltField>(
-        binary_az_evals: &[I8OrI96],
+        binary_az_evals: &[i128],
         binary_bz_evals: &[S160],
         e_in_val: &F,
         tA_pos_acc: &mut [UnreducedProduct<F>],
@@ -560,34 +592,34 @@ pub mod svo_helpers {
         let bz_i1 = bz11 - bz01;
 
         // 1. (0,I) -> tA[0]
-        if !az_0i.is_zero() && !bz_0i.is_zero() {
-            let prod = az_0i * bz_0i;
+        if !az_0i == 0 && !bz_0i.is_zero() {
+            let prod = mul_az_bz(az_0i, bz_0i);
             fmadd_unreduced::<F>(&mut tA_pos_acc[0], &mut tA_neg_acc[0], e_in_val, prod);
         }
 
         // 2. (1,I) -> tA[1]
-        if !az_1i.is_zero() && !bz_1i.is_zero() {
-            let prod = az_1i * bz_1i;
+        if !az_1i == 0 && !bz_1i.is_zero() {
+            let prod = mul_az_bz(az_1i, bz_1i);
             fmadd_unreduced::<F>(&mut tA_pos_acc[1], &mut tA_neg_acc[1], e_in_val, prod);
         }
 
         // 3. (I,0) -> tA[2]
-        if !az_i0.is_zero() && !bz_i0.is_zero() {
-            let prod = az_i0 * bz_i0;
+        if !az_i0 == 0 && !bz_i0.is_zero() {
+            let prod = mul_az_bz(az_i0, bz_i0);
             fmadd_unreduced::<F>(&mut tA_pos_acc[2], &mut tA_neg_acc[2], e_in_val, prod);
         }
 
         // 4. (I,1) -> tA[3]
-        if !az_i1.is_zero() && !bz_i1.is_zero() {
-            let prod = az_i1 * bz_i1;
+        if !az_i1 == 0 && !bz_i1.is_zero() {
+            let prod = mul_az_bz(az_i1, bz_i1);
             fmadd_unreduced::<F>(&mut tA_pos_acc[3], &mut tA_neg_acc[3], e_in_val, prod);
         }
 
         // 5. (I,I) -> tA[4]
         let az_ii = az_1i - az_0i;
         let bz_ii = bz_1i - bz_0i;
-        if !az_ii.is_zero() && !bz_ii.is_zero() {
-            let prod = az_ii * bz_ii;
+        if !az_ii == 0 && !bz_ii.is_zero() {
+            let prod = mul_az_bz(az_ii, bz_ii);
             fmadd_unreduced::<F>(&mut tA_pos_acc[4], &mut tA_neg_acc[4], e_in_val, prod);
         }
     }
@@ -596,7 +628,7 @@ pub mod svo_helpers {
     /// Updates 19 non-binary accumulators in the same order as the field version.
     #[inline]
     pub fn compute_and_update_tA_inplace_3<F: JoltField>(
-        binary_az_evals: &[I8OrI96],
+        binary_az_evals: &[i128],
         binary_bz_evals: &[S160],
         e_in_val: &F,
         tA_pos_acc: &mut [UnreducedProduct<F>],
@@ -627,134 +659,134 @@ pub mod svo_helpers {
         // Precompute diffs used multiple times
         let az_00i = az001 - az000;
         let bz_00i = bz001 - bz000;
-        if !az_00i.is_zero() && !bz_00i.is_zero() {
-            let prod = az_00i * bz_00i;
+        if !az_00i == 0 && !bz_00i.is_zero() {
+            let prod = mul_az_bz(az_00i, bz_00i);
             fmadd_unreduced::<F>(&mut tA_pos_acc[0], &mut tA_neg_acc[0], e_in_val, prod);
         }
 
         let az_01i = az011 - az010;
         let bz_01i = bz011 - bz010;
-        if !az_01i.is_zero() && !bz_01i.is_zero() {
-            let prod = az_01i * bz_01i;
+        if !az_01i == 0 && !bz_01i.is_zero() {
+            let prod = mul_az_bz(az_01i, bz_01i);
             fmadd_unreduced::<F>(&mut tA_pos_acc[1], &mut tA_neg_acc[1], e_in_val, prod);
         }
 
         let az_0i0 = az010 - az000;
         let bz_0i0 = bz010 - bz000;
-        if !az_0i0.is_zero() && !bz_0i0.is_zero() {
-            let prod = az_0i0 * bz_0i0;
+        if !az_0i0 == 0 && !bz_0i0.is_zero() {
+            let prod = mul_az_bz(az_0i0, bz_0i0);
             fmadd_unreduced::<F>(&mut tA_pos_acc[2], &mut tA_neg_acc[2], e_in_val, prod);
         }
 
         let az_0i1 = az011 - az001;
         let bz_0i1 = bz011 - bz001;
-        if !az_0i1.is_zero() && !bz_0i1.is_zero() {
-            let prod = az_0i1 * bz_0i1;
+        if !az_0i1 == 0 && !bz_0i1.is_zero() {
+            let prod = mul_az_bz(az_0i1, bz_0i1);
             fmadd_unreduced::<F>(&mut tA_pos_acc[3], &mut tA_neg_acc[3], e_in_val, prod);
         }
 
         let az_0ii = az_01i - az_00i;
         let bz_0ii = bz_01i - bz_00i;
-        if !az_0ii.is_zero() && !bz_0ii.is_zero() {
-            let prod = az_0ii * bz_0ii;
+        if !az_0ii == 0 && !bz_0ii.is_zero() {
+            let prod = mul_az_bz(az_0ii, bz_0ii);
             fmadd_unreduced::<F>(&mut tA_pos_acc[4], &mut tA_neg_acc[4], e_in_val, prod);
         }
 
         let az_10i = az101 - az100;
         let bz_10i = bz101 - bz100;
-        if !az_10i.is_zero() && !bz_10i.is_zero() {
-            let prod = az_10i * bz_10i;
+        if !az_10i == 0 && !bz_10i.is_zero() {
+            let prod = mul_az_bz(az_10i, bz_10i);
             fmadd_unreduced::<F>(&mut tA_pos_acc[5], &mut tA_neg_acc[5], e_in_val, prod);
         }
 
         let az_11i = az111 - az110;
         let bz_11i = bz111 - bz110;
-        if !az_11i.is_zero() && !bz_11i.is_zero() {
-            let prod = az_11i * bz_11i;
+        if !az_11i == 0 && !bz_11i.is_zero() {
+            let prod = mul_az_bz(az_11i, bz_11i);
             fmadd_unreduced::<F>(&mut tA_pos_acc[6], &mut tA_neg_acc[6], e_in_val, prod);
         }
 
         let az_1i0 = az110 - az100;
         let bz_1i0 = bz110 - bz100;
-        if !az_1i0.is_zero() && !bz_1i0.is_zero() {
-            let prod = az_1i0 * bz_1i0;
+        if !az_1i0 == 0 && !bz_1i0.is_zero() {
+            let prod = mul_az_bz(az_1i0, bz_1i0);
             fmadd_unreduced::<F>(&mut tA_pos_acc[7], &mut tA_neg_acc[7], e_in_val, prod);
         }
 
         let az_1i1 = az111 - az101;
         let bz_1i1 = bz111 - bz101;
-        if !az_1i1.is_zero() && !bz_1i1.is_zero() {
-            let prod = az_1i1 * bz_1i1;
+        if !az_1i1 == 0 && !bz_1i1.is_zero() {
+            let prod = mul_az_bz(az_1i1, bz_1i1);
             fmadd_unreduced::<F>(&mut tA_pos_acc[8], &mut tA_neg_acc[8], e_in_val, prod);
         }
 
         let az_1ii = az_11i - az_10i;
         let bz_1ii = bz_11i - bz_10i;
-        if !az_1ii.is_zero() && !bz_1ii.is_zero() {
-            let prod = az_1ii * bz_1ii;
+        if !az_1ii == 0 && !bz_1ii.is_zero() {
+            let prod = mul_az_bz(az_1ii, bz_1ii);
             fmadd_unreduced::<F>(&mut tA_pos_acc[9], &mut tA_neg_acc[9], e_in_val, prod);
         }
 
         let az_i00 = az100 - az000;
         let bz_i00 = bz100 - bz000;
-        if !az_i00.is_zero() && !bz_i00.is_zero() {
-            let prod = az_i00 * bz_i00;
+        if !az_i00 == 0 && !bz_i00.is_zero() {
+            let prod = mul_az_bz(az_i00, bz_i00);
             fmadd_unreduced::<F>(&mut tA_pos_acc[10], &mut tA_neg_acc[10], e_in_val, prod);
         }
 
         let az_i01 = az101 - az001;
         let bz_i01 = bz101 - bz001;
-        if !az_i01.is_zero() && !bz_i01.is_zero() {
-            let prod = az_i01 * bz_i01;
+        if !az_i01 == 0 && !bz_i01.is_zero() {
+            let prod = mul_az_bz(az_i01, bz_i01);
             fmadd_unreduced::<F>(&mut tA_pos_acc[11], &mut tA_neg_acc[11], e_in_val, prod);
         }
 
         let az_i0i = az_i01 - az_i00;
         let bz_i0i = bz_i01 - bz_i00;
-        if !az_i0i.is_zero() && !bz_i0i.is_zero() {
-            let prod = az_i0i * bz_i0i;
+        if !az_i0i == 0 && !bz_i0i.is_zero() {
+            let prod = mul_az_bz(az_i0i, bz_i0i);
             fmadd_unreduced::<F>(&mut tA_pos_acc[12], &mut tA_neg_acc[12], e_in_val, prod);
         }
 
         let az_i10 = az110 - az010;
         let bz_i10 = bz110 - bz010;
-        if !az_i10.is_zero() && !bz_i10.is_zero() {
-            let prod = az_i10 * bz_i10;
+        if !az_i10 == 0 && !bz_i10.is_zero() {
+            let prod = mul_az_bz(az_i10, bz_i10);
             fmadd_unreduced::<F>(&mut tA_pos_acc[13], &mut tA_neg_acc[13], e_in_val, prod);
         }
 
         let az_i11 = az111 - az011;
         let bz_i11 = bz111 - bz011;
-        if !az_i11.is_zero() && !bz_i11.is_zero() {
-            let prod = az_i11 * bz_i11;
+        if !az_i11 == 0 && !bz_i11.is_zero() {
+            let prod = mul_az_bz(az_i11, bz_i11);
             fmadd_unreduced::<F>(&mut tA_pos_acc[14], &mut tA_neg_acc[14], e_in_val, prod);
         }
 
         let az_i1i = az_i11 - az_i10;
         let bz_i1i = bz_i11 - bz_i10;
-        if !az_i1i.is_zero() && !bz_i1i.is_zero() {
-            let prod = az_i1i * bz_i1i;
+        if !az_i1i == 0 && !bz_i1i.is_zero() {
+            let prod = mul_az_bz(az_i1i, bz_i1i);
             fmadd_unreduced::<F>(&mut tA_pos_acc[15], &mut tA_neg_acc[15], e_in_val, prod);
         }
 
         let az_ii0 = az_1i0 - az_0i0;
         let bz_ii0 = bz_1i0 - bz_0i0;
-        if !az_ii0.is_zero() && !bz_ii0.is_zero() {
-            let prod = az_ii0 * bz_ii0;
+        if !az_ii0 == 0 && !bz_ii0.is_zero() {
+            let prod = mul_az_bz(az_ii0, bz_ii0);
             fmadd_unreduced::<F>(&mut tA_pos_acc[16], &mut tA_neg_acc[16], e_in_val, prod);
         }
 
         let az_ii1 = az_1i1 - az_0i1;
         let bz_ii1 = bz_1i1 - bz_0i1;
-        if !az_ii1.is_zero() && !bz_ii1.is_zero() {
-            let prod = az_ii1 * bz_ii1;
+        if !az_ii1 == 0 && !bz_ii1.is_zero() {
+            let prod = mul_az_bz(az_ii1, bz_ii1);
             fmadd_unreduced::<F>(&mut tA_pos_acc[17], &mut tA_neg_acc[17], e_in_val, prod);
         }
 
         let az_iii = az_1ii - az_0ii;
         let bz_iii = bz_1ii - bz_0ii;
-        if !az_iii.is_zero() && !bz_iii.is_zero() {
-            let prod = az_iii * bz_iii;
+        if !az_iii == 0 && !bz_iii.is_zero() {
+            let prod = mul_az_bz(az_iii, bz_iii);
             fmadd_unreduced::<F>(&mut tA_pos_acc[18], &mut tA_neg_acc[18], e_in_val, prod);
         }
     }
@@ -763,7 +795,7 @@ pub mod svo_helpers {
     /// Supports NUM_SVO_ROUNDS in [0..=5].
     #[inline]
     pub fn compute_and_update_tA_inplace<const NUM_SVO_ROUNDS: usize, F: JoltField>(
-        binary_az_evals: &[I8OrI96],
+        binary_az_evals: &[i128],
         binary_bz_evals: &[S160],
         e_in_val: &F,
         tA_pos_acc: &mut [UnreducedProduct<F>],
@@ -811,7 +843,7 @@ pub mod svo_helpers {
     /// Updates a single non-binary accumulator corresponding to (u=∞).
     #[inline]
     pub fn compute_and_update_tA_inplace_1<F: JoltField>(
-        binary_az_evals: &[I8OrI96],
+        binary_az_evals: &[i128],
         binary_bz_evals: &[S160],
         e_in_val: &F,
         tA_pos_acc: &mut [UnreducedProduct<F>],
@@ -823,10 +855,10 @@ pub mod svo_helpers {
         debug_assert!(tA_neg_acc.len() == 1);
 
         let az_I = binary_az_evals[1] - binary_az_evals[0];
-        if !az_I.is_zero() {
+        if !az_I == 0 {
             let bz_I = binary_bz_evals[1] - binary_bz_evals[0];
             if !bz_I.is_zero() {
-                let prod = az_I * bz_I;
+                let prod = mul_az_bz(az_I, bz_I);
                 fmadd_unreduced::<F>(&mut tA_pos_acc[0], &mut tA_neg_acc[0], e_in_val, prod);
             }
         }
@@ -1511,24 +1543,23 @@ mod tests {
 
     use crate::{field::JoltField, poly::eq_poly::EqPolynomial};
     use ark_bn254::Fr;
-    use ark_ff::biginteger::{I8OrI96, S160};
+    use ark_ff::biginteger::S160;
     use rand::{Rng, SeedableRng};
     use rand_chacha::ChaCha20Rng;
 
-    fn random_az_value<R: Rng>(rng: &mut R) -> I8OrI96 {
+    fn random_az_value<R: Rng>(rng: &mut R) -> i128 {
         match rng.gen_range(0..5) {
-            0 => I8OrI96::from_i8(rng.gen()),
-            1 => I8OrI96::from_i8(0), // zero
-            2 => I8OrI96::from_i8(1), // one
-            3 => I8OrI96::from_i128(rng.gen::<i64>() as i128),
+            0 => rng.gen::<i8>() as i128,
+            1 => 0i128, // zero
+            2 => 1i128, // one
+            3 => rng.gen::<i64>() as i128,
             4 => {
-                // Bounded 90-bit magnitude to ensure it always fits in I8OrI96,
+                // Bounded 90-bit magnitude to ensure it always fits in i128,
                 // and give headroom so differences during extension remain within 96 bits.
                 const BITS: u32 = 90;
                 let mask: u128 = if BITS == 128 { u128::MAX } else { (1u128 << BITS) - 1 };
                 let mag = (rng.gen::<u128>() & mask) as i128;
-                let val = if rng.gen::<bool>() { mag } else { -mag };
-                I8OrI96::from_i128(val)
+                if rng.gen::<bool>() { mag } else { -mag }
             }
             _ => unreachable!(),
         }
@@ -1568,7 +1599,7 @@ mod tests {
         let num_binary_points = 1 << num_vars;
 
         // Create random binary evaluations
-        let binary_az_vals: Vec<I8OrI96> = (0..num_binary_points).map(|_| random_az_value(rng)).collect();
+        let binary_az_vals: Vec<i128> = (0..num_binary_points).map(|_| random_az_value(rng)).collect();
         let binary_bz_vals: Vec<S160> = (0..num_binary_points).map(|_| random_bz_value(rng)).collect();
 
         // Generic small value path (produces Montgomery-form Fr elements after reduction)

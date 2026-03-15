@@ -146,33 +146,23 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "ark-bn254"
-version = "0.5.0-alpha.0"
-source = "git+https://github.com/a16z/arkworks-algebra?rev=2b22f4959e89bd0656f4f261c3a854c29b87a7da#2b22f4959e89bd0656f4f261c3a854c29b87a7da"
-dependencies = [
- "ark-ec",
- "ark-ff",
- "ark-std",
-]
-
-[[package]]
-name = "ark-bn254"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d69eab57e8d2663efa5c63135b2af4f396d66424f88954c21104125ab6b3e6bc"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
  "ark-ec",
  "ark-ff",
+ "ark-serialize",
  "ark-std",
 ]
 
 [[package]]
 name = "ark-ec"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?rev=2b22f4959e89bd0656f4f261c3a854c29b87a7da#2b22f4959e89bd0656f4f261c3a854c29b87a7da"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
  "ahash",
  "ark-ff",
- "ark-poly 0.5.0 (git+https://github.com/a16z/arkworks-algebra?rev=2b22f4959e89bd0656f4f261c3a854c29b87a7da)",
+ "ark-poly 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-serialize",
  "ark-std",
  "educe",
@@ -189,7 +179,7 @@ dependencies = [
 [[package]]
 name = "ark-ff"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?rev=2b22f4959e89bd0656f4f261c3a854c29b87a7da#2b22f4959e89bd0656f4f261c3a854c29b87a7da"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
  "allocative",
  "ark-ff-asm",
@@ -210,7 +200,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-asm"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?rev=2b22f4959e89bd0656f4f261c3a854c29b87a7da#2b22f4959e89bd0656f4f261c3a854c29b87a7da"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
  "quote",
  "syn 2.0.117",
@@ -219,7 +209,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-macros"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?rev=2b22f4959e89bd0656f4f261c3a854c29b87a7da#2b22f4959e89bd0656f4f261c3a854c29b87a7da"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -230,10 +220,10 @@ dependencies = [
 
 [[package]]
 name = "ark-grumpkin"
-version = "0.5.0-alpha.0"
-source = "git+https://github.com/a16z/arkworks-algebra?rev=2b22f4959e89bd0656f4f261c3a854c29b87a7da#2b22f4959e89bd0656f4f261c3a854c29b87a7da"
+version = "0.5.0"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
- "ark-bn254 0.5.0-alpha.0",
+ "ark-bn254",
  "ark-ec",
  "ark-ff",
  "ark-std",
@@ -272,7 +262,7 @@ dependencies = [
 [[package]]
 name = "ark-poly"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?rev=2b22f4959e89bd0656f4f261c3a854c29b87a7da#2b22f4959e89bd0656f4f261c3a854c29b87a7da"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
  "ahash",
  "ark-ff",
@@ -286,9 +276,9 @@ dependencies = [
 [[package]]
 name = "ark-serialize"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?rev=2b22f4959e89bd0656f4f261c3a854c29b87a7da#2b22f4959e89bd0656f4f261c3a854c29b87a7da"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
- "ark-serialize-derive 0.5.0 (git+https://github.com/a16z/arkworks-algebra?rev=2b22f4959e89bd0656f4f261c3a854c29b87a7da)",
+ "ark-serialize-derive 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "ark-std",
  "arrayvec",
  "digest 0.10.7",
@@ -310,7 +300,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize-derive"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?rev=2b22f4959e89bd0656f4f261c3a854c29b87a7da#2b22f4959e89bd0656f4f261c3a854c29b87a7da"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -573,7 +563,7 @@ dependencies = [
 name = "co-jolt-coordinator"
 version = "0.1.0"
 dependencies = [
- "ark-bn254 0.5.0-alpha.0",
+ "ark-bn254",
  "ark-ec",
  "ark-ff",
  "ark-serialize",
@@ -611,7 +601,7 @@ name = "co-jolt2"
 version = "0.1.0"
 dependencies = [
  "allocative",
- "ark-bn254 0.5.0-alpha.0",
+ "ark-bn254",
  "ark-ec",
  "ark-ff",
  "ark-poly 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -944,8 +934,10 @@ dependencies = [
 [[package]]
 name = "dory-pcs"
 version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8c58baea9f0ed973489cd1981b0e6a8c91aafddb05e3903b1dd54175ddcb52d"
 dependencies = [
- "ark-bn254 0.5.0-alpha.0",
+ "ark-bn254",
  "ark-ec",
  "ark-ff",
  "ark-serialize",
@@ -1777,7 +1769,7 @@ version = "0.1.0"
 dependencies = [
  "allocative",
  "anyhow",
- "ark-bn254 0.5.0-alpha.0",
+ "ark-bn254",
  "ark-ec",
  "ark-ff",
  "ark-grumpkin",
@@ -1833,9 +1825,9 @@ dependencies = [
 [[package]]
 name = "jolt-optimizations"
 version = "0.5.0"
-source = "git+https://github.com/a16z/arkworks-algebra?rev=2b22f4959e89bd0656f4f261c3a854c29b87a7da#2b22f4959e89bd0656f4f261c3a854c29b87a7da"
+source = "git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout#76bb3a4518928f1ff7f15875f940d614bb9845e6"
 dependencies = [
- "ark-bn254 0.5.0-alpha.0",
+ "ark-bn254",
  "ark-ec",
  "ark-ff",
  "ark-serialize",
@@ -1852,7 +1844,7 @@ dependencies = [
 name = "jolt-sdk"
 version = "0.1.0"
 dependencies = [
- "ark-bn254 0.5.0",
+ "ark-bn254",
  "ark-ec",
  "bincode",
  "co-jolt2",
@@ -2068,7 +2060,7 @@ dependencies = [
 name = "mpc-core"
 version = "0.1.0"
 dependencies = [
- "ark-bn254 0.5.0-alpha.0",
+ "ark-bn254",
  "ark-ec",
  "ark-ff",
  "ark-linear-sumcheck",
@@ -3028,7 +3020,7 @@ dependencies = [
 name = "sha2-chain"
 version = "0.1.0"
 dependencies = [
- "ark-bn254 0.5.0-alpha.0",
+ "ark-bn254",
  "ark-serialize",
  "clap",
  "co-jolt2",

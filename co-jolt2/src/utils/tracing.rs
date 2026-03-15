@@ -21,7 +21,7 @@ pub fn init_tracing(file: &str, trace_dir: &Path) -> Option<TracingGuard> {
         .add_directive("co_jolt2=info".parse().unwrap())
         .add_directive("mpc_net=info".parse().unwrap())
         .add_directive("quinn=off".parse().unwrap())
-        .add_directive("dory_pcs=off".parse().unwrap());
+        .add_directive("dory=off".parse().unwrap());
 
     let current_level = env_filter.max_level_hint().unwrap_or(LevelFilter::INFO);
     let subscriber = Registry::default().with(env_filter);
@@ -47,7 +47,7 @@ pub fn init_tracing_bench(file: &str, trace_dir: &Path) -> TracingGuard {
         .from_env_lossy()
         .add_directive("jolt_core=off".parse().unwrap())
         .add_directive("quinn=off".parse().unwrap())
-        .add_directive("dory_pcs=off".parse().unwrap());
+        .add_directive("dory=off".parse().unwrap());
 
     let tracy_layer = std::env::var("TRACY").is_ok().then(tracing_tracy::TracyLayer::default);
     let (chrome_layer, _guard) = ChromeLayerBuilder::new().file(trace_path).build();

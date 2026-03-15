@@ -1,4 +1,4 @@
-//! TEE worker binary — stand-by loop proving service.
+//! Worker binary — stand-by loop proving service.
 //!
 //! Each worker:
 //! 1. Loads network config, connects to peers (QUIC) and coordinator
@@ -10,7 +10,6 @@
 //!    d. Preprocess + prove (MPC)
 //!    e. [worker 0] Receive proof from coordinator, relay to user
 
-use rayon::prelude::*;
 use std::path::PathBuf;
 #[cfg(feature = "test-utils")]
 use std::sync::OnceLock;
@@ -348,6 +347,7 @@ fn prove_loop(
         {
             use mpc_core::protocols::rep3_ring::preprocessing::dapoint::random_dapoints_from_columns;
             use mpc_core::protocols::rep3_ring::preprocessing::wrap_mask::generate_wrap_masks_lazy;
+            use rayon::prelude::*;
 
             let (q0_xlen, q1_xlen, q0_64, q1_64) = co_jolt2::poly::commitment::dory::precompute_dapoint_q_columns(
                 &preprocessing.generators,

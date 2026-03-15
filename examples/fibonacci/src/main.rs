@@ -31,7 +31,8 @@ fn init_tracing() {
         .with_default_directive(tracing::Level::INFO.into())
         .from_env_lossy()
         .add_directive("rustls=off".parse().unwrap())
-        .add_directive("quinn=off".parse().unwrap());
+        .add_directive("quinn=off".parse().unwrap())
+        .add_directive("dory=off".parse().unwrap());
 
     let _ = tracing::subscriber::set_global_default(
         Registry::default().with(env_filter).with(ForestLayer::default().with_filter(LevelFilter::INFO)),

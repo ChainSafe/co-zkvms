@@ -1,51 +1,5 @@
 # co-jolt2 Deferred Optimizations
 
-## Arkworks / Dory git source mismatch (blocks `cargo update`)
-
-**Problem**: `cargo update` (or any lockfile re-resolve, e.g. adding a new dep) fails with:
-```
-error: failed to select a version for `ark-bn254 = "^0.5.0-alpha"` (locked to 0.5.0-alpha.0)
-candidate versions found which didn't match: 0.5.0
-```
-
-**Root cause**: The upstream `a16z/arkworks-algebra` branch `dev/twist-shout` was updated — `ark-bn254` went from `0.5.0-alpha` to `0.5.0`, which is incompatible with our jolt-core. When cargo re-resolves, it fetches the new branch HEAD and fails.
-
-**Why we can't just pin to `rev =`**: The `markosg04/dory` crate (a git dependency) internally depends on arkworks via `branch = "dev/twist-shout"`. Cargo treats `branch = "X"` and `rev = "Y"` as **different sources** even when they resolve to the same commit SHA. Using `rev =` in our workspace while dory uses `branch =` causes duplicate crate errors. And `[patch]` cannot redirect a git source to itself.
-
-**Current state**:
-- Workspace uses `branch = "dev/twist-shout"` for arkworks (matching dory's internals)
-- Dory is pinned to `rev = "2743c039..."` in workspace Cargo.toml
-- The Cargo.lock pins arkworks to the correct commit `2b22f495`
-- Builds work fine with `--offline` or when the git cache has the old commit
-
-**Workaround for adding new deps**:
-```bash
-# Reset the local cargo git cache to the old (working) commit
-git -C ~/.cargo/git/db/arkworks-algebra-* update-ref \
-  refs/remotes/origin/dev/twist-shout 2b22f4959e89bd0656f4f261c3a854c29b87a7da
-# Then run cargo normally (it won't re-fetch since the "branch HEAD" matches the lock)
-cargo build -p <crate>
-```
-
-**Permanent fix**: Update the `markosg04/dory` fork to use `rev = "2b22f495..."` instead of `branch = "dev/twist-shout"` for its arkworks deps. Then we can switch our workspace to `rev =` too, making builds fully reproducible.
-
----
-
-## Critical
-VirtualAdvice - public `advice`!
-
-## Pass all preprocessing batches (edabits, dabits, etc) as owned
-e.g. ring_to_field_b2a_many pass EdaBitsBatch<T, F> as owned instead of ref. Doesn't make sence to pass it as ref anyway
-
-## Distribute public poly commitments work between workers 
-
-## Missing networked par_chunks
-- `co-jolt2/src/zkvm/witness.rs` `for poly in polynomials` 
-- `co-jolt2/src/zkvm/suffixes/future.rs` `ring_to_field_b2a_many`, `bit_inject_field_many`
-
-## Memory optimizations
-- ManuallyDrop in Dory::commit_rep3 — safe?
-
 ## Batch condensation + cache_phase `mul_vec` (saves 6 communication rounds)
 
 **File**: `src/zkvm/instruction_lookups/read_raf_checking.rs`
@@ -60,7 +14,7 @@ be merged into a single `mul_vec` call, saving 1 communication round per phase �
 
 **Complexity**: Moderate refactor — requires threading `v_shifted` through the condensation path.
 
-## (Spartan/R1CS) Reduce `Rep3Value` branching overhead in hot loops
+## Reduce `Rep3Value` branching overhead in hot loops
 
 `Rep3Value`-based arithmetic is convenient for keeping public values public, but it can add
 nontrivial branching/method-call overhead when used per-term inside tight inner loops (e.g.
@@ -98,24 +52,6 @@ reduces total reshare count from `3 * ceil(n_wr/32)` to `3 * ceil(n_wr/wr_tile)`
 Proposed: increase default to 256. Memory cost: level1 buffer grows to `256 * n_wl * 24 * sizeof(F)`.
 
 **Risk**: Larger tile = larger intermediate buffers. For big instances could spike RSS.
-
-### Remove B2A outer chunking loop (witness phases)
-**File**: `src/zkvm/witness.rs:89-94`
-
-`fill_field_from_operands_sparse_u64` processes jobs in sequential chunks of `B2A_CHUNK=8192`,
-each calling `par_chunks_preproc`. The outer loop serializes work that could be a single call.
-
-Proposed: remove the `for chunk in jobs.chunks(chunk_size)` loop, pass all jobs at once.
-
-**Risk**: Single large batch means all preprocessing material consumed at once — higher peak memory.
-
-### Parallelize ReadRaf condensation/cache_phase `mul_vec` across forks (stage3)
-**Files**: `src/zkvm/instruction_lookups/read_raf_checking.rs:560,1237`
-
-`init_phase` condensation and `cache_phase` each do `mul_vec` on up to ~500K elements using only
-the main fork. Could use `par_chunks` to split across forks.
-
-**Risk**: Duplicates intermediate vectors across forks. Memory scales with fork count.
 
 ### Async cache_phase || init_phase pipeline (stage3)
 **File**: `src/zkvm/instruction_lookups/read_raf_checking.rs:1482-1490`

@@ -12,7 +12,7 @@ guest = { package = "sha2-chain-guest", path = "./guest" }
 co-jolt2 = { path = "../../co-jolt2" }
 jolt-core = { path = "../../jolt-core", features = ["host"] }
 tracer = { path = "../../jolt-tracer", package = "jolt-tracer", default-features = false }
-ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", rev = "2b22f4959e89bd0656f4f261c3a854c29b87a7da", default-features = false, features = ["curve"] }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false, features = ["curve"] }
 ark-serialize = { version = "0.5.0", default-features = false }
 clap = { version = "4.5", features = ["derive"] }
 eyre = "0.6"
@@ -23,10 +23,10 @@ tracing-forest = { version = "0.1.6", default-features = false, features = ["ans
 tracing-subscriber = { version = "0.3", features = ["env-filter", "ansi", "registry", "std"] }
 
 [patch.crates-io]
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", rev = "2b22f4959e89bd0656f4f261c3a854c29b87a7da" }
-ark-ec = { git = "https://github.com/a16z/arkworks-algebra", rev = "2b22f4959e89bd0656f4f261c3a854c29b87a7da" }
-ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", rev = "2b22f4959e89bd0656f4f261c3a854c29b87a7da" }
-ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", rev = "2b22f4959e89bd0656f4f261c3a854c29b87a7da" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
 
 [profile.release]

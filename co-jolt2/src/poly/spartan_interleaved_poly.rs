@@ -601,12 +601,12 @@ fn bind_sparse_coeffs_low_to_high_in_place<F: JoltField>(
 fn eval_lc_rep3<F: JoltField>(lc: LC, inputs: &Rep3R1CSCycleInputs<F>, party_id: PartyID) -> Rep3Value<F> {
     let mut acc = Rep3Value::<F>::zero_public();
     lc.for_each_term(|input_index, coeff| {
-        let scalar = F::from_i128(coeff.to_i128());
+        let scalar = F::from_i128(coeff);
         let val = input_as_value(inputs, JoltR1CSInputs::from_index(input_index), party_id);
         acc.add_assign(&val.mul_public(scalar), party_id);
     });
     if let Some(c) = lc.const_term() {
-        let scalar = F::from_i128(c.to_i128());
+        let scalar = F::from_i128(c);
         acc.add_public_assign(scalar, party_id);
     }
     acc
@@ -619,12 +619,12 @@ fn eval_lc_rep3_shared<F: JoltField>(
 ) -> mpc_core::protocols::rep3::Rep3PrimeFieldShare<F> {
     let mut acc = mpc_core::protocols::rep3::Rep3PrimeFieldShare::zero_share();
     lc.for_each_term(|input_index, coeff| {
-        let scalar = F::from_i128(coeff.to_i128());
+        let scalar = F::from_i128(coeff);
         let val = input_as_value(inputs, JoltR1CSInputs::from_index(input_index), party_id).into_shared_rep3(party_id);
         acc += mpc_core::protocols::rep3::arithmetic::mul_public(val, scalar);
     });
     if let Some(c) = lc.const_term() {
-        acc = mpc_core::protocols::rep3::arithmetic::add_public(acc, F::from_i128(c.to_i128()), party_id);
+        acc = mpc_core::protocols::rep3::arithmetic::add_public(acc, F::from_i128(c), party_id);
     }
     acc
 }
