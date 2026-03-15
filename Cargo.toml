@@ -13,6 +13,7 @@ exclude = [
     "jolt-sdk",
     "examples/fibonacci",
     "examples/sha2-chain",
+    "examples/zkemail",
 ]
 default-members = [
     "co-jolt2",

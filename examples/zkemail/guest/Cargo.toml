@@ -1,0 +1,20 @@
+[package]
+name = "zkemail-guest"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[features]
+guest = []
+
+[dependencies]
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }
+sha2 = { version = "0.10.8", default-features = false, features = ["oid"] }
+rsa = { version = "=0.9.6", default-features = false }
+zkemail-core = { path = "../core" }
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+
+[target.'cfg(target_arch = "riscv32")'.dependencies]
+spin = { version = "0.9", default-features = false, features = ["portable_atomic", "once", "mutex", "spin_mutex"] }
+portable-atomic = { version = "1", default-features = false, features = ["unsafe-assume-single-core"] }

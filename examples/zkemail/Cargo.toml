@@ -1,0 +1,45 @@
+[package]
+name = "zkemail"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+exclude = ["guest"]
+
+[dependencies]
+jolt-sdk = { path = "../../jolt-sdk", features = ["host"] }
+guest = { package = "zkemail-guest", path = "./guest" }
+co-jolt2 = { path = "../../co-jolt2" }
+jolt-core = { path = "../../jolt-core", features = ["host"] }
+tracer = { path = "../../jolt-tracer", package = "jolt-tracer", default-features = false }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false, features = ["curve"] }
+ark-serialize = { version = "0.5.0", default-features = false }
+clap = { version = "4.5", features = ["derive"] }
+eyre = "0.6"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+tracing = "0.1"
+tracing-forest = { version = "0.1.6", default-features = false, features = ["ansi", "smallvec"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "ansi", "registry", "std"] }
+
+# Host-side email parsing & DKIM
+cfdkim = { git = "https://github.com/risc0-labs/dkim" }
+mailparse = "0.14"
+trust-dns-resolver = "0.23"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+base64 = "0.21"
+rsa = { version = "=0.9.6" }
+slog = "2.7"
+
+# Shared types
+zkemail-core = { path = "./core" }
+
+[patch.crates-io]
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
+
+[profile.release]
+debug = true
