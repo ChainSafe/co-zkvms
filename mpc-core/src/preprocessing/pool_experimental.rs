@@ -579,6 +579,7 @@ pub fn preprocess_pool<F, N>(
     dir: &Path,
     counts: [usize; 5],
     num_dabits: usize,
+    num_rand_ohvs_u8_k4: usize,
     num_ring_edabits_dory: usize,
     num_ring_edabits_u64: usize,
     num_ring_edabits_u128: usize,
@@ -589,7 +590,7 @@ where
     F: PrimeField + Copy,
     N: Rep3NetworkWorker + Rep3RawFieldTransport,
 {
-    let mut pool = preprocess_pool_base(dir, counts, num_dabits, io)?;
+    let mut pool = preprocess_pool_base(dir, counts, num_dabits, num_rand_ohvs_u8_k4, io)?;
 
     // Ring edaBits: segmented + lane-parallel.
     preprocess_ring_edabits(
@@ -617,13 +618,14 @@ pub fn extend_pool_batched<F: PrimeField, N: Rep3NetworkWorker + Rep3RawFieldTra
     pool: &mut PreprocessingPool<F>,
     deficit_counts: [usize; 5],
     deficit_dabits: usize,
+    deficit_rand_ohvs_u8_k4: usize,
     deficit_ring_edabits_dory: usize,
     deficit_ring_edabits_u64: usize,
     deficit_ring_edabits_u128: usize,
     deficit_ring_edabits_iring: usize,
     io: &mut IoContextPool<N>,
 ) -> eyre::Result<()> {
-    extend_pool_batched_base(pool, deficit_counts, deficit_dabits, io)?;
+    extend_pool_batched_base(pool, deficit_counts, deficit_dabits, deficit_rand_ohvs_u8_k4, io)?;
     // Shared types first — must match non-ring-msm ordering (cross-feature cache compatibility).
     if deficit_ring_edabits_u64 > 0 {
         let total = deficit_ring_edabits_u64 + pool.remaining_ring_edabits_u64();

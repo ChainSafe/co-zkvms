@@ -46,7 +46,7 @@ masks). Within a slot, the leakage persists but affects only `T/R` cycles per sl
 - `rand_ohv_e_field_bank[slot]`: length-K vector of field-injected `E` shares for slot.
 - `rotation_slot_by_cycle[j]`: `Some(s)` for active, `None` for padding.
 - `masked_indices_c[j]`: public `c[j]` value for active cycles.
-- Default `R = 16` (configurable via `CO_JOLT_RAND_OHV_ROTATIONS` env var).
+- Default `R = 16` (configurable via `RAND_OHV_ROTATIONS` env var).
 
 ### Performance Cost of Rotation
 
